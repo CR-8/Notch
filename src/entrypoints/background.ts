@@ -8,18 +8,86 @@ import { checkStorageQuota, getDocIndex, getDocument, getSettings, saveDocIndex,
 import { log } from '../lib/logger';
 import type { Citation, DOMExtraction, Document, GenerationMode, NotchMessage } from '../lib/types';
 
+function extractPageDom(): DOMExtraction {
+  const body = document.body ?? document.documentElement;
+  const readableText = body?.innerText ?? document.documentElement?.innerText ?? '';
+  const readableHtml = body?.innerHTML ?? document.documentElement?.outerHTML ?? '';
+
+  const images = Array.from(document.querySelectorAll('img'))
+    .map((img) => {
+      let paragraphContext = '';
+      let el: Element | null = img;
+      while (el && el.tagName !== 'P') el = el.parentElement;
+      if (el) paragraphContext = (el as HTMLElement).innerText ?? '';
+      return { url: img.src, alt: img.alt ?? '', paragraphContext };
+    })
+    .filter((img) => img.url);
+
+  return {
+    title: document.title || body?.querySelector('title')?.textContent || 'Untitled document',
+    url: window.location.href,
+    domain: window.location.hostname,
+    textContent: readableText,
+    structuredHTML: readableHtml,
+    images,
+    wordCount: readableText.split(/\s+/).filter(Boolean).length,
+    metaDescription: document.querySelector('meta[name="description"]')?.getAttribute('content') ?? '',
+  };
+}
+
+async function extractDomFromTab(tabId: number): Promise<DOMExtraction> {
+  try {
+    const extraction = await browser.tabs.sendMessage(
+      tabId,
+      { type: 'EXTRACT_DOM', payload: {} },
+    ) as DOMExtraction | { error: string } | undefined;
+
+    if (!extraction) {
+      throw new Error('No response from content script. Ensure the page is fully loaded and try again.');
+    }
+    if ('error' in extraction) {
+      throw new Error(`Content script error: ${extraction.error}`);
+    }
+
+    return extraction;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/Receiving end does not exist|Could not establish connection/i.test(message)) {
+      throw err;
+    }
+
+    log.warn('background', `Content script unavailable for tab ${tabId}; trying direct DOM injection`, err);
+
+    const scripting = (browser as typeof browser & { scripting?: { executeScript?: Function } }).scripting;
+    if (scripting?.executeScript) {
+      const results = await scripting.executeScript({
+        target: { tabId },
+        func: extractPageDom,
+      }) as Array<{ result?: DOMExtraction }>;
+
+      const result = results?.[0]?.result;
+      if (result) return result;
+    }
+
+    const tabsApi = browser.tabs as typeof browser.tabs & { executeScript?: Function };
+    if (tabsApi.executeScript) {
+      const results = await tabsApi.executeScript(tabId, {
+        code: `(${extractPageDom.toString()})()`,
+      }) as Array<DOMExtraction>;
+
+      const result = results?.[0];
+      if (result) return result;
+    }
+
+    throw new Error(`Unable to extract DOM from tab ${tabId}. Open a normal web page and try again.`);
+  }
+}
+
 export default defineBackground(() => {
   log.info('background', '=== Service worker started ===', { extensionId: browser.runtime.id });
 
   browser.runtime.onInstalled.addListener(async (details) => {
     log.info('background', `Install event: reason=${details.reason}`);
-    if (details.reason === 'install') {
-      const settings = await getSettings();
-      if (settings.provider === 'gemini' && !settings.apiKeys.gemini) {
-        log.info('background', 'No API key on install — opening Settings');
-        browser.tabs.create({ url: browser.runtime.getURL('/options.html' as any) });
-      }
-    }
   });
 
   browser.runtime.onMessage.addListener((message: NotchMessage, _sender, sendResponse) => {
@@ -49,19 +117,7 @@ async function handleCapturePage(
   try {
     // 1. Extract DOM
     log.info('background', `  [1/8] Extracting DOM from tab ${tabId}...`);
-    const extraction = await browser.tabs.sendMessage(
-      tabId,
-      { type: 'EXTRACT_DOM', payload: {} },
-    ) as DOMExtraction | { error: string } | undefined;
-
-    if (!extraction) {
-      throw new Error('No response from content script. Ensure the page is fully loaded and try again.');
-    }
-    if ('error' in extraction) {
-      throw new Error(`Content script error: ${extraction.error}`);
-    }
-
-    const domPayload = extraction;
+    const domPayload = await extractDomFromTab(tabId);
     log.success('background', `  [1/8] DOM extracted — ${domPayload.wordCount} words, ${domPayload.images.length} images, domain: ${domPayload.domain}`);
 
     // 2. Load settings
@@ -79,11 +135,22 @@ async function handleCapturePage(
       .trim();
 
     // [4/8] Parse title + summary + structured fields from AI markdown
-    log.info('background', '  [4/8] Parsing AI response (title, summary, entities, timeline, concepts)...');
+    log.info('background', '  [4/8] Parsing AI response (title, summary, key points, entities, timeline, concepts)...');
     const titleMatch = aiMarkdown.match(/^#\s+(.+)$/m);
     const title = titleMatch ? titleMatch[1].trim() : domPayload.title;
     const summaryMatch = aiMarkdown.match(/^##\s+(?:SUMMARY|Summary)\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
     const summary = summaryMatch ? summaryMatch[1].trim() : '';
+
+    // Parse key points from "## Key Points" section
+    const keyPoints: string[] = [];
+    const keyPointsMatch = aiMarkdown.match(/^##\s+Key Points\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
+    if (keyPointsMatch) {
+      const lines = keyPointsMatch[1].split('\n');
+      lines.forEach((line) => {
+        const m = line.match(/^\s*[*-]\s+(.*)/);
+        if (m) keyPoints.push(m[1].trim());
+      });
+    }
 
     // Parse key entities from "## Key Entities" section
     // Expects lines like: * **Name:** (Type) Description  or  * **Name** (Type) Description
@@ -122,7 +189,7 @@ async function handleCapturePage(
       });
     }
 
-    log.info('background', `  [4/8] Parsed — title: "${title}", entities: ${keyEntities.length}, timeline: ${timeline.length}, concepts: ${concepts.length}`);
+    log.info('background', `  [4/8] Parsed — title: "${title}", key points: ${keyPoints.length}, entities: ${keyEntities.length}, timeline: ${timeline.length}, concepts: ${concepts.length}`);
 
     // [5/8] Build Document object
     log.info('background', '  [5/8] Building document object...');
@@ -137,6 +204,7 @@ async function handleCapturePage(
       provider: useOfflineCapture ? 'offline' : (settings.provider ?? 'gemini'),
       content: aiMarkdown,
       summary,
+      keyPoints,
       keyEntities,
       timeline,
       concepts,
@@ -176,8 +244,9 @@ async function handleCapturePage(
       );
     }, 1500);
   } catch (err) {
-    log.error('background', 'Capture failed', err);
-    sendResponse({ type: 'CAPTURE_ERROR', payload: { error: (err as Error).message } });
+    const message = err instanceof Error ? err.message : String(err);
+    log.error('background', `Capture failed: ${message}`, err);
+    sendResponse({ type: 'CAPTURE_ERROR', payload: { error: message } });
   }
 }
 
@@ -220,8 +289,12 @@ async function handleImportPdf(
     await saveDocIndex([doc.id, ...index]);
     await checkStorageQuota();
 
-    // Build local embeddings immediately so PDF RAG works as soon as the reader opens.
-    await embedDocument(doc.id, doc.content);
+    // Build local embeddings eagerly, but do not block import completion on embedding failures.
+    try {
+      await embedDocument(doc.id, doc.content);
+    } catch (embedErr) {
+      log.warn('background', `PDF embeddings failed for ${doc.id}; continuing with keyword fallback`, embedErr);
+    }
 
     sendResponse({ type: 'CAPTURE_COMPLETE', payload: { documentId: doc.id } });
     log.success('background', `PDF import completed — ${doc.id}`);
@@ -242,7 +315,7 @@ async function handleRagQuery(
     await persistChatMessage(documentId, 'user', query);
 
     const settings = await getSettings();
-    const useOffline = settings.provider === 'offline' || (settings.provider === 'gemini' && !settings.apiKeys.gemini);
+    const useOffline = settings.provider === 'offline';
 
     let chunks: Array<{ text: string; paragraphIndex: number; score: number; source: 'document' | 'history' }> = [];
     let embeddingRetrievalFailed = false;

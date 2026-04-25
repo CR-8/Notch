@@ -168,12 +168,18 @@ export function buildOfflineCaptureMarkdown(title: string, content: string): str
   const summarySentences = splitSentences(clean).slice(0, 3);
   const summary = summarySentences.join(' ').trim() || clean.slice(0, 450);
   const terms = topTerms(content, 8);
+  const keyPoints = summarySentences.length > 0
+    ? summarySentences.map((sentence) => `- ${sentence}`)
+    : terms.slice(0, 3).map((term) => `- ${term}: key topic mentioned repeatedly in this source.`);
 
   return [
     `# ${title || 'Imported Document'}`,
     '',
     '## SUMMARY',
     summary,
+    '',
+    '## KEY POINTS',
+    ...keyPoints,
     '',
     '## Key Entities',
     ...terms.map((term) => `- **${term}:** (Concept) Mentioned repeatedly in this source.`),

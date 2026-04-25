@@ -31,7 +31,9 @@ export default defineConfig({
       page: 'options.html',
       open_in_tab: true,
     },
-    permissions: ['storage', 'tabs', 'activeTab'],
+    permissions: browser === 'firefox'
+      ? ['storage', 'tabs', 'activeTab']
+      : ['storage', 'tabs', 'activeTab', 'scripting'],
     // wasm-unsafe-eval is required by ONNX Runtime WASM backend.
     // The ONNX .wasm + .mjs files are bundled locally in public/ort/ so no
     // CDN fetches are needed — both Chrome and Firefox serve them as 'self'.

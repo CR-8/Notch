@@ -9,6 +9,9 @@ export default defineContentScript({
 
       // Run extraction and respond directly — this is what browser.tabs.sendMessage awaits
       try {
+        const body = document.body ?? document.documentElement;
+        const readableText = body?.innerText ?? document.documentElement?.innerText ?? '';
+        const readableHtml = body?.innerHTML ?? document.documentElement?.outerHTML ?? '';
         const documentClone = document.cloneNode(true) as Document;
         const reader = new Readability(documentClone);
         const article = reader.parse();
@@ -24,13 +27,13 @@ export default defineContentScript({
           .filter(img => img.url);
 
         const extraction: DOMExtraction = {
-          title: document.title,
+          title: document.title || body?.querySelector('title')?.textContent || 'Untitled document',
           url: window.location.href,
           domain: window.location.hostname,
-          textContent: article?.textContent ?? document.body.innerText,
-          structuredHTML: article?.content ?? document.body.innerHTML,
+          textContent: article?.textContent ?? readableText,
+          structuredHTML: article?.content ?? readableHtml,
           images,
-          wordCount: (article?.textContent ?? document.body.innerText)
+          wordCount: (article?.textContent ?? readableText)
             .split(/\s+/).filter(Boolean).length,
           metaDescription:
             document.querySelector('meta[name="description"]')?.getAttribute('content') ?? '',
@@ -38,7 +41,8 @@ export default defineContentScript({
 
         sendResponse(extraction);
       } catch (err) {
-        sendResponse({ error: (err as Error).message });
+        const message = err instanceof Error ? err.message : String(err);
+        sendResponse({ error: `DOM extraction failed: ${message}` });
       }
 
       // Return true to keep the message channel open for the async sendResponse

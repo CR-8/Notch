@@ -91,12 +91,77 @@ export async function exportPDF(doc: Document): Promise<void> {
     const pdfDoc = await PDFDocument.create();
     const timesRomanFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
     const boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+    const codeFont = await pdfDoc.embedFont(StandardFonts.Courier);
 
     let page = pdfDoc.addPage();
     const { width, height } = page.getSize();
     const margin = 50;
     const maxWidth = width - (2 * margin);
     let cursorY = height - margin;
+
+    function ensureSpace(neededHeight: number): void {
+      if (cursorY - neededHeight < margin) {
+        page = pdfDoc.addPage();
+        cursorY = height - margin;
+      }
+    }
+
+    function drawWrappedText(
+      text: string,
+      font: any,
+      size: number,
+      lineHeight: number,
+      x = margin,
+      color = rgb(0, 0, 0),
+    ): void {
+      const availableWidth = maxWidth - (x - margin);
+      const lines = wrapText(text, availableWidth, font, size);
+
+      for (const line of lines) {
+        ensureSpace(lineHeight);
+        page.drawText(line, { x, y: cursorY, size, font, color });
+        cursorY -= lineHeight;
+      }
+    }
+
+    function flushParagraph(buffer: string[]): void {
+      const text = buffer.join(' ').trim();
+      if (!text) return;
+      drawWrappedText(text, timesRomanFont, 10, 13);
+      cursorY -= 4;
+      buffer.length = 0;
+    }
+
+    function flushCodeBlock(buffer: string[], language: string): void {
+      if (buffer.length === 0) return;
+
+      const codeLineHeight = 11;
+      const label = language ? `[${language}]` : '[CODE]';
+      ensureSpace(codeLineHeight * (buffer.length + 2));
+      page.drawText(label, {
+        x: margin,
+        y: cursorY,
+        size: 8,
+        font: boldFont,
+        color: rgb(0.37, 0.42, 0.82),
+      });
+      cursorY -= 10;
+
+      for (const line of buffer) {
+        ensureSpace(codeLineHeight);
+        page.drawText(line || ' ', {
+          x: margin,
+          y: cursorY,
+          size: 9,
+          font: codeFont,
+          color: rgb(0.15, 0.15, 0.15),
+        });
+        cursorY -= codeLineHeight;
+      }
+
+      cursorY -= 8;
+      buffer.length = 0;
+    }
 
     // 1. Draw Content (Simplistic Layout)
     
@@ -118,33 +183,75 @@ export async function exportPDF(doc: Document): Promise<void> {
     });
     cursorY -= 20;
 
-    // Summary Section
-    if (doc.summary) {
-      page.drawText('SUMMARY', { x: margin, y: cursorY, size: 10, font: boldFont, color: rgb(0.37, 0.42, 0.82) });
-      cursorY -= 14;
-      const summaryLines = wrapText(doc.summary, maxWidth, timesRomanFont, 10);
-      for (const line of summaryLines) {
-        if (cursorY < margin) { page = pdfDoc.addPage(); cursorY = height - margin; }
-        page.drawText(line, { x: margin, y: cursorY, size: 10, font: timesRomanFont });
-        cursorY -= 12;
-      }
-      cursorY -= 15;
-    }
-
-    // Content Section
+    // Content Section — render the stored markdown structure instead of flattening it.
     page.drawText('DOC CONTENT', { x: margin, y: cursorY, size: 10, font: boldFont, color: rgb(0, 0, 0) });
     cursorY -= 14;
-    
-    const paragraphs = stripMarkdown(doc.content).split('\n\n').filter(p => p.trim());
-    for (const p of paragraphs) {
-      const lines = wrapText(p.trim(), maxWidth, timesRomanFont, 10);
-      for (const line of lines) {
-        if (cursorY < margin) { page = pdfDoc.addPage(); cursorY = height - margin; }
-        page.drawText(line, { x: margin, y: cursorY, size: 11, font: timesRomanFont });
-        cursorY -= 13;
+
+    const markdownLines = doc.content.split(/\r?\n/);
+    const paragraphBuffer: string[] = [];
+    const codeBuffer: string[] = [];
+    let inCodeBlock = false;
+    let codeLanguage = '';
+
+    for (const rawLine of markdownLines) {
+      const line = rawLine.replace(/\s+$/, '');
+
+      if (inCodeBlock) {
+        if (/^```/.test(line)) {
+          flushCodeBlock(codeBuffer, codeLanguage);
+          inCodeBlock = false;
+          codeLanguage = '';
+        } else {
+          codeBuffer.push(rawLine);
+        }
+        continue;
       }
-      cursorY -= 10; // para spacing
+
+      const fenceMatch = line.match(/^```([\w-]+)?\s*$/);
+      if (fenceMatch) {
+        flushParagraph(paragraphBuffer);
+        inCodeBlock = true;
+        codeLanguage = fenceMatch[1] ?? '';
+        continue;
+      }
+
+      if (/^\s*$/.test(line)) {
+        flushParagraph(paragraphBuffer);
+        continue;
+      }
+
+      const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+      if (headingMatch) {
+        flushParagraph(paragraphBuffer);
+        const headingLevel = headingMatch[1].length;
+        const headingText = headingMatch[2].trim();
+        cursorY -= headingLevel === 1 ? 2 : 1;
+        drawWrappedText(
+          headingText,
+          headingLevel <= 2 ? boldFont : timesRomanFont,
+          headingLevel === 1 ? 16 : headingLevel === 2 ? 13 : 11,
+          headingLevel === 1 ? 19 : headingLevel === 2 ? 15 : 13,
+          margin,
+          rgb(0, 0, 0),
+        );
+        cursorY -= 4;
+        continue;
+      }
+
+      const bulletMatch = line.match(/^(\s*)(?:[-*+]\s+|\d+\.\s+)(.*)$/);
+      if (bulletMatch) {
+        flushParagraph(paragraphBuffer);
+        const indentLevel = Math.min(3, Math.floor(bulletMatch[1].length / 2));
+        const bulletText = `• ${bulletMatch[2].trim()}`;
+        drawWrappedText(bulletText, timesRomanFont, 10, 13, margin + (indentLevel * 14));
+        continue;
+      }
+
+      paragraphBuffer.push(line.trim());
     }
+
+    flushParagraph(paragraphBuffer);
+    flushCodeBlock(codeBuffer, codeLanguage);
 
 
     // 2. Fetch and Attach RAG Bundle (optional — failure does not abort the PDF)
@@ -182,13 +289,13 @@ export async function exportPDF(doc: Document): Promise<void> {
     const a = document.createElement('a');
     const filename = doc.title.replace(/[^a-z0-9\-_. ]/gi, '_').trim() || 'document';
     a.href = url;
-    a.download = `${filename}_notch.pdf`;
+    a.download = `${filename}.pdf`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     
-    log.success('storage', `Exported RAG PDF: ${filename}_notch.pdf`);
+    log.success('storage', `Exported RAG PDF: ${filename}.pdf`);
   } catch (err) {
     log.error('storage', 'Failed to export PDF', err);
     throw err;

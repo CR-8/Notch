@@ -1,8 +1,13 @@
 // The three supported models
 export type GeminiModel =
   | 'gemini-3.1-flash-lite-preview'  // FAST — highest free RPD (500/day)
-  | 'google/gemma-4-31b-it'          // DEEP — best quality
-  | 'google/gemma-4-26b-a4b-it';     // BALANCED — MoE, good quality
+  | 'gemma-3-12b-it'                 // BALANCED — good quality
+  | 'gemma-3-27b-it';                // DEEP — best quality
+
+export interface ContentFrame {
+  index: number;
+  total: number;
+}
 
 export type GenerationMode = 'FAST' | 'DEEP' | 'BALANCED' | 'LOCAL';
 export type LLMProvider = 'gemini' | 'ollama' | 'offline' | 'openai' | 'anthropic';
@@ -65,6 +70,7 @@ export interface Document {
   provider: LLMProvider;
   content: string;
   summary: string;
+  keyPoints?: string[];
   keyEntities: Entity[];
   timeline: TimelineEvent[];
   concepts: Concept[];

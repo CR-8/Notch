@@ -13,7 +13,7 @@ const KEYS = {
 } as const;
 
 const DEFAULT_SETTINGS: Settings = {
-  provider: 'gemini',
+  provider: 'offline',
   ollamaEndpoint: 'http://localhost:11434',
   defaultMode: 'FAST',
   ollamaModel: 'llama3',

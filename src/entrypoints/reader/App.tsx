@@ -228,7 +228,8 @@ function scrollToAndHighlight(leftPaneRef: React.RefObject<HTMLDivElement | null
 }
 
 function NotesPanel({ doc, leftPaneRef }: NotesPanelProps) {
-  const isEmpty = doc.summary === '' && doc.keyEntities.length === 0 && doc.timeline.length === 0 && doc.concepts.length === 0;
+  const keyPoints = doc.keyPoints ?? [];
+  const isEmpty = doc.summary === '' && keyPoints.length === 0 && doc.keyEntities.length === 0 && doc.timeline.length === 0 && doc.concepts.length === 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -238,6 +239,23 @@ function NotesPanel({ doc, leftPaneRef }: NotesPanelProps) {
         {doc.summary
           ? <p className="font-body text-sm text-[#EAEAEA] leading-relaxed">{doc.summary}</p>
           : <p className="font-mono text-[11px] text-muted">[NO SUMMARY AVAILABLE]</p>
+        }
+      </div>
+
+      {/* Key points */}
+      <div className="border border-border p-3">
+        <p className="font-mono font-semibold text-[10px] uppercase tracking-widest text-muted mb-2">KEY POINTS</p>
+        {keyPoints.length > 0
+          ? (
+            <div className="flex flex-col gap-1.5">
+              {keyPoints.map((point, i) => (
+                <p key={i} className="font-mono text-[11px] text-[#EAEAEA] leading-relaxed">
+                  - {point}
+                </p>
+              ))}
+            </div>
+          )
+          : <p className="font-mono text-[11px] text-muted">[NO KEY POINTS FOUND]</p>
         }
       </div>
 

@@ -9,17 +9,17 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 // ── Status bar ────────────────────────────────────────────────────────────────
 function StatusBar({ settings }: { settings: Settings | null }) {
-  const provider = settings?.provider ?? 'gemini';
+  const provider = settings?.provider ?? 'offline';
   const hasGeminiKey = Boolean(settings?.apiKeys?.gemini);
   const isReady = provider === 'gemini' ? hasGeminiKey : true;
 
   const statusLabel = provider === 'offline'
-    ? 'OFFLINE NLP'
+    ? 'NOMINAL'
     : provider === 'ollama'
       ? 'OLLAMA LOCAL'
       : hasGeminiKey
-        ? 'GEMINI READY'
-        : 'NO KEY';
+        ? 'BEAST'
+        : 'BEAST / NO KEY';
 
   return (
     <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background">
@@ -89,6 +89,44 @@ function ModeSelector({ mode, onModeChange }: { mode: GenerationMode; onModeChan
           className={cn(
             'flex-1 flex flex-col items-center font-mono font-semibold text-[10px] uppercase tracking-wider py-1.5 px-1 transition-colors',
             m.mode === mode
+              ? 'border-2 border-primary text-primary'
+              : 'border border-border text-white hover:bg-surface-hover'
+          )}
+        >
+          <span>{m.label}</span>
+          <span className="font-mono font-normal text-[8px] text-muted mt-0.5 normal-case tracking-normal">
+            {m.sub}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Service selector ──────────────────────────────────────────────────────────
+type ServiceProvider = 'gemini' | 'offline';
+
+const SERVICE_MODES: { provider: ServiceProvider; label: string; sub: string }[] = [
+  { provider: 'gemini', label: 'BEAST', sub: 'Online services + RAG' },
+  { provider: 'offline', label: 'NOMINAL', sub: 'Offline NLP + history' },
+];
+
+function ServiceSelector({
+  provider,
+  onProviderChange,
+}: {
+  provider: ServiceProvider;
+  onProviderChange: (provider: ServiceProvider) => void;
+}) {
+  return (
+    <div className="flex gap-1.5 px-3 py-2.5 border-b border-border">
+      {SERVICE_MODES.map((m) => (
+        <button
+          key={m.provider}
+          onClick={() => onProviderChange(m.provider)}
+          className={cn(
+            'flex-1 flex flex-col items-center font-mono font-semibold text-[10px] uppercase tracking-wider py-1.5 px-1 transition-colors',
+            m.provider === provider
               ? 'border-2 border-primary text-primary'
               : 'border border-border text-white hover:bg-surface-hover'
           )}
@@ -224,7 +262,7 @@ function CaptureButton({
 function NoKeyWarning() {
   return (
     <p className="font-mono text-[10px] text-danger uppercase mt-2">
-      No Gemini API key configured.{' '}
+      Beast mode needs a Gemini API key.{' '}
       <button
         onClick={() => browser.runtime.openOptionsPage()}
         className="underline hover:no-underline"
@@ -239,29 +277,60 @@ function NoKeyWarning() {
 export default function PopupApp() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [mode, setMode] = useState<GenerationMode>('FAST');
+  const [provider, setProvider] = useState<ServiceProvider>('offline');
+  const [geminiKey, setGeminiKey] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [captureState, setCaptureState] = useState<CaptureState>('idle');
   const [documentId, setDocumentId] = useState<string | undefined>();
+  const [progress, setProgress] = useState<{ current: number; total: number } | undefined>();
+  const [errorMsg, setErrorMsg] = useState<string | undefined>();
   const [importState, setImportState] = useState<ImportState>('idle');
   const [importedDocumentId, setImportedDocumentId] = useState<string | undefined>();
+  const [importErrorMsg, setImportErrorMsg] = useState<string | undefined>();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    getSettings().then((s) => { setSettings(s); setMode(s.defaultMode ?? 'FAST'); });
+    getSettings().then((s) => {
+      setSettings(s);
+      setMode(s.defaultMode ?? 'FAST');
+      setProvider(s.provider === 'gemini' ? 'gemini' : 'offline');
+      setGeminiKey(s.apiKeys.gemini ?? '');
+    });
   }, []);
+
+  async function handleSaveApiKey() {
+    const updated: Settings = {
+      ...(settings ?? { provider: 'offline', ollamaEndpoint: 'http://localhost:11434', ollamaModel: 'llama3', apiKeys: {}, defaultMode: mode }),
+      apiKeys: { ...(settings?.apiKeys ?? {}), gemini: geminiKey || undefined },
+      provider: settings?.provider ?? provider,
+      defaultMode: settings?.defaultMode ?? mode,
+    };
+    setSettings(updated);
+    await saveSettings(updated);
+  }
 
   function handleModeChange(newMode: GenerationMode) {
     setMode(newMode);
     const updated: Settings = {
-      ...(settings ?? { provider: 'gemini', ollamaEndpoint: 'http://localhost:11434', ollamaModel: 'llama3', apiKeys: {} }),
+      ...(settings ?? { provider: 'offline', ollamaEndpoint: 'http://localhost:11434', ollamaModel: 'llama3', apiKeys: {}, defaultMode: newMode }),
       defaultMode: newMode,
-      provider: newMode === 'LOCAL' ? 'offline' : (settings?.provider ?? 'gemini'),
     };
     setSettings(updated);
     saveSettings(updated);
   }
 
-  const hasNoKey = (settings?.provider ?? 'gemini') === 'gemini' && !settings?.apiKeys?.gemini;
+  function handleProviderChange(newProvider: ServiceProvider) {
+    setProvider(newProvider);
+    const updated: Settings = {
+      ...(settings ?? { provider: 'offline', ollamaEndpoint: 'http://localhost:11434', ollamaModel: 'llama3', apiKeys: {}, defaultMode: mode }),
+      provider: newProvider,
+      defaultMode: settings?.defaultMode ?? mode,
+    };
+    setSettings(updated);
+    saveSettings(updated);
+  }
+
+  const hasNoKey = provider === 'gemini' && !settings?.apiKeys?.gemini;
 
   async function handleCaptureClick() {
     try {
@@ -296,6 +365,7 @@ export default function PopupApp() {
       browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${importedDocumentId}`) });
       return;
     }
+    setImportErrorMsg(undefined);
     fileInputRef.current?.click();
   }
 
@@ -305,6 +375,7 @@ export default function PopupApp() {
 
     try {
       setImportState('loading');
+      setImportErrorMsg(undefined);
       const buffer = await file.arrayBuffer();
       const bytes = Array.from(new Uint8Array(buffer));
 
@@ -316,10 +387,14 @@ export default function PopupApp() {
       if (response.type === 'CAPTURE_COMPLETE') {
         setImportedDocumentId(response.payload.documentId);
         setImportState('success');
+        setImportErrorMsg(undefined);
       } else {
+        const errPayload = (response as { type: 'CAPTURE_ERROR'; payload: { error: string } }).payload;
+        setImportErrorMsg(errPayload?.error ?? 'Unknown PDF import error');
         setImportState('error');
       }
-    } catch {
+    } catch (e) {
+      setImportErrorMsg((e as Error).message ?? 'Unknown PDF import error');
       setImportState('error');
     } finally {
       e.target.value = '';
@@ -337,10 +412,37 @@ export default function PopupApp() {
     <div className="w-[320px] h-[480px] bg-background text-white flex flex-col overflow-hidden">
       <StatusBar settings={settings} />
       <PageContextZone />
+      <div className="px-3 py-2.5 border-b border-border">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-muted mb-2">API KEY</p>
+        <div className="flex gap-2">
+          <Input
+            type="password"
+            value={geminiKey}
+            onChange={(e) => setGeminiKey(e.target.value)}
+            placeholder="AIza..."
+            autoComplete="off"
+            spellCheck={false}
+            className="font-mono text-[11px] bg-surface border-border text-white placeholder:text-muted h-8"
+          />
+          <button
+            onClick={handleSaveApiKey}
+            className="shrink-0 border border-primary text-primary font-mono text-[10px] uppercase tracking-wider px-3 h-8 hover:bg-primary/10"
+          >
+            [SAVE]
+          </button>
+        </div>
+      </div>
+      <ServiceSelector provider={provider} onProviderChange={handleProviderChange} />
       <ModeSelector mode={mode} onModeChange={handleModeChange} />
       <TagInput tags={tags} onTagsChange={setTags} />
       <div className="px-3 pb-3 pt-2 flex flex-col gap-2">
-        <CaptureButton state={captureState} documentId={documentId} onClick={handleCaptureClick} />
+        <CaptureButton
+          state={captureState}
+          documentId={documentId}
+          onClick={handleCaptureClick}
+          progress={progress}
+          errorMsg={errorMsg}
+        />
         <button
           disabled={importState === 'loading'}
           onClick={handleImportClick}
@@ -361,6 +463,11 @@ export default function PopupApp() {
           onChange={handlePdfSelected}
           className="hidden"
         />
+        {importState === 'error' && importErrorMsg && (
+          <p className="font-mono text-[9px] text-danger uppercase leading-tight px-0.5">
+            {importErrorMsg.slice(0, 120)}{importErrorMsg.length > 120 ? '…' : ''}
+          </p>
+        )}
         {hasNoKey && <NoKeyWarning />}
       </div>
       <div className="flex-1" />

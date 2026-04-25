@@ -13,37 +13,6 @@ function getValidation(key: string): ValidationState {
   return validateGeminiKey(key);
 }
 
-type SupportedProvider = 'gemini' | 'ollama' | 'offline';
-
-function normalizeProvider(provider: string | undefined): SupportedProvider {
-  if (provider === 'ollama' || provider === 'offline') return provider;
-  return 'gemini';
-}
-
-// ── Getting started ───────────────────────────────────────────────────────────
-function GettingStartedSection() {
-  return (
-    <section className="mb-8">
-      <h2 className="font-mono text-xs font-semibold uppercase tracking-widest text-muted mb-3">
-        GETTING STARTED
-      </h2>
-      <div className="card p-4">
-        <p className="font-mono text-xs uppercase tracking-wider text-muted mb-2">
-          Add your Google AI Studio API key to start capturing pages.
-        </p>
-        <a
-          href="https://aistudio.google.com/app/apikey"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-mono text-xs uppercase tracking-wider text-primary hover:underline"
-        >
-          GET YOUR FREE API KEY ↗
-        </a>
-      </div>
-    </section>
-  );
-}
-
 // ── Model selector ────────────────────────────────────────────────────────────
 
 const MODEL_DEFS: { mode: GenerationMode; label: string; model: string; description: string; quota: string }[] = [
@@ -56,57 +25,13 @@ const MODEL_DEFS: { mode: GenerationMode; label: string; model: string; descript
   },
   {
     mode: 'BALANCED',
-    label: 'BALANCED',
-    model: 'gemma-3-12b-it',
-    description: 'Good quality, higher daily quota',
-    quota: '14,400 req/day free',
-  },
-  {
-    mode: 'DEEP',
-    label: 'DEEP',
-    model: 'gemma-3-27b-it',
-    description: 'Best quality structured notes',
-    quota: '14,400 req/day free',
-  },
-  {
-    mode: 'LOCAL',
-    label: 'LOCAL',
-    model: 'offline keyword + embeddings',
-    description: 'No cloud API, fully local fallback',
-    quota: 'No network required',
-  },
-];
-
-function ModelSelector({ activeMode, onSelect }: { activeMode: GenerationMode; onSelect: (m: GenerationMode) => void }) {
-  return (
-    <section className="mb-8">
-      <h2 className="font-mono text-xs font-semibold uppercase tracking-widest text-muted mb-3">
-        CAPTURE MODEL
-      </h2>
-      <div className="flex gap-3">
-        {MODEL_DEFS.map(({ mode, label, model, description, quota }) => (
-          <div
-            key={mode}
-            onClick={() => onSelect(mode)}
-            className={cn(
-              'card flex-1 p-4 cursor-pointer transition-colors hover:bg-surface-hover',
-              activeMode === mode && 'active-state'
-            )}
-          >
-            <p className={cn(
-              'font-mono text-xs font-semibold uppercase tracking-wider mb-1',
-              activeMode === mode ? 'text-primary' : 'text-white'
-            )}>
-              {label}
-            </p>
-            <p className="font-mono text-[10px] text-muted uppercase tracking-wide mb-2 leading-relaxed">
               {description}
             </p>
             <p className="font-mono text-[9px] text-[#444] uppercase tracking-wide">
               {model}
             </p>
             <p className="font-mono text-[9px] text-primary uppercase tracking-wide mt-1">
-              {quota}
+  const [provider, setProvider] = useState<Settings['provider']>('offline');
             </p>
           </div>
         ))}
@@ -165,7 +90,7 @@ export default function SettingsApp() {
   const [geminiKey, setGeminiKey] = useState('');
   const [geminiVal, setGeminiVal] = useState<ValidationState>('empty');
   const [mode, setMode] = useState<GenerationMode>('FAST');
-  const [provider, setProvider] = useState<SupportedProvider>('gemini');
+  const [provider, setProvider] = useState<SupportedProvider>('offline');
   const [ollamaEndpoint, setOllamaEndpoint] = useState('http://localhost:11434');
   const [ollamaModel, setOllamaModel] = useState('llama3');
   const [saved, setSaved] = useState(false);
@@ -176,7 +101,7 @@ export default function SettingsApp() {
       setGeminiKey(g);
       setGeminiVal(getValidation(g));
       setMode(s.defaultMode);
-      setProvider(normalizeProvider(s.provider));
+      setProvider(s.provider ?? 'offline');
       setOllamaEndpoint(s.ollamaEndpoint || 'http://localhost:11434');
       setOllamaModel(s.ollamaModel || 'llama3');
     });
@@ -201,10 +126,6 @@ export default function SettingsApp() {
         NOTCH — SETTINGS
       </h1>
 
-      <GettingStartedSection />
-
-      <ProviderSelector provider={provider} onSelect={setProvider} />
-
       {/* API Key */}
       <section className="mb-8">
         <h2 className="font-mono text-xs font-semibold uppercase tracking-widest text-muted mb-3">
@@ -215,7 +136,7 @@ export default function SettingsApp() {
             <span className="font-mono text-xs font-semibold uppercase tracking-wider text-white">
               GEMINI
             </span>
-            {provider === 'gemini' && geminiVal !== 'empty' && (
+            {geminiVal !== 'empty' && (
               <span className={cn(
                 'font-mono text-[11px] font-semibold uppercase tracking-wider',
                 geminiVal === 'valid' ? 'text-primary' : 'text-danger'
@@ -231,7 +152,6 @@ export default function SettingsApp() {
             onChange={(e) => { setGeminiKey(e.target.value); setGeminiVal(getValidation(e.target.value)); }}
             autoComplete="off"
             spellCheck={false}
-            disabled={provider !== 'gemini'}
             className="font-mono text-xs bg-background border-border text-white placeholder:text-muted"
           />
           <p className="font-mono text-[10px] text-muted uppercase tracking-wide mt-2">

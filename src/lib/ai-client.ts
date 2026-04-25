@@ -1,4 +1,4 @@
-import type { GenerationMode, Settings } from './types';
+import type { ContentFrame, GenerationMode, GeminiModel, Settings } from './types';
 import { log } from './logger';
 
 // ─── Typed Errors ────────────────────────────────────────────────────────────
@@ -27,17 +27,19 @@ const MODE_TO_MODEL: Record<Exclude<GenerationMode, 'LOCAL'>, GeminiModel> = {
 
 function buildFastPrompt(content: string, imageRefs: string, frame?: ContentFrame): string {
   const frameHint = frame && frame.total > 1
-    ? `\n\n[FRAME ${frame.index + 1} of ${frame.total}] This is segment ${frame.index + 1} of a larger document. ${frame.index === 0 ? 'Include full structure: title, summary, entities, concepts, timeline, and main content.' : 'Continue the main content. Do NOT repeat the title, summary, or entities — only add new content sections.'}\n`
+    ? `\n\n[FRAME ${frame.index + 1} of ${frame.total}] This is segment ${frame.index + 1} of a larger document. ${frame.index === 0 ? 'Include full structure: title, summary, key points, entities, concepts, timeline, diagrams, images, and main content.' : 'Continue the main content. Do NOT repeat the title, summary, key points, entities, concepts, or timeline — only add new content sections.'}\n`
     : '';
   return `You are a document structuring assistant. Given the following web page content, produce a structured markdown document.${frameHint}
 
 Requirements:
-- Title: Extract or infer a clear document title (## heading)
-- Summary: 2-3 sentence summary
-- Key Entities: List named people, organizations, technologies, and concepts
-- Main Content: Restructure into logical sections with ## headings
-- Convert ASCII diagrams to \`\`\`mermaid\`\`\` blocks
-- Timeline: Extract chronological events if applicable
+  - Title: Extract or infer a clear document title as the top-level # heading
+  - Summary: 2-3 sentence summary under ## Summary
+  - Key Points: 3-5 concise bullets under ## Key Points
+  - Key Entities: List named people, organizations, technologies, and concepts
+  - Main Content: Restructure into logical sections with ## headings
+  - Diagrams: Convert flowcharts and block diagrams to \`\`\`mermaid\`\`\` blocks, and UML/use-case/sequence/class diagrams to \`\`\`plantuml\`\`\` blocks
+  - Images/Photos: Keep image references near the most relevant section and preserve their alt text/captions
+  - Timeline: Extract chronological events if applicable
 
 Output ONLY valid markdown. No preamble or explanation.
 
@@ -55,15 +57,16 @@ function buildDeepPrompt(content: string, imageRefs: string, frame?: ContentFram
   return `You are an expert knowledge structuring assistant. Produce a comprehensive structured markdown document for a developer knowledge base.${frameHint}
 
 Requirements:
-- Title: Precise document title
-- Summary: 4-6 sentence executive summary
+- Title: Precise document title as the top-level # heading
+- Summary: 4-6 sentence executive summary under ## Summary
+- Key Points: 3-7 high-signal bullets under ## Key Points
 - Key Entities: Exhaustive list (people, orgs, technologies, concepts, APIs) with types
 - Timeline: Chronological events with dates
 - Concepts: Deep explanations of key technical terms
 - Main Content: Logical sections with ## and ### headings
 - Code blocks: Preserve with correct language identifiers
-- Diagrams: Convert ALL ASCII art to \`\`\`mermaid\`\`\` or \`\`\`plantuml\`\`\`
-- Images: Position contextually
+- Diagrams: Convert ALL ASCII art, flowcharts, and block diagrams to \`\`\`mermaid\`\`\`; convert UML, use-case, sequence, and class diagrams to \`\`\`plantuml\`\`\`
+- Images/Photos: Place image references contextually beside the most relevant section and preserve their alt text
 
 Output ONLY valid markdown. No preamble or explanation.
 
@@ -184,7 +187,6 @@ export async function sendCaptureRequest(
     throw new AIClientError('No Gemini API key configured. Add your key in Settings.', 'MISSING_KEY');
   }
 
-  const model = MODE_TO_MODEL[mode];
   const imageRefsText = imageRefs
     .map(img => `[IMG: ${img.url} | ${img.alt} | ${img.paragraphContext}]`)
     .join('\n');
