@@ -37,6 +37,7 @@
     "lowlight": "^3.3.0",
     "marked": "^18.0.0",
     "mermaid": "^11.14.0",
+    "pdfjs-dist": "^5.6.205",
     "plantuml-encoder": "^1.4.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

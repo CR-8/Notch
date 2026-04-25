@@ -4,8 +4,8 @@ export type GeminiModel =
   | 'gemma-3-27b-it'                 // DEEP — best quality open model
   | 'gemma-3-12b-it';                // BALANCED — good quality, higher free quota
 
-export type GenerationMode = 'FAST' | 'DEEP' | 'BALANCED';
-export type LLMProvider = 'gemini' | 'ollama';
+export type GenerationMode = 'FAST' | 'DEEP' | 'BALANCED' | 'LOCAL';
+export type LLMProvider = 'gemini' | 'ollama' | 'offline' | 'openai' | 'anthropic';
 
 export interface Entity {
   name: string;
@@ -83,13 +83,17 @@ export interface DocumentChunk {
   chunkIndex: number;
   text: string;
   paragraphIndex: number;
-  embedding: Float32Array;
+  embedding?: Float32Array;
+  source?: 'document' | 'history';
 }
 
 export interface Settings {
   apiKeys: {
     gemini?: string;
+    openai?: string;
+    anthropic?: string;
   };
+  provider?: LLMProvider;
   ollamaEndpoint: string;
   defaultMode: GenerationMode;
   ollamaModel: string;
@@ -98,6 +102,16 @@ export interface Settings {
 export interface Citation {
   chunkIndex: number;
   paragraphIndex: number;
+}
+
+export interface ChatMessageRecord {
+  id: string;
+  documentId: string;
+  role: 'user' | 'notch';
+  text: string;
+  citations?: Citation[];
+  isError?: boolean;
+  createdAt: string;
 }
 
 export interface DOMExtraction {
@@ -117,6 +131,7 @@ export interface DOMExtraction {
 
 export type NotchMessage =
   | { type: 'CAPTURE_PAGE'; payload: { tabId: number; mode: GenerationMode; tags: string[] } }
+  | { type: 'IMPORT_PDF'; payload: { fileName: string; bytes: number[]; tags: string[] } }
   | { type: 'EXTRACT_DOM'; payload: Record<string, never> }
   | { type: 'DOM_PAYLOAD'; payload: DOMExtraction }
   | { type: 'CAPTURE_COMPLETE'; payload: { documentId: string } }

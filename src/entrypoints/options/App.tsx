@@ -13,6 +13,13 @@ function getValidation(key: string): ValidationState {
   return validateGeminiKey(key);
 }
 
+type SupportedProvider = 'gemini' | 'ollama' | 'offline';
+
+function normalizeProvider(provider: string | undefined): SupportedProvider {
+  if (provider === 'ollama' || provider === 'offline') return provider;
+  return 'gemini';
+}
+
 // ── Getting started ───────────────────────────────────────────────────────────
 function GettingStartedSection() {
   return (
@@ -61,6 +68,13 @@ const MODEL_DEFS: { mode: GenerationMode; label: string; model: string; descript
     description: 'Best quality structured notes',
     quota: '14,400 req/day free',
   },
+  {
+    mode: 'LOCAL',
+    label: 'LOCAL',
+    model: 'offline keyword + embeddings',
+    description: 'No cloud API, fully local fallback',
+    quota: 'No network required',
+  },
 ];
 
 function ModelSelector({ activeMode, onSelect }: { activeMode: GenerationMode; onSelect: (m: GenerationMode) => void }) {
@@ -101,11 +115,59 @@ function ModelSelector({ activeMode, onSelect }: { activeMode: GenerationMode; o
   );
 }
 
+const PROVIDER_DEFS: Array<{ id: SupportedProvider; label: string; description: string }> = [
+  { id: 'gemini', label: 'Gemini Cloud', description: 'Google-hosted generation using API key' },
+  { id: 'ollama', label: 'Ollama Local', description: 'Run local LLM via http://localhost:11434' },
+  { id: 'offline', label: 'Offline NLP', description: 'No LLM calls, keyword-based local answers' },
+];
+
+function ProviderSelector({
+  provider,
+  onSelect,
+}: {
+  provider: SupportedProvider;
+  onSelect: (provider: SupportedProvider) => void;
+}) {
+  return (
+    <section className="mb-8">
+      <h2 className="font-mono text-xs font-semibold uppercase tracking-widest text-muted mb-3">
+        ANSWER PROVIDER
+      </h2>
+      <div className="flex gap-3">
+        {PROVIDER_DEFS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSelect(item.id)}
+            className={cn(
+              'card flex-1 p-4 text-left transition-colors hover:bg-surface-hover',
+              provider === item.id && 'active-state'
+            )}
+          >
+            <p className={cn(
+              'font-mono text-xs font-semibold uppercase tracking-wider mb-1',
+              provider === item.id ? 'text-primary' : 'text-white'
+            )}>
+              {item.label}
+            </p>
+            <p className="font-mono text-[10px] text-muted uppercase tracking-wide leading-relaxed">
+              {item.description}
+            </p>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ── Root ──────────────────────────────────────────────────────────────────────
 export default function SettingsApp() {
   const [geminiKey, setGeminiKey] = useState('');
   const [geminiVal, setGeminiVal] = useState<ValidationState>('empty');
   const [mode, setMode] = useState<GenerationMode>('FAST');
+  const [provider, setProvider] = useState<SupportedProvider>('gemini');
+  const [ollamaEndpoint, setOllamaEndpoint] = useState('http://localhost:11434');
+  const [ollamaModel, setOllamaModel] = useState('llama3');
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -114,15 +176,19 @@ export default function SettingsApp() {
       setGeminiKey(g);
       setGeminiVal(getValidation(g));
       setMode(s.defaultMode);
+      setProvider(normalizeProvider(s.provider));
+      setOllamaEndpoint(s.ollamaEndpoint || 'http://localhost:11434');
+      setOllamaModel(s.ollamaModel || 'llama3');
     });
   }, []);
 
   async function handleSave() {
     const settings: Settings = {
       apiKeys: { gemini: geminiKey || undefined },
-      ollamaEndpoint: 'http://localhost:11434',
+      provider,
+      ollamaEndpoint,
       defaultMode: mode,
-      ollamaModel: 'llama3',
+      ollamaModel,
     };
     await saveSettings(settings);
     setSaved(true);
@@ -137,6 +203,8 @@ export default function SettingsApp() {
 
       <GettingStartedSection />
 
+      <ProviderSelector provider={provider} onSelect={setProvider} />
+
       {/* API Key */}
       <section className="mb-8">
         <h2 className="font-mono text-xs font-semibold uppercase tracking-widest text-muted mb-3">
@@ -147,7 +215,7 @@ export default function SettingsApp() {
             <span className="font-mono text-xs font-semibold uppercase tracking-wider text-white">
               GEMINI
             </span>
-            {geminiVal !== 'empty' && (
+            {provider === 'gemini' && geminiVal !== 'empty' && (
               <span className={cn(
                 'font-mono text-[11px] font-semibold uppercase tracking-wider',
                 geminiVal === 'valid' ? 'text-primary' : 'text-danger'
@@ -163,6 +231,7 @@ export default function SettingsApp() {
             onChange={(e) => { setGeminiKey(e.target.value); setGeminiVal(getValidation(e.target.value)); }}
             autoComplete="off"
             spellCheck={false}
+            disabled={provider !== 'gemini'}
             className="font-mono text-xs bg-background border-border text-white placeholder:text-muted"
           />
           <p className="font-mono text-[10px] text-muted uppercase tracking-wide mt-2">
@@ -178,6 +247,44 @@ export default function SettingsApp() {
           </p>
         </div>
       </section>
+
+      {provider === 'ollama' && (
+        <section className="mb-8">
+          <h2 className="font-mono text-xs font-semibold uppercase tracking-widest text-muted mb-3">
+            OLLAMA CONNECTION
+          </h2>
+          <div className="card p-4 flex flex-col gap-3">
+            <div>
+              <p className="font-mono text-[10px] text-muted uppercase tracking-wide mb-1">Endpoint</p>
+              <Input
+                value={ollamaEndpoint}
+                onChange={(e) => setOllamaEndpoint(e.target.value)}
+                placeholder="http://localhost:11434"
+                className="font-mono text-xs bg-background border-border text-white placeholder:text-muted"
+              />
+            </div>
+            <div>
+              <p className="font-mono text-[10px] text-muted uppercase tracking-wide mb-1">Model</p>
+              <Input
+                value={ollamaModel}
+                onChange={(e) => setOllamaModel(e.target.value)}
+                placeholder="llama3"
+                className="font-mono text-xs bg-background border-border text-white placeholder:text-muted"
+              />
+            </div>
+          </div>
+        </section>
+      )}
+
+      {provider === 'offline' && (
+        <section className="mb-8">
+          <div className="card p-4">
+            <p className="font-mono text-[10px] text-muted uppercase tracking-wide leading-relaxed">
+              Offline mode uses local embeddings and keyword-based NLP answers with no network calls.
+            </p>
+          </div>
+        </section>
+      )}
 
       <ModelSelector activeMode={mode} onSelect={setMode} />
 

@@ -17,7 +17,7 @@ export class AIClientError extends Error {
 // ─── Model Mapping ────────────────────────────────────────────────────────────
 
 // Maps each generation mode to its Gemini API model string
-const MODE_TO_MODEL: Record<GenerationMode, GeminiModel> = {
+const MODE_TO_MODEL: Record<Exclude<GenerationMode, 'LOCAL'>, GeminiModel> = {
   FAST:     'gemini-3.1-flash-lite-preview', // 500 RPD free — fastest, most quota
   BALANCED: 'gemma-3-12b-it',               // 14.4K RPD free — good quality
   DEEP:     'gemma-3-27b-it',               // 14.4K RPD free — best quality
@@ -114,6 +114,51 @@ async function callGemini(model: string, prompt: string, apiKey: string, signal:
   return text;
 }
 
+function normalizeOllamaEndpoint(endpoint: string): string {
+  const base = endpoint.trim().replace(/\/$/, '');
+  return base.endsWith('/api/generate') ? base : `${base}/api/generate`;
+}
+
+async function callOllama(prompt: string, settings: Settings, signal: AbortSignal): Promise<string> {
+  const url = normalizeOllamaEndpoint(settings.ollamaEndpoint || 'http://localhost:11434');
+  const model = settings.ollamaModel || 'llama3';
+  log.info('ai-client', `Calling Ollama model: ${model}`);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      prompt,
+      stream: false,
+      options: {
+        num_predict: 512,
+      },
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    const err = new AIClientError(
+      `Ollama API error ${res.status}: ${body || res.statusText}`,
+      'API_ERROR',
+      res.status,
+    );
+    log.error('ai-client', 'Ollama call failed', err);
+    throw err;
+  }
+
+  const data = await res.json();
+  const text = (data.response ?? '').toString();
+  if (!text) {
+    throw new AIClientError('Ollama returned an empty response.', 'API_ERROR');
+  }
+
+  log.success('ai-client', `Ollama ${model} responded (${text.length} chars)`);
+  return text;
+}
+
 // ─── Timeout Helper ───────────────────────────────────────────────────────────
 
 function withTimeout(ms: number): { signal: AbortSignal; clear: () => void } {
@@ -140,10 +185,22 @@ export async function sendCaptureRequest(
 
   const { signal, clear } = withTimeout(300_000);
   try {
+    const provider = settings.provider ?? 'gemini';
+
+    if (provider === 'ollama') {
+      return await callOllama(prompt, settings, signal);
+    }
+
+    if (provider !== 'gemini') {
+      throw new AIClientError(`Provider ${provider} is not supported by sendCaptureRequest.`, 'API_ERROR');
+    }
+
     if (!settings.apiKeys.gemini) {
       throw new AIClientError('No Gemini API key configured. Add your key in Settings.', 'MISSING_KEY');
     }
-    const model = MODE_TO_MODEL[mode];
+
+    const effectiveMode: Exclude<GenerationMode, 'LOCAL'> = mode === 'LOCAL' ? 'BALANCED' : mode;
+    const model = MODE_TO_MODEL[effectiveMode];
     return await callGemini(model, prompt, settings.apiKeys.gemini, signal);
   } catch (err) {
     if (err instanceof AIClientError) throw err;
@@ -158,21 +215,34 @@ export async function sendCaptureRequest(
 
 export async function sendRAGRequest(
   query: string,
-  chunks: Array<{ text: string; paragraphIndex: number }>,
+  chunks: Array<{ text: string; paragraphIndex: number; source?: 'document' | 'history' }>,
   settings: Settings,
 ): Promise<string> {
-  if (!settings.apiKeys.gemini) {
-    throw new AIClientError('No Gemini API key configured.', 'MISSING_KEY');
-  }
-
-  const chunksText = chunks.map((c, i) => `[${i + 1}] ${c.text}`).join('\n\n');
+  const chunksText = chunks
+    .map((c, i) => {
+      const sourceLabel = c.source === 'history' ? 'conversation history' : 'document';
+      return `[${i + 1}] (${sourceLabel}) ${c.text}`;
+    })
+    .join('\n\n');
   const prompt = buildRAGPrompt(query, chunksText);
-
-  // RAG always uses BALANCED model to preserve quota
-  const model = MODE_TO_MODEL['BALANCED'];
 
   const { signal, clear } = withTimeout(120_000);
   try {
+    const provider = settings.provider ?? 'gemini';
+    if (provider === 'ollama') {
+      return await callOllama(prompt, settings, signal);
+    }
+
+    if (provider !== 'gemini') {
+      throw new AIClientError(`Provider ${provider} is not supported by sendRAGRequest.`, 'API_ERROR');
+    }
+
+    if (!settings.apiKeys.gemini) {
+      throw new AIClientError('No Gemini API key configured.', 'MISSING_KEY');
+    }
+
+    // RAG always uses BALANCED model to preserve quota
+    const model = MODE_TO_MODEL['BALANCED'];
     return await callGemini(model, prompt, settings.apiKeys.gemini, signal);
   } catch (err) {
     if (err instanceof AIClientError) throw err;

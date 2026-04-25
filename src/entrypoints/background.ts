@@ -1,7 +1,10 @@
 import { sendCaptureRequest, sendRAGRequest } from '../lib/ai-client';
-import { embedDocument, embedQuery } from '../lib/embedding-engine';
+import { chunkText, embedDocument, embedHistoryTurn, embedQuery } from '../lib/embedding-engine';
+import { getChunksByDocument, saveChatMessage } from '../lib/idb';
+import { buildOfflineCaptureMarkdown, answerWithOfflineNLP, rankChunksByKeywords } from '../lib/nlp-fallback';
+import { parsePdfBytes } from '../lib/pdf-parser';
 import { retrieveTopK } from '../lib/retrieval';
-import { checkStorageQuota, getDocIndex, getSettings, saveDocIndex, saveDocument } from '../lib/storage';
+import { checkStorageQuota, getDocIndex, getDocument, getSettings, saveDocIndex, saveDocument } from '../lib/storage';
 import { log } from '../lib/logger';
 import type { Citation, DOMExtraction, Document, GenerationMode, NotchMessage } from '../lib/types';
 
@@ -12,7 +15,7 @@ export default defineBackground(() => {
     log.info('background', `Extension installed — reason: ${details.reason}`);
     if (details.reason === 'install') {
       const settings = await getSettings();
-      if (!settings.apiKeys.gemini) {
+      if (settings.provider === 'gemini' && !settings.apiKeys.gemini) {
         log.info('background', 'No API key on install — opening Settings');
         browser.tabs.create({ url: browser.runtime.getURL('/options.html' as any) });
       }
@@ -27,6 +30,9 @@ export default defineBackground(() => {
         return true;
       case 'RAG_QUERY':
         handleRagQuery(message.payload, sendResponse);
+        return true;
+      case 'IMPORT_PDF':
+        handleImportPdf(message.payload, sendResponse);
         return true;
       case 'DOM_PAYLOAD':
         // Content script sends this as a fire-and-forget in older code paths — ignore silently
@@ -60,8 +66,11 @@ async function handleCapturePage(
 
     // 2. Call AI
     const settings = await getSettings();
-    const rawResponse = await sendCaptureRequest(domPayload.textContent, domPayload.images, mode, settings);
-    log.success('background', `AI response received (${rawResponse.length} chars)`);
+    const useOfflineCapture = settings.provider === 'offline' || mode === 'LOCAL';
+    const rawResponse = useOfflineCapture
+      ? buildOfflineCaptureMarkdown(domPayload.title, domPayload.textContent)
+      : await sendCaptureRequest(domPayload.textContent, domPayload.images, mode, settings);
+    log.success('background', `Capture response received (${rawResponse.length} chars)`);
 
     // Strip wrapping ```markdown ... ``` fence that some models add around the entire output
     const aiMarkdown = rawResponse
@@ -120,7 +129,7 @@ async function handleCapturePage(
       capturedAt: new Date().toISOString(),
       wordCount: domPayload.wordCount,
       mode,
-      provider: 'gemini',
+      provider: useOfflineCapture ? 'offline' : (settings.provider ?? 'gemini'),
       content: aiMarkdown,
       summary,
       keyEntities,
@@ -153,16 +162,63 @@ async function handleCapturePage(
     sendResponse({ type: 'CAPTURE_COMPLETE', payload: { documentId: doc.id } });
 
     // 8. Embed after a short delay to avoid CPU spike right after capture
-    //    Only embed when a Gemini key is present (RAG is enabled)
-    if (settings.apiKeys.gemini) {
-      setTimeout(() => {
-        embedDocument(doc.id, doc.content).catch(err =>
-          log.error('background', 'Background embedding failed', err)
-        );
-      }, 3000);
-    }
+    setTimeout(() => {
+      embedDocument(doc.id, doc.content).catch(err =>
+        log.error('background', 'Background embedding failed', err)
+      );
+    }, 1500);
   } catch (err) {
     log.error('background', 'Capture failed', err);
+    sendResponse({ type: 'CAPTURE_ERROR', payload: { error: (err as Error).message } });
+  }
+}
+
+async function handleImportPdf(
+  payload: { fileName: string; bytes: number[]; tags: string[] },
+  sendResponse: (response: NotchMessage) => void,
+) {
+  const { fileName, bytes, tags } = payload;
+  log.info('background', `PDF import started — ${fileName}`);
+
+  try {
+    const parsed = await parsePdfBytes(bytes, fileName);
+
+    const markdown = buildOfflineCaptureMarkdown(parsed.title, parsed.content);
+    const doc: Document = {
+      id: crypto.randomUUID(),
+      title: parsed.title,
+      url: `file://${fileName}`,
+      domain: 'local-pdf',
+      capturedAt: new Date().toISOString(),
+      wordCount: parsed.wordCount,
+      mode: 'LOCAL',
+      provider: 'offline',
+      content: markdown,
+      summary: '',
+      keyEntities: [],
+      timeline: [],
+      concepts: [],
+      tags,
+      images: [],
+      isStarred: false,
+      isArchived: false,
+      isRead: false,
+      embeddingsGenerated: false,
+      missingImageQueries: [],
+    };
+
+    await saveDocument(doc);
+    const index = await getDocIndex();
+    await saveDocIndex([doc.id, ...index]);
+    await checkStorageQuota();
+
+    // Build local embeddings immediately so PDF RAG works as soon as the reader opens.
+    await embedDocument(doc.id, doc.content);
+
+    sendResponse({ type: 'CAPTURE_COMPLETE', payload: { documentId: doc.id } });
+    log.success('background', `PDF import completed — ${doc.id}`);
+  } catch (err) {
+    log.error('background', 'PDF import failed', err);
     sendResponse({ type: 'CAPTURE_ERROR', payload: { error: (err as Error).message } });
   }
 }
@@ -174,29 +230,106 @@ async function handleRagQuery(
   const { documentId, query } = payload;
   log.info('background', `RAG query — doc: ${documentId}`);
   try {
-    const queryEmbedding = await embedQuery(query);
-    const chunks = await retrieveTopK(documentId, queryEmbedding, 5);
+    await persistChatMessage(documentId, 'user', query);
+
     const settings = await getSettings();
-    const answer = await sendRAGRequest(query, chunks, settings);
-    const citations = parseCitations(answer, chunks);
+    const useOffline = settings.provider === 'offline' || (settings.provider === 'gemini' && !settings.apiKeys.gemini);
+
+    let chunks: Array<{ text: string; paragraphIndex: number; score: number; source: 'document' | 'history' }> = [];
+    let embeddingRetrievalFailed = false;
+
+    try {
+      const queryEmbedding = await embedQuery(query);
+      chunks = await retrieveTopK(documentId, queryEmbedding, 8);
+
+      if (chunks.length === 0) {
+        const doc = await getDocument(documentId);
+        if (doc) {
+          log.info('background', `No embeddings found for ${documentId}; generating now`);
+          await embedDocument(documentId, doc.content);
+          chunks = await retrieveTopK(documentId, queryEmbedding, 8);
+        }
+      }
+    } catch (err) {
+      embeddingRetrievalFailed = true;
+      log.warn('background', 'Embedding retrieval unavailable; using keyword-only retrieval', err);
+    }
+
+    if (chunks.length === 0) {
+      const storedChunks = await getChunksByDocument(documentId);
+      if (storedChunks.length > 0) {
+        chunks = storedChunks.map((chunk) => ({
+          text: chunk.text,
+          paragraphIndex: chunk.paragraphIndex,
+          score: 0,
+          source: chunk.source ?? 'document',
+        }));
+      } else {
+        const doc = await getDocument(documentId);
+        if (doc) {
+          chunks = chunkText(doc.content).map((text, index) => ({
+            text,
+            paragraphIndex: index,
+            score: 0,
+            source: 'document' as const,
+          }));
+        }
+      }
+    }
+
+    const rankedForAnswer = (useOffline || embeddingRetrievalFailed)
+      ? rankChunksByKeywords(query, chunks, 6)
+      : chunks.slice(0, 6);
+    const answer = useOffline
+      ? answerWithOfflineNLP(query, rankedForAnswer)
+      : await sendRAGRequest(query, rankedForAnswer, settings);
+
+    const citations = parseCitations(answer, rankedForAnswer);
+
+    await persistChatMessage(documentId, 'notch', answer, citations);
+    void embedHistoryTurn(documentId, query, answer);
+
     log.success('background', `RAG answered with ${citations.length} citations`);
     sendResponse({ type: 'RAG_RESPONSE', payload: { answer, citations } });
   } catch (err) {
     log.error('background', 'RAG query failed', err);
+    await persistChatMessage(documentId, 'notch', '', undefined, true);
     sendResponse({ type: 'RAG_ERROR', payload: { error: (err as Error).message } });
   }
 }
 
-function parseCitations(answer: string, chunks: Array<{ paragraphIndex: number }>): Citation[] {
+function parseCitations(
+  answer: string,
+  chunks: Array<{ paragraphIndex: number; source?: 'document' | 'history' }>,
+): Citation[] {
   const matches = [...answer.matchAll(/\[(\d+)\]/g)];
   const seen = new Set<number>();
   const citations: Citation[] = [];
   for (const match of matches) {
     const n = parseInt(match[1], 10);
-    if (!seen.has(n) && n >= 1 && n <= chunks.length) {
+    const chunk = chunks[n - 1];
+    if (!seen.has(n) && n >= 1 && n <= chunks.length && chunk && chunk.source !== 'history' && chunk.paragraphIndex >= 0) {
       seen.add(n);
-      citations.push({ chunkIndex: n - 1, paragraphIndex: chunks[n - 1].paragraphIndex });
+      citations.push({ chunkIndex: n - 1, paragraphIndex: chunk.paragraphIndex });
     }
   }
   return citations;
+}
+
+async function persistChatMessage(
+  documentId: string,
+  role: 'user' | 'notch',
+  text: string,
+  citations?: Citation[],
+  isError?: boolean,
+): Promise<void> {
+  await saveChatMessage({
+    id: crypto.randomUUID(),
+    documentId,
+    role,
+    text,
+    citations,
+    isError,
+    createdAt: new Date().toISOString(),
+  });
 }

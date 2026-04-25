@@ -13,6 +13,7 @@ const KEYS = {
 } as const;
 
 const DEFAULT_SETTINGS: Settings = {
+  provider: 'gemini',
   ollamaEndpoint: 'http://localhost:11434',
   defaultMode: 'FAST',
   ollamaModel: 'llama3',
@@ -78,7 +79,15 @@ export function deriveDocumentMeta(doc: Document): DocumentMeta {
 
 export async function getSettings(): Promise<Settings> {
   const result = await browser.storage.local.get(KEYS.settings);
-  return (result[KEYS.settings] as Settings) ?? DEFAULT_SETTINGS;
+  const saved = (result[KEYS.settings] as Partial<Settings> | undefined) ?? {};
+  return {
+    ...DEFAULT_SETTINGS,
+    ...saved,
+    apiKeys: {
+      ...DEFAULT_SETTINGS.apiKeys,
+      ...(saved.apiKeys ?? {}),
+    },
+  };
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {

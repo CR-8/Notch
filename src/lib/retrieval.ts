@@ -1,5 +1,12 @@
 import { getEmbeddingsByDocument, getChunksByDocument } from './idb';
 
+export interface RetrievedChunk {
+  text: string;
+  paragraphIndex: number;
+  score: number;
+  source: 'document' | 'history';
+}
+
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   let dot = 0, normA = 0, normB = 0;
   for (let i = 0; i < a.length; i++) {
@@ -15,7 +22,7 @@ export async function retrieveTopK(
   documentId: string,
   queryEmbedding: Float32Array,
   k: number = 5
-): Promise<Array<{ text: string; paragraphIndex: number; score: number }>> {
+): Promise<RetrievedChunk[]> {
   const [embeddings, chunks] = await Promise.all([
     getEmbeddingsByDocument(documentId),
     getChunksByDocument(documentId),
@@ -27,13 +34,15 @@ export async function retrieveTopK(
     .map(({ id, vector }) => {
       const chunk = chunkMap.get(id);
       if (!chunk) return null;
+      const source = chunk.source ?? 'document';
       return {
         text: chunk.text,
         paragraphIndex: chunk.paragraphIndex,
-        score: cosineSimilarity(queryEmbedding, vector),
+        score: cosineSimilarity(queryEmbedding, vector) + (source === 'document' ? 0.02 : 0),
+        source,
       };
     })
-    .filter((r): r is { text: string; paragraphIndex: number; score: number } => r !== null);
+    .filter((r): r is RetrievedChunk => r !== null);
 
   scored.sort((a, b) => b.score - a.score);
 

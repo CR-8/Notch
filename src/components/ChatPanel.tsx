@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { browser } from 'wxt/browser';
 import { cn } from '@/lib/utils';
+import { getChatMessagesByDocument } from '@/lib/idb';
 import type { Document, Citation } from '@/lib/types';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -280,6 +281,27 @@ export interface ChatPanelProps {
 export function ChatPanel({ doc, prefillQuery, leftPaneRef }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getChatMessagesByDocument(doc.id)
+      .then((stored) => {
+        if (cancelled) return;
+        setMessages(stored.map((m) => ({
+          role: m.role,
+          text: m.text,
+          citations: m.citations,
+          isError: m.isError,
+        })));
+      })
+      .catch(() => {
+        if (!cancelled) setMessages([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [doc.id]);
 
   const handleSubmit = useCallback(async (query: string) => {
     // Append user bubble
