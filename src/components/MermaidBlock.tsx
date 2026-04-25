@@ -13,7 +13,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
 
   // Lazy-load mermaid — always use 'default' (light) theme so arrows/lines
   // are visible regardless of the reader's dark/light mode. The diagram sits
-  // on a white card background so contrast is always correct.
+  // on a parchment card background so contrast remains consistent.
   useEffect(() => {
     import('mermaid').then((mod) => {
       mod.default.initialize({
@@ -45,13 +45,12 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
   }, [code, id, ready]);
 
   return (
-    // White card — ensures arrows and lines are always visible in both
-    // dark and light reader modes since mermaid renders with dark strokes.
-    <div className="my-4 border border-[#e0e0e0] bg-white p-4 overflow-x-auto">
+    // Parchment card keeps line contrast high while matching the app theme.
+    <div className="my-4 border border-border bg-[#f5ead3] p-4 overflow-x-auto">
       <div ref={containerRef} />
       <div ref={errorRef} style={{ display: 'none' }}>
         <span className="font-mono text-xs text-danger">[DIAGRAM ERROR]</span>
-        <pre className="font-mono text-xs text-[#666] mt-2 whitespace-pre-wrap break-all">{code}</pre>
+        <pre className="font-mono text-xs text-muted mt-2 whitespace-pre-wrap break-all">{code}</pre>
       </div>
     </div>
   );

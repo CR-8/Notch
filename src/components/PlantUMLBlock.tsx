@@ -41,8 +41,8 @@ export function PlantUMLBlock({ code }: PlantUMLBlockProps) {
   }, [code]);
 
   return (
-    // White card — PlantUML server renders with dark strokes, needs light bg
-    <div className="my-4 border border-[#e0e0e0] bg-white p-4 overflow-x-auto">
+    // Parchment card — PlantUML server renders with dark strokes, needs light bg
+    <div className="my-4 border border-border bg-[#f5ead3] p-4 overflow-x-auto">
       {loading && <Skeleton className="h-32 w-full" />}
 
       {!loading && !error && svg && (
@@ -52,7 +52,7 @@ export function PlantUMLBlock({ code }: PlantUMLBlockProps) {
       {!loading && error && (
         <>
           <span className="font-mono text-xs text-danger">[DIAGRAM UNAVAILABLE]</span>
-          <pre className="font-mono text-xs text-[#666] mt-2 whitespace-pre-wrap break-all">{code}</pre>
+          <pre className="font-mono text-xs text-muted mt-2 whitespace-pre-wrap break-all">{code}</pre>
         </>
       )}
     </div>

@@ -28,7 +28,7 @@ function scrollToAndHighlightCitation(
   if (scroll) {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
-  el.style.background = '#222222';
+  el.style.background = 'var(--color-highlight)';
   return el;
 }
 
@@ -57,7 +57,7 @@ function CitationChip({ n, citation, leftPaneRef }: CitationChipProps) {
     const el = root.querySelector<HTMLElement>(`[data-paragraph-index="${citation.paragraphIndex}"]`);
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.style.background = '#222222';
+    el.style.background = 'var(--color-highlight)';
     setTimeout(() => { el.style.background = ''; }, 2000);
   }
 
@@ -143,7 +143,7 @@ function NotchBubble({ text, citations, isError, leftPaneRef }: NotchBubbleProps
   const content = isError
     ? <span className="font-mono text-[11px] text-danger">[CONNECTION FAILED]</span>
     : (
-      <p className="font-body text-sm text-[#EAEAEA] leading-relaxed">
+      <p className="font-body text-sm text-foreground leading-relaxed">
         {citations && citations.length > 0
           ? parseAnswerWithCitations(text, citations, leftPaneRef)
           : text

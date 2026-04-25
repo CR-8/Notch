@@ -35,8 +35,8 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef, theme }: DocumentRend
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
 
   const proseClass = theme === 'light'
-    ? 'prose max-w-none font-body text-base leading-relaxed text-[#1a1a1a] focus:outline-none'
-    : 'prose prose-invert max-w-none font-body text-base leading-relaxed text-[#EAEAEA] focus:outline-none';
+    ? 'prose max-w-none font-body text-base leading-relaxed text-[#2e241d] focus:outline-none'
+    : 'prose prose-invert max-w-none font-body text-base leading-relaxed text-foreground focus:outline-none';
 
   const editor = useEditor({
     extensions: [
@@ -172,7 +172,7 @@ function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, 
         >
           LIBRARY
         </button>
-        <span className="font-mono text-xs text-[#444] shrink-0">/</span>
+        <span className="font-mono text-xs text-muted shrink-0">/</span>
         <span className="font-mono text-xs uppercase tracking-wider text-white truncate min-w-0">
           {title}
         </span>
@@ -223,7 +223,7 @@ function scrollToAndHighlight(leftPaneRef: React.RefObject<HTMLDivElement | null
   const el = root.querySelector<HTMLElement>(`[data-paragraph-index="${paragraphIndex}"]`);
   if (!el) return;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  el.style.background = 'rgba(94, 106, 210, 0.2)';
+  el.style.background = 'var(--color-highlight)';
   setTimeout(() => { el.style.background = ''; }, 2000);
 }
 
@@ -237,7 +237,7 @@ function NotesPanel({ doc, leftPaneRef }: NotesPanelProps) {
       <div className="border border-border p-3">
         <p className="font-mono font-semibold text-[10px] uppercase tracking-widest text-muted mb-2">SUMMARY</p>
         {doc.summary
-          ? <p className="font-body text-sm text-[#EAEAEA] leading-relaxed">{doc.summary}</p>
+          ? <p className="font-body text-sm text-foreground leading-relaxed">{doc.summary}</p>
           : <p className="font-mono text-[11px] text-muted">[NO SUMMARY AVAILABLE]</p>
         }
       </div>
@@ -249,7 +249,7 @@ function NotesPanel({ doc, leftPaneRef }: NotesPanelProps) {
           ? (
             <div className="flex flex-col gap-1.5">
               {keyPoints.map((point, i) => (
-                <p key={i} className="font-mono text-[11px] text-[#EAEAEA] leading-relaxed">
+                <p key={i} className="font-mono text-[11px] text-foreground leading-relaxed">
                   - {point}
                 </p>
               ))}
@@ -296,7 +296,7 @@ function NotesPanel({ doc, leftPaneRef }: NotesPanelProps) {
                   className="text-left hover:opacity-70 transition-opacity cursor-pointer"
                 >
                   <p className="font-mono text-[10px] text-primary uppercase">{t.date}</p>
-                  <p className="font-mono text-[11px] text-[#EAEAEA]">{t.description}</p>
+                  <p className="font-mono text-[11px] text-foreground">{t.description}</p>
                 </button>
               ))}
             </div>
@@ -422,13 +422,13 @@ export default function ReaderApp() {
             ref={leftPaneRef}
             className={cn(
               'flex-7 border-r border-border overflow-y-auto transition-colors duration-200',
-              theme === 'light' ? 'bg-white text-[#1a1a1a]' : 'bg-background text-white'
+              theme === 'light' ? 'bg-[#f8f0df] text-[#2e241d]' : 'bg-background text-white'
             )}
           >
             <div className="px-10 py-8">
               <h1 className={cn(
                 'font-heading font-bold text-4xl mb-4 leading-tight',
-                theme === 'light' ? 'text-[#111]' : 'text-white'
+                theme === 'light' ? 'text-[#2a211a]' : 'text-white'
               )}>
                 {doc.title}
               </h1>

@@ -27,7 +27,7 @@ function StatusBar({ settings }: { settings: Settings | null }) {
         NOTCH
       </span>
       <div className="flex items-center gap-1.5">
-        <span className={cn('inline-block w-2 h-2', isReady ? 'bg-[#5E6AD2]' : 'bg-[#FF3366]')} />
+        <span className={cn('inline-block w-2 h-2', isReady ? 'bg-primary' : 'bg-danger')} />
         <span className={cn('font-mono text-[9px] uppercase tracking-wider', isReady ? 'text-primary' : 'text-danger')}>
           {statusLabel}
         </span>

@@ -15,6 +15,8 @@ function getValidation(key: string): ValidationState {
 
 // ── Model selector ────────────────────────────────────────────────────────────
 
+type SupportedProvider = Settings['provider'];
+
 const MODEL_DEFS: { mode: GenerationMode; label: string; model: string; description: string; quota: string }[] = [
   {
     mode: 'FAST',
@@ -25,15 +27,66 @@ const MODEL_DEFS: { mode: GenerationMode; label: string; model: string; descript
   },
   {
     mode: 'BALANCED',
+    label: 'BALANCED',
+    model: 'gemini-3.1-flash',
+    description: 'Balanced speed and quality for most captures',
+    quota: '250 req/day free',
+  },
+  {
+    mode: 'DEEP',
+    label: 'DEEP',
+    model: 'gemini-3.1-pro',
+    description: 'Best quality for dense technical documents',
+    quota: 'Lower quota, highest quality',
+  },
+  {
+    mode: 'LOCAL',
+    label: 'LOCAL',
+    model: 'offline-nlp-fallback',
+    description: 'No API usage; local extraction and retrieval only',
+    quota: 'Unlimited local usage',
+  },
+];
+
+function ModelSelector({
+  activeMode,
+  onSelect,
+}: {
+  activeMode: GenerationMode;
+  onSelect: (mode: GenerationMode) => void;
+}) {
+  return (
+    <section className="mb-8">
+      <h2 className="font-mono text-xs font-semibold uppercase tracking-widest text-muted mb-3">
+        DEFAULT MODE
+      </h2>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {MODEL_DEFS.map(({ mode, label, model, description, quota }) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => onSelect(mode)}
+            className={cn(
+              'card text-left transition-colors hover:bg-surface-hover p-4',
+              activeMode === mode && 'active-state'
+            )}
+          >
+            <p className={cn(
+              'font-mono text-xs font-semibold uppercase tracking-wider mb-1',
+              activeMode === mode ? 'text-primary' : 'text-white'
+            )}>
+              {label}
+            </p>
+            <p className="font-mono text-[10px] text-muted uppercase tracking-wide leading-relaxed">
               {description}
             </p>
-            <p className="font-mono text-[9px] text-[#444] uppercase tracking-wide">
+            <p className="font-mono text-[9px] text-muted uppercase tracking-wide mt-2">
               {model}
             </p>
             <p className="font-mono text-[9px] text-primary uppercase tracking-wide mt-1">
-  const [provider, setProvider] = useState<Settings['provider']>('offline');
+              {quota}
             </p>
-          </div>
+          </button>
         ))}
       </div>
     </section>
@@ -167,6 +220,8 @@ export default function SettingsApp() {
           </p>
         </div>
       </section>
+
+      <ProviderSelector provider={provider} onSelect={setProvider} />
 
       {provider === 'ollama' && (
         <section className="mb-8">
