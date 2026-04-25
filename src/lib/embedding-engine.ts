@@ -22,7 +22,19 @@ function resetIdleTimer() {
 async function getExtractor() {
   if (!extractor) {
     log.info('embedding', 'Loading Xenova/all-MiniLM-L6-v2 (~23 MB, first use only)');
-    const { pipeline } = await import('@huggingface/transformers');
+
+    // Vite/Rollup statically traces `import('literal-string')` and bundles the
+    // entire @huggingface/transformers library (~55 MB) into background.js.
+    // Splitting the specifier across a variable prevents static analysis while
+    // remaining valid ESM — the module is still resolved from the extension
+    // bundle at runtime by the browser's own module loader.
+    const pkg = '@huggingface' + '/transformers';
+    const { pipeline, env } = await import(/* @vite-ignore */ pkg);
+
+    // Point ONNX Runtime to locally bundled WASM files — no CDN, works offline
+    // and satisfies Firefox's strict 'self' CSP.
+    env.backends.onnx.wasm.wasmPaths = browser.runtime.getURL('/ort/');
+
     extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
     log.success('embedding', 'Model loaded and cached');
   }

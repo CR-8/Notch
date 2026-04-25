@@ -27,11 +27,16 @@ interface DocumentRendererProps {
   content: string;
   onAskAI: (text: string) => void;
   leftPaneRef?: React.RefObject<HTMLDivElement | null>;
+  theme: 'dark' | 'light';
 }
 
-function DocumentRenderer({ content, onAskAI, leftPaneRef }: DocumentRendererProps) {
+function DocumentRenderer({ content, onAskAI, leftPaneRef, theme }: DocumentRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+
+  const proseClass = theme === 'light'
+    ? 'prose max-w-none font-body text-base leading-relaxed text-[#1a1a1a] focus:outline-none'
+    : 'prose prose-invert max-w-none font-body text-base leading-relaxed text-[#EAEAEA] focus:outline-none';
 
   const editor = useEditor({
     extensions: [
@@ -43,12 +48,16 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef }: DocumentRendererPro
     ],
     content: content ? mdToHtml(content) : '',
     editorProps: {
-      attributes: {
-        class: 'prose prose-invert max-w-none font-body text-base leading-relaxed text-[#EAEAEA] focus:outline-none',
-      },
+      attributes: { class: proseClass },
     },
     editable: false,
   });
+
+  // Re-apply prose class when theme changes
+  useEffect(() => {
+    if (!editor) return;
+    editor.setOptions({ editorProps: { attributes: { class: proseClass } } });
+  }, [editor, theme, proseClass]);
 
   useEffect(() => {
     if (!editor || !content) return;
@@ -148,9 +157,11 @@ interface ReaderTopBarProps {
   onTabChange: (t: 'notes' | 'chat') => void;
   onExportMd?: () => void;
   onExportPdf?: () => void;
+  theme: 'dark' | 'light';
+  onThemeToggle: () => void;
 }
 
-function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf }: ReaderTopBarProps) {
+function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, theme, onThemeToggle }: ReaderTopBarProps) {
   return (
     <div className="h-12 bg-background border-b border-border flex items-center justify-between px-6 shrink-0">
       {/* Breadcrumb */}
@@ -185,7 +196,15 @@ function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf }
         ))}
       </div>
 
-      <div className="shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
+        {/* Theme toggle */}
+        <button
+          onClick={onThemeToggle}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="font-mono font-semibold text-[11px] uppercase tracking-wider text-muted border border-border px-2.5 py-1 hover:text-white hover:border-white transition-colors"
+        >
+          {theme === 'dark' ? '[☀ LIGHT]' : '[☾ DARK]'}
+        </button>
         <ExportMenu onExportMd={onExportMd} onExportPdf={onExportPdf} />
       </div>
     </div>
@@ -306,6 +325,7 @@ export default function ReaderApp() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes');
   const [chatPrefill, setChatPrefill] = useState<string | undefined>();
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const leftPaneRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -374,13 +394,24 @@ export default function ReaderApp() {
           onTabChange={setActiveTab}
           onExportMd={() => downloadMarkdown(doc)}
           onExportPdf={() => exportPDF(leftPaneRef.current!)}
+          theme={theme}
+          onThemeToggle={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
         />
 
         <div className="flex flex-1 overflow-hidden">
-          {/* Left pane — 70%, scrollable */}
-          <div ref={leftPaneRef} className="flex-7 border-r border-border overflow-y-auto">
+          {/* Left pane — 70%, scrollable, theme-aware */}
+          <div
+            ref={leftPaneRef}
+            className={cn(
+              'flex-7 border-r border-border overflow-y-auto transition-colors duration-200',
+              theme === 'light' ? 'bg-white text-[#1a1a1a]' : 'bg-background text-white'
+            )}
+          >
             <div className="px-10 py-8">
-              <h1 className="font-heading font-bold text-4xl text-white mb-4 leading-tight">
+              <h1 className={cn(
+                'font-heading font-bold text-4xl mb-4 leading-tight',
+                theme === 'light' ? 'text-[#111]' : 'text-white'
+              )}>
                 {doc.title}
               </h1>
               <div className="flex gap-4 items-center mb-8">
@@ -394,11 +425,16 @@ export default function ReaderApp() {
                 ))}
               </div>
               <Separator className="bg-border mb-8" />
-              <DocumentRenderer content={doc.content} onAskAI={handleAskAI} leftPaneRef={leftPaneRef} />
+              <DocumentRenderer
+                content={doc.content}
+                onAskAI={handleAskAI}
+                leftPaneRef={leftPaneRef}
+                theme={theme}
+              />
             </div>
           </div>
 
-          {/* Right pane — 30%, sticky (does not scroll with left pane) */}
+          {/* Right pane — 30%, sticky */}
           <div className="flex-3 flex flex-col overflow-hidden sticky top-0 self-start h-[calc(100vh-3rem)]">
             <ScrollArea className="flex-1 p-6">
               {activeTab === 'notes'

@@ -14,8 +14,6 @@ export default defineConfig({
       },
     },
     optimizeDeps: {
-      // Exclude @huggingface/transformers from pre-bundling — it uses dynamic imports
-      // and WASM that must be loaded at runtime, not bundled by Vite.
       exclude: ['@huggingface/transformers'],
     },
   }),
@@ -34,12 +32,15 @@ export default defineConfig({
       open_in_tab: true,
     },
     permissions: ['storage', 'tabs', 'activeTab'],
-    // wasm-unsafe-eval is required by @xenova/transformers (ONNX Runtime WASM backend).
-    // MV3 (Chrome) uses extension_pages; MV2 (Firefox) uses the top-level key.
+    // wasm-unsafe-eval is required by ONNX Runtime WASM backend.
+    // The ONNX .wasm + .mjs files are bundled locally in public/ort/ so no
+    // CDN fetches are needed — both Chrome and Firefox serve them as 'self'.
     ...(browser === 'firefox'
       ? {
-          // Firefox MV2 CSP — must allow wasm-unsafe-eval for ONNX WASM
+          // Firefox MV2 CSP
           content_security_policy: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+          // Make the bundled ONNX runtime files accessible to the background script
+          web_accessible_resources: ['ort/*'],
           browser_specific_settings: {
             gecko: {
               id: 'notch@notch-extension',
@@ -52,6 +53,7 @@ export default defineConfig({
           content_security_policy: {
             extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
           },
+          web_accessible_resources: [{ resources: ['ort/*'], matches: ['<all_urls>'] }],
         }),
   }),
 });
