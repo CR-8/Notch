@@ -1,0 +1,272 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  /* Color tokens */
+  --color-background: #000000;
+  --color-surface: #0f0f0f;
+  --color-surface-hover: #1a1a1a;
+  --color-primary: #5e6ad2;
+  --color-text: #ffffff;
+  --color-muted: #888888;
+  --color-border: #222222;
+  --color-danger: #ff3366;
+
+  /* shadcn CSS variable aliases */
+  --color-background: #000000;
+  --color-foreground: #ffffff;
+  --color-card: #0f0f0f;
+  --color-card-foreground: #ffffff;
+  --color-popover: #0f0f0f;
+  --color-popover-foreground: #ffffff;
+  --color-primary-foreground: #000000;
+  --color-secondary: #1a1a1a;
+  --color-secondary-foreground: #ffffff;
+  --color-muted-foreground: #888888;
+  --color-accent: #1a1a1a;
+  --color-accent-foreground: #ffffff;
+  --color-destructive: #ff3366;
+  --color-destructive-foreground: #ffffff;
+  --color-input: #222222;
+  --color-ring: #5e6ad2;
+
+  /* Typography tokens */
+  --font-heading: "Space Grotesk", sans-serif;
+  --font-body: "Inter Tight", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  /* Border radius — zero everywhere */
+  --radius: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-full: 0px;
+
+  /* Border tokens */
+  --border-structural: 1px solid #222222;
+  --border-active: 2px solid #5e6ad2;
+
+  /* Focus ring */
+  --focus-ring: 0 0 0 1px #5e6ad2;
+
+  /* Keyframe animations */
+  --animate-pulse-skeleton: pulse-skeleton 1.5s ease-in-out infinite;
+  --animate-blink: blink 1s step-end infinite;
+  --animate-capture-pulse: capture-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-skeleton {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes capture-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Base resets */
+@layer base {
+  *, *::before, *::after {
+    border-radius: 0 !important;
+    box-sizing: border-box;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+  }
+
+  *:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+}
+
+/* Utility classes */
+@layer components {
+  .skeleton {
+    background: linear-gradient(90deg, var(--color-surface) 0%, var(--color-surface-hover) 50%, var(--color-surface) 100%);
+    background-size: 200% 100%;
+    animation: var(--animate-pulse-skeleton);
+  }
+
+  .capture-loading {
+    animation: var(--animate-capture-pulse);
+    opacity: 0.7;
+  }
+
+  .blink-cursor::after {
+    content: "█";
+    color: var(--color-primary);
+    animation: var(--animate-blink);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.5rem 1rem;
+    border: var(--border-structural);
+    background: transparent;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s, color 0.1s;
+  }
+
+  .btn:focus-visible {
+    box-shadow: var(--focus-ring);
+  }
+
+  .btn:hover {
+    background: var(--color-surface-hover);
+  }
+
+  .btn-primary {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  .btn-primary:hover {
+    background: var(--color-primary);
+    color: var(--color-background);
+  }
+
+  .btn-danger {
+    border-color: var(--color-danger);
+    color: var(--color-danger);
+  }
+
+  .btn-danger:hover {
+    background: var(--color-danger);
+    color: var(--color-background);
+  }
+
+  .card {
+    background: var(--color-surface);
+    border: var(--border-structural);
+    padding: 1rem;
+  }
+
+  .active-state {
+    border: var(--border-active) !important;
+  }
+
+  .input {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    background: var(--color-surface);
+    border: var(--border-structural);
+    color: var(--color-text);
+    padding: 0.5rem 0.75rem;
+    width: 100%;
+    outline: none;
+  }
+
+  .input::placeholder {
+    color: var(--color-muted);
+  }
+
+  .input:focus-visible {
+    box-shadow: var(--focus-ring);
+  }
+}
+
+/* ── Prose (Tiptap reader) — override typography plugin defaults ─────────────── */
+@layer base {
+  .prose {
+    --tw-prose-body: #eaeaea;
+    --tw-prose-headings: #ffffff;
+    --tw-prose-lead: #cccccc;
+    --tw-prose-links: #5e6ad2;
+    --tw-prose-bold: #ffffff;
+    --tw-prose-counters: #888888;
+    --tw-prose-bullets: #888888;
+    --tw-prose-hr: #222222;
+    --tw-prose-quotes: #cccccc;
+    --tw-prose-quote-borders: #5e6ad2;
+    --tw-prose-captions: #888888;
+    --tw-prose-code: #eaeaea;
+    --tw-prose-pre-code: #eaeaea;
+    --tw-prose-pre-bg: #0f0f0f;
+    --tw-prose-th-borders: #222222;
+    --tw-prose-td-borders: #222222;
+  }
+
+  /* Headings use Space Grotesk, body uses Inter Tight */
+  .prose h1, .prose h2, .prose h3, .prose h4 {
+    font-family: var(--font-heading);
+  }
+
+  .prose p, .prose li, .prose blockquote {
+    font-family: var(--font-body);
+  }
+
+  .prose code, .prose pre {
+    font-family: var(--font-mono);
+  }
+
+  /* Code blocks — match design system surface */
+  .prose pre {
+    background: var(--color-surface) !important;
+    border: 1px solid var(--color-border);
+  }
+
+  /* Inline code */
+  .prose :not(pre) > code {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    padding: 0.1em 0.3em;
+    border-radius: 0 !important;
+    font-size: 0.85em;
+  }
+
+  /* Horizontal rules */
+  .prose hr {
+    border-color: var(--color-border);
+  }
+
+  /* Blockquotes */
+  .prose blockquote {
+    border-left-color: var(--color-primary);
+    color: #cccccc;
+  }
+
+  /* Tables */
+  .prose table {
+    border-collapse: collapse;
+  }
+
+  .prose th, .prose td {
+    border: 1px solid var(--color-border);
+    padding: 0.5rem 0.75rem;
+  }
+
+  .prose th {
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+}
