@@ -1,4 +1,4 @@
-import type { GenerationMode, GeminiModel, Settings } from './types';
+import type { GenerationMode, Settings } from './types';
 import { log } from './logger';
 
 // ─── Typed Errors ────────────────────────────────────────────────────────────
@@ -23,22 +23,23 @@ const MODE_TO_MODEL: Record<Exclude<GenerationMode, 'LOCAL'>, GeminiModel> = {
   DEEP:     'gemma-3-27b-it',               // 14.4K RPD free — best quality
 };
 
-// ─── Prompt Templates ────────────────────────────────────────────────────────
+// ─── Prompt Templates ─────────────────────────────────────────────────────────
 
-function buildFastPrompt(content: string, imageRefs: string): string {
-  return `You are a document structuring assistant. Given the following web page content, produce a structured markdown document.
+function buildFastPrompt(content: string, imageRefs: string, frame?: ContentFrame): string {
+  const frameHint = frame && frame.total > 1
+    ? `\n\n[FRAME ${frame.index + 1} of ${frame.total}] This is segment ${frame.index + 1} of a larger document. ${frame.index === 0 ? 'Include full structure: title, summary, entities, concepts, timeline, and main content.' : 'Continue the main content. Do NOT repeat the title, summary, or entities — only add new content sections.'}\n`
+    : '';
+  return `You are a document structuring assistant. Given the following web page content, produce a structured markdown document.${frameHint}
 
 Requirements:
-- Title: Extract or infer a clear document title
+- Title: Extract or infer a clear document title (## heading)
 - Summary: 2-3 sentence summary
-- Key Entities: List named people, organizations, technologies, and concepts with brief descriptions
-- Main Content: Restructure the content into logical sections with ## headings
-- For any ASCII art diagrams or flowcharts, convert them to fenced \`\`\`mermaid\`\`\` code blocks
-- For any software architecture or sequence descriptions, convert them to fenced \`\`\`plantuml\`\`\` code blocks
-- Place image references (provided as [IMG: url | alt | context]) adjacent to the most semantically relevant section
-- Timeline: If the content is chronological, extract a timeline section
+- Key Entities: List named people, organizations, technologies, and concepts
+- Main Content: Restructure into logical sections with ## headings
+- Convert ASCII diagrams to \`\`\`mermaid\`\`\` blocks
+- Timeline: Extract chronological events if applicable
 
-Output ONLY valid markdown. Do not include any preamble or explanation.
+Output ONLY valid markdown. No preamble or explanation.
 
 PAGE CONTENT:
 ${content}
@@ -47,22 +48,24 @@ IMAGE REFERENCES:
 ${imageRefs}`;
 }
 
-function buildDeepPrompt(content: string, imageRefs: string): string {
-  return `You are an expert knowledge structuring assistant. Given the following web page content, produce a comprehensive structured markdown document suitable for a developer's knowledge base.
+function buildDeepPrompt(content: string, imageRefs: string, frame?: ContentFrame): string {
+  const frameHint = frame && frame.total > 1
+    ? `\n\n[FRAME ${frame.index + 1} of ${frame.total}] This is segment ${frame.index + 1} of a larger document. ${frame.index === 0 ? 'Include full structure: title, summary, key entities, concepts, timeline, and main content.' : 'Continue the main content sections only. Do NOT repeat title, summary, entities, concepts, or timeline — only add new content.'}\n`
+    : '';
+  return `You are an expert knowledge structuring assistant. Produce a comprehensive structured markdown document for a developer knowledge base.${frameHint}
 
 Requirements:
-- Title: Extract or infer a precise document title
+- Title: Precise document title
 - Summary: 4-6 sentence executive summary
-- Key Entities: Exhaustive list of named entities (people, orgs, technologies, concepts, APIs, tools) with types and descriptions
-- Timeline: Chronological events if applicable, with dates
-- Concepts: Deep explanations of key technical or conceptual terms
-- Main Content: Restructure into logical sections with ## headings and ### sub-headings
-- Code blocks: Preserve all code blocks with correct language identifiers
-- Diagrams: Convert ALL ASCII art, flowcharts, and architecture descriptions to appropriate \`\`\`mermaid\`\`\` or \`\`\`plantuml\`\`\` fenced blocks
-- Images: Place each image reference at the most semantically relevant position in the document
-- Cross-references: Add internal markdown links between related sections where appropriate
+- Key Entities: Exhaustive list (people, orgs, technologies, concepts, APIs) with types
+- Timeline: Chronological events with dates
+- Concepts: Deep explanations of key technical terms
+- Main Content: Logical sections with ## and ### headings
+- Code blocks: Preserve with correct language identifiers
+- Diagrams: Convert ALL ASCII art to \`\`\`mermaid\`\`\` or \`\`\`plantuml\`\`\`
+- Images: Position contextually
 
-Output ONLY valid markdown. Do not include any preamble or explanation.
+Output ONLY valid markdown. No preamble or explanation.
 
 PAGE CONTENT:
 ${content}
@@ -72,7 +75,7 @@ ${imageRefs}`;
 }
 
 function buildRAGPrompt(query: string, chunks: string): string {
-  return `You are a precise question-answering assistant. Answer the user's question using ONLY the provided document excerpts.
+  return `You are a precise question-answering assistant. Answer using ONLY the provided document excerpts.
 
 Rules:
 - Cite each piece of information with [N] where N is the excerpt number
@@ -108,6 +111,7 @@ async function callGemini(model: string, prompt: string, apiKey: string, signal:
     log.error('ai-client', `Gemini ${model} failed`, err);
     throw err;
   }
+
   const data = await res.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   log.success('ai-client', `Gemini ${model} responded (${text.length} chars)`);
@@ -174,7 +178,13 @@ export async function sendCaptureRequest(
   imageRefs: Array<{ url: string; alt: string; paragraphContext: string }>,
   mode: GenerationMode,
   settings: Settings,
+  onProgress?: (current: number, total: number) => void,
 ): Promise<string> {
+  if (!settings.apiKeys.gemini) {
+    throw new AIClientError('No Gemini API key configured. Add your key in Settings.', 'MISSING_KEY');
+  }
+
+  const model = MODE_TO_MODEL[mode];
   const imageRefsText = imageRefs
     .map(img => `[IMG: ${img.url} | ${img.alt} | ${img.paragraphContext}]`)
     .join('\n');
@@ -247,7 +257,7 @@ export async function sendRAGRequest(
   } catch (err) {
     if (err instanceof AIClientError) throw err;
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new AIClientError('Request timed out after 30 seconds.', 'TIMEOUT');
+      throw new AIClientError('RAG query timed out after 2 minutes.', 'TIMEOUT');
     }
     throw new AIClientError(`Network error: ${(err as Error).message}`, 'NETWORK_ERROR');
   } finally {

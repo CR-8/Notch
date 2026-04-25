@@ -152,13 +152,25 @@ type CaptureState = 'idle' | 'loading' | 'success' | 'error';
 type ImportState = 'idle' | 'loading' | 'success' | 'error';
 
 const LABELS: Record<CaptureState, string> = {
-  idle: '[CAPTURE PAGE]',
-  loading: '[PARSING...]',
+  idle:    '[CAPTURE PAGE]',
+  loading: '[PROCESSING...]',
   success: '[OPEN IN READER →]',
-  error: '[ERROR — RETRY]',
+  error:   '[ERROR — RETRY]',
 };
 
-function CaptureButton({ state, documentId, onClick }: { state: CaptureState; documentId?: string; onClick: () => void }) {
+function CaptureButton({
+  state,
+  documentId,
+  onClick,
+  progress,
+  errorMsg,
+}: {
+  state: CaptureState;
+  documentId?: string;
+  onClick: () => void;
+  progress?: { current: number; total: number };
+  errorMsg?: string;
+}) {
   function handleClick() {
     if (state === 'loading') return;
     if (state === 'success' && documentId) {
@@ -168,20 +180,43 @@ function CaptureButton({ state, documentId, onClick }: { state: CaptureState; do
     onClick();
   }
 
+  const isMultiSegment = progress && progress.total > 1;
+
   return (
-    <button
-      disabled={state === 'loading'}
-      onClick={handleClick}
-      className={cn(
-        'w-full py-3 font-mono font-semibold text-xs uppercase tracking-wider transition-colors',
-        state === 'idle' && 'border-2 border-primary text-primary hover:bg-primary/10',
-        state === 'loading' && 'border-2 border-primary text-primary capture-loading cursor-not-allowed',
-        state === 'success' && 'bg-surface text-white border border-border hover:bg-surface-hover',
-        state === 'error' && 'border-2 border-danger text-danger hover:bg-danger/10',
+    <div className="flex flex-col gap-1.5">
+      <button
+        disabled={state === 'loading'}
+        onClick={handleClick}
+        className={cn(
+          'w-full py-3 font-mono font-semibold text-xs uppercase tracking-wider transition-colors',
+          state === 'idle'    && 'border-2 border-primary text-primary hover:bg-primary/10',
+          state === 'loading' && 'border-2 border-primary text-primary capture-loading cursor-not-allowed',
+          state === 'success' && 'bg-surface text-white border border-border hover:bg-surface-hover',
+          state === 'error'   && 'border-2 border-danger text-danger hover:bg-danger/10',
+        )}
+      >
+        {state === 'loading' && isMultiSegment
+          ? `[SEGMENT ${progress.current + 1}/${progress.total}...]`
+          : LABELS[state]}
+      </button>
+
+      {/* Multi-segment progress bar */}
+      {isMultiSegment && (
+        <div className="w-full bg-surface border border-border h-1">
+          <div
+            className="h-full bg-primary transition-all duration-500"
+            style={{ width: `${Math.round(((progress.current) / progress.total) * 100)}%` }}
+          />
+        </div>
       )}
-    >
-      {LABELS[state]}
-    </button>
+
+      {/* Error detail */}
+      {state === 'error' && errorMsg && (
+        <p className="font-mono text-[9px] text-danger uppercase leading-tight px-0.5">
+          {errorMsg.slice(0, 120)}{errorMsg.length > 120 ? '…' : ''}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -232,8 +267,10 @@ export default function PopupApp() {
     try {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       const tab = tabs[0];
-      if (!tab?.id) { setCaptureState('error'); return; }
+      if (!tab?.id) { setCaptureState('error'); setErrorMsg('Could not get active tab'); return; }
       setCaptureState('loading');
+      setProgress(undefined);
+      setErrorMsg(undefined);
       const response: import('../../lib/types').NotchMessage = await browser.runtime.sendMessage({
         type: 'CAPTURE_PAGE',
         payload: { tabId: tab.id, mode, tags },
@@ -241,10 +278,14 @@ export default function PopupApp() {
       if (response.type === 'CAPTURE_COMPLETE') {
         setDocumentId(response.payload.documentId);
         setCaptureState('success');
+        setProgress(undefined);
       } else {
+        const errPayload = (response as { type: 'CAPTURE_ERROR'; payload: { error: string } }).payload;
+        setErrorMsg(errPayload?.error ?? 'Unknown error');
         setCaptureState('error');
       }
-    } catch {
+    } catch (e) {
+      setErrorMsg((e as Error).message ?? 'Unknown error');
       setCaptureState('error');
     }
   }

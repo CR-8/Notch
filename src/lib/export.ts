@@ -1,10 +1,14 @@
-import type { Document } from './types';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import type { Document, DocumentChunk } from './types';
+import { getChunksByDocument, getEmbeddingsByDocument } from './idb';
+import { log } from './logger';
 // @ts-ignore
 import plantumlEncoder from 'plantuml-encoder';
 import mermaid from 'mermaid';
 
 // ── Markdown Export ───────────────────────────────────────────────────────────
 
+// ... (existing buildMarkdownExport and downloadMarkdown remain the same)
 export function buildMarkdownExport(doc: Document): string {
   const frontmatter = [
     '---',
@@ -32,87 +36,163 @@ export function downloadMarkdown(doc: Document): void {
   URL.revokeObjectURL(url);
 }
 
-// ── PDF Export ────────────────────────────────────────────────────────────────
+// ── PDF Export (RAG Enabled) ──────────────────────────────────────────────────
 
-async function mermaidToDataUri(code: string, index: number): Promise<string | null> {
+// ── WinAnsi sanitiser ────────────────────────────────────────────────────────
+// pdf-lib's StandardFonts (Times Roman, Helvetica, etc.) only support WinAnsi
+// (code points 0x20–0xFF). Any character outside that range throws at
+// widthOfTextAtSize / drawText time. Strip them out rather than crash.
+function toWinAnsi(text: string): string {
+  return text
+    .replace(/[\u0100-\uFFFF]/g, '') // remove non-WinAnsi
+    .replace(/[\u0000-\u001F]/g, ''); // remove control chars
+}
+
+// ── Markdown-to-plain-text ────────────────────────────────────────────────────
+// Strip common markdown syntax so the PDF reads cleanly.
+function stripMarkdown(md: string): string {
+  return md
+    .replace(/```[\s\S]*?```/g, '[code block]') // fenced code blocks
+    .replace(/`[^`]+`/g, (m) => m.slice(1, -1)) // inline code
+    .replace(/^#{1,6}\s+/gm, '')                 // headings
+    .replace(/\*\*([^*]+)\*\*/g, '$1')           // bold
+    .replace(/\*([^*]+)\*/g, '$1')               // italic
+    .replace(/^[\*\-]\s+/gm, '• ')              // unordered list items
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')        // images
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');    // links
+}
+
+// ── Text wrapping ─────────────────────────────────────────────────────────────
+
+function wrapText(text: string, maxWidth: number, font: any, fontSize: number): string[] {
+  const safe = toWinAnsi(text);
+  const words = safe.split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    const width = font.widthOfTextAtSize(testLine, fontSize);
+    if (width <= maxWidth) {
+      currentLine = testLine;
+    } else {
+      lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines;
+}
+
+export async function exportPDF(doc: Document): Promise<void> {
+  log.info('storage', `Exporting RAG PDF for: ${doc.title}`);
+  
   try {
-    const id = `pdf-mermaid-${index}-${Date.now()}`;
-    const { svg } = await mermaid.render(id, code);
-    const encoded = btoa(unescape(encodeURIComponent(svg)));
-    return `data:image/svg+xml;base64,${encoded}`;
-  } catch {
-    return null;
+    const pdfDoc = await PDFDocument.create();
+    const timesRomanFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+    const boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+
+    let page = pdfDoc.addPage();
+    const { width, height } = page.getSize();
+    const margin = 50;
+    const maxWidth = width - (2 * margin);
+    let cursorY = height - margin;
+
+    // 1. Draw Content (Simplistic Layout)
+    
+    // Title
+    const titleLines = wrapText(doc.title, maxWidth, boldFont, 18);
+    for (const line of titleLines) {
+      page.drawText(line, { x: margin, y: cursorY, size: 18, font: boldFont, color: rgb(0, 0, 0) });
+      cursorY -= 22;
+    }
+    cursorY -= 5;
+
+    // Meta Row
+    page.drawText(toWinAnsi(`${doc.domain} • ${doc.capturedAt.slice(0, 10)} • ${doc.wordCount} words`), {
+      x: margin,
+      y: cursorY,
+      size: 9,
+      font: timesRomanFont,
+      color: rgb(0.4, 0.4, 0.4),
+    });
+    cursorY -= 20;
+
+    // Summary Section
+    if (doc.summary) {
+      page.drawText('SUMMARY', { x: margin, y: cursorY, size: 10, font: boldFont, color: rgb(0.37, 0.42, 0.82) });
+      cursorY -= 14;
+      const summaryLines = wrapText(doc.summary, maxWidth, timesRomanFont, 10);
+      for (const line of summaryLines) {
+        if (cursorY < margin) { page = pdfDoc.addPage(); cursorY = height - margin; }
+        page.drawText(line, { x: margin, y: cursorY, size: 10, font: timesRomanFont });
+        cursorY -= 12;
+      }
+      cursorY -= 15;
+    }
+
+    // Content Section
+    page.drawText('DOC CONTENT', { x: margin, y: cursorY, size: 10, font: boldFont, color: rgb(0, 0, 0) });
+    cursorY -= 14;
+    
+    const paragraphs = stripMarkdown(doc.content).split('\n\n').filter(p => p.trim());
+    for (const p of paragraphs) {
+      const lines = wrapText(p.trim(), maxWidth, timesRomanFont, 10);
+      for (const line of lines) {
+        if (cursorY < margin) { page = pdfDoc.addPage(); cursorY = height - margin; }
+        page.drawText(line, { x: margin, y: cursorY, size: 11, font: timesRomanFont });
+        cursorY -= 13;
+      }
+      cursorY -= 10; // para spacing
+    }
+
+
+    // 2. Fetch and Attach RAG Bundle (optional — failure does not abort the PDF)
+    try {
+      const chunks = await getChunksByDocument(doc.id);
+      const embeddings = await getEmbeddingsByDocument(doc.id);
+      
+      const bundle = {
+        document: doc,
+        // Only store chunk text + indices, not the raw embedding vectors —
+        // vectors are re-computed from the model at import time.
+        chunks: chunks.map(c => ({ id: c.id, documentId: c.documentId, chunkIndex: c.chunkIndex, text: c.text, paragraphIndex: c.paragraphIndex })),
+        embeddings: embeddings.map(e => ({ id: e.id, vector: Array.from(e.vector) }))
+      };
+
+      const attachmentData = JSON.stringify(bundle);
+      const attachmentBytes = new TextEncoder().encode(attachmentData);
+      
+      await pdfDoc.attach(attachmentBytes, 'notch_data.json', {
+        mimeType: 'application/json',
+        description: 'Notch RAG Context and Embeddings',
+        creationDate: new Date(),
+        modificationDate: new Date(),
+      });
+      log.success('storage', `RAG bundle attached (${chunks.length} chunks, ${embeddings.length} embeddings)`);
+    } catch (attachErr) {
+      // Non-fatal: the PDF content is still useful without the RAG bundle.
+      log.warn('storage', 'Could not attach RAG bundle to PDF (PDF will still download without it)', attachErr);
+    }
+
+    // 3. Save and Download
+    const pdfBytes = await pdfDoc.save();
+    const blob = new Blob([pdfBytes.buffer.slice(pdfBytes.byteOffset, pdfBytes.byteOffset + pdfBytes.byteLength) as ArrayBuffer], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const filename = doc.title.replace(/[^a-z0-9\-_. ]/gi, '_').trim() || 'document';
+    a.href = url;
+    a.download = `${filename}_notch.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    log.success('storage', `Exported RAG PDF: ${filename}_notch.pdf`);
+  } catch (err) {
+    log.error('storage', 'Failed to export PDF', err);
+    throw err;
   }
 }
 
-async function plantumlToDataUri(code: string): Promise<string | null> {
-  try {
-    const encoded = plantumlEncoder.encode(code);
-    const url = `https://www.plantuml.com/plantuml/svg/${encoded}`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const svg = await res.text();
-    const encodedSvg = btoa(unescape(encodeURIComponent(svg)));
-    return `data:image/svg+xml;base64,${encodedSvg}`;
-  } catch {
-    return null;
-  }
-}
 
-export async function exportPDF(leftPaneEl: HTMLElement): Promise<void> {
-  const clone = leftPaneEl.cloneNode(true) as HTMLElement;
-
-  // Replace mermaid blocks
-  const mermaidCodes = Array.from(clone.querySelectorAll<HTMLElement>('code.language-mermaid'));
-  for (let i = 0; i < mermaidCodes.length; i++) {
-    const codeEl = mermaidCodes[i];
-    const container = codeEl.closest('pre') ?? codeEl;
-    const dataUri = await mermaidToDataUri(codeEl.textContent ?? '', i);
-    if (dataUri) {
-      const img = document.createElement('img');
-      img.src = dataUri;
-      img.style.maxWidth = '100%';
-      container.replaceWith(img);
-    }
-  }
-
-  // Replace plantuml blocks
-  const plantumlCodes = Array.from(clone.querySelectorAll<HTMLElement>('code.language-plantuml'));
-  for (const codeEl of plantumlCodes) {
-    const container = codeEl.closest('pre') ?? codeEl;
-    const dataUri = await plantumlToDataUri(codeEl.textContent ?? '');
-    if (dataUri) {
-      const img = document.createElement('img');
-      img.src = dataUri;
-      img.style.maxWidth = '100%';
-      container.replaceWith(img);
-    }
-  }
-
-  const printContainer = document.createElement('div');
-  printContainer.id = 'notch-print-container';
-  printContainer.style.cssText = 'position:fixed;top:0;left:0;width:100%;z-index:99999;background:white;';
-  printContainer.appendChild(clone);
-
-  const style = document.createElement('style');
-  style.textContent = `
-    @media print {
-      body > *:not(#notch-print-container) { display: none !important; }
-      #notch-print-container { position:static!important; width:100%!important; background:white!important; color:black!important; }
-      #notch-print-container * { color:black!important; background:white!important; border-color:#ccc!important; }
-      #notch-print-container img { max-width:100%!important; page-break-inside:avoid; }
-      #notch-print-container pre, #notch-print-container code { white-space:pre-wrap!important; font-family:monospace!important; }
-    }
-  `;
-
-  document.head.appendChild(style);
-  document.body.appendChild(printContainer);
-  window.print();
-
-  const cleanup = () => {
-    document.body.removeChild(printContainer);
-    document.head.removeChild(style);
-    window.removeEventListener('afterprint', cleanup);
-  };
-  window.addEventListener('afterprint', cleanup);
-}

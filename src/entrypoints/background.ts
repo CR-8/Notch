@@ -9,10 +9,10 @@ import { log } from '../lib/logger';
 import type { Citation, DOMExtraction, Document, GenerationMode, NotchMessage } from '../lib/types';
 
 export default defineBackground(() => {
-  log.info('background', 'Service worker started', { id: browser.runtime.id });
+  log.info('background', '=== Service worker started ===', { extensionId: browser.runtime.id });
 
   browser.runtime.onInstalled.addListener(async (details) => {
-    log.info('background', `Extension installed — reason: ${details.reason}`);
+    log.info('background', `Install event: reason=${details.reason}`);
     if (details.reason === 'install') {
       const settings = await getSettings();
       if (settings.provider === 'gemini' && !settings.apiKeys.gemini) {
@@ -23,7 +23,7 @@ export default defineBackground(() => {
   });
 
   browser.runtime.onMessage.addListener((message: NotchMessage, _sender, sendResponse) => {
-    log.info('background', `Message received: ${message.type}`);
+    log.info('background', `↓ Message received: type=${message.type}`);
     switch (message.type) {
       case 'CAPTURE_PAGE':
         handleCapturePage(message.payload, sendResponse);
@@ -35,7 +35,6 @@ export default defineBackground(() => {
         handleImportPdf(message.payload, sendResponse);
         return true;
       case 'DOM_PAYLOAD':
-        // Content script sends this as a fire-and-forget in older code paths — ignore silently
         return;
     }
   });
@@ -46,25 +45,27 @@ async function handleCapturePage(
   sendResponse: (response: NotchMessage) => void,
 ) {
   const { tabId, mode, tags } = payload;
-  log.info('background', `Capture started — tab: ${tabId}, mode: ${mode}`);
+  log.info('background', `▶ Capture started — tab:${tabId} mode:${mode} tags:[${tags.join(',')}]`);
   try {
-    // 1. Extract DOM — content script responds directly with DOMExtraction
+    // 1. Extract DOM
+    log.info('background', `  [1/8] Extracting DOM from tab ${tabId}...`);
     const extraction = await browser.tabs.sendMessage(
       tabId,
       { type: 'EXTRACT_DOM', payload: {} },
     ) as DOMExtraction | { error: string } | undefined;
 
     if (!extraction) {
-      throw new Error('No response from content script. Make sure the page is fully loaded and try again.');
+      throw new Error('No response from content script. Ensure the page is fully loaded and try again.');
     }
     if ('error' in extraction) {
       throw new Error(`Content script error: ${extraction.error}`);
     }
 
     const domPayload = extraction;
-    log.success('background', `DOM extracted — ${domPayload.wordCount} words from ${domPayload.domain}`);
+    log.success('background', `  [1/8] DOM extracted — ${domPayload.wordCount} words, ${domPayload.images.length} images, domain: ${domPayload.domain}`);
 
-    // 2. Call AI
+    // 2. Load settings
+    log.info('background', '  [2/8] Loading settings...');
     const settings = await getSettings();
     const useOfflineCapture = settings.provider === 'offline' || mode === 'LOCAL';
     const rawResponse = useOfflineCapture
@@ -77,7 +78,8 @@ async function handleCapturePage(
       .replace(/^```(?:markdown)?\s*\n([\s\S]*?)\n```\s*$/m, '$1')
       .trim();
 
-    // 3. Parse title + summary + structured fields
+    // [4/8] Parse title + summary + structured fields from AI markdown
+    log.info('background', '  [4/8] Parsing AI response (title, summary, entities, timeline, concepts)...');
     const titleMatch = aiMarkdown.match(/^#\s+(.+)$/m);
     const title = titleMatch ? titleMatch[1].trim() : domPayload.title;
     const summaryMatch = aiMarkdown.match(/^##\s+(?:SUMMARY|Summary)\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
@@ -120,7 +122,10 @@ async function handleCapturePage(
       });
     }
 
-    // 4. Build Document
+    log.info('background', `  [4/8] Parsed — title: "${title}", entities: ${keyEntities.length}, timeline: ${timeline.length}, concepts: ${concepts.length}`);
+
+    // [5/8] Build Document object
+    log.info('background', '  [5/8] Building document object...');
     const doc: Document = {
       id: crypto.randomUUID(),
       title,
@@ -149,16 +154,19 @@ async function handleCapturePage(
       missingImageQueries: [],
     };
 
-    // 5. Persist — saveDocument writes full doc to IDB + meta to storage.local
+    // [6/8] Persist to IndexedDB + storage.local
+    log.info('background', `  [6/8] Persisting document id=${doc.id} to storage...`);
     await saveDocument(doc);
     const index = await getDocIndex();
     await saveDocIndex([doc.id, ...index]);
-    log.success('background', `Document saved — id: ${doc.id}, title: "${title}"`);
+    log.success('background', `  [6/8] Document saved — id: ${doc.id}, title: "${title}", words: ${domPayload.wordCount}`);
 
-    // 6. Quota check
+    // [7/8] Quota check
+    log.info('background', '  [7/8] Checking storage quota...');
     await checkStorageQuota();
 
-    // 7. Reply to popup immediately
+    // [8/8] Reply to popup
+    log.success('background', `  [8/8] Capture complete — sending CAPTURE_COMPLETE to popup`);
     sendResponse({ type: 'CAPTURE_COMPLETE', payload: { documentId: doc.id } });
 
     // 8. Embed after a short delay to avoid CPU spike right after capture
@@ -228,7 +236,8 @@ async function handleRagQuery(
   sendResponse: (response: NotchMessage) => void,
 ) {
   const { documentId, query } = payload;
-  log.info('background', `RAG query — doc: ${documentId}`);
+  const t0 = Date.now();
+  log.info('background', `▶ RAG query — doc: ${documentId}, query: "${query.slice(0, 80)}${query.length > 80 ? '…' : ''}"`);
   try {
     await persistChatMessage(documentId, 'user', query);
 
