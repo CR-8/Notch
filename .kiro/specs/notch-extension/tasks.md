@@ -1,0 +1,326 @@
+# Implementation Plan: Notch Browser Extension
+
+## Overview
+
+Implement the Notch browser extension in dependency order: design system → storage → settings/onboarding → popup → content script → background worker → library → reader → RAG chat → export. Each task builds on the previous and ends with all code wired together. The stack is WXT + React 19 + Tailwind CSS v4 + shadcn/ui + TypeScript throughout.
+
+## Tasks
+
+- [x] 1. Design system — CSS tokens, fonts, and Tailwind v4 theme
+  - Create `src/assets/globals.css` with the full `@theme` block: color tokens (`--color-background`, `--color-surface`, `--color-primary`, `--color-text`, `--color-muted`, `--color-border`, `--color-danger`, `--color-surface-hover`), typography tokens (`--font-heading`, `--font-body`, `--font-mono`), zero border-radius tokens, border tokens, focus-ring token, and skeleton/pulse/blink keyframe animations
+  - Add `.skeleton`, `.capture-loading`, `.blink-cursor`, `.btn`, `.btn-primary`, `.btn-danger`, `.card`, `.active-state`, and `.input` utility classes
+  - Import `globals.css` in every entrypoint's `style.css` (popup, options, newtab, reader)
+  - Add Google Fonts `<link>` tags for Space Grotesk 700, Inter Tight 400, and JetBrains Mono 400/600 to each entrypoint's `index.html`
+  - Replace the existing `src/entrypoints/popup/style.css` import chain to use the new globals
+  - _Requirements: 13.1–13.10_
+
+- [x] 2. Shared TypeScript types and storage layer
+  - [x] 2.1 Define all shared types in `src/lib/types.ts`
+    - `Document`, `Entity`, `TimelineEvent`, `Concept`, `ImageRef`, `DocumentChunk`, `Settings`, `GenerationMode`, `LLMProvider`, `Citation`, `DOMExtraction`, and the full `NotchMessage` discriminated union
+    - _Requirements: 2.4, 10.1, 14.1_
+  - [x] 2.2 Implement `src/lib/storage.ts` — chrome.storage.local abstraction
+    - `getSettings() / saveSettings()` using key `notch:settings`
+    - `getDocIndex() / saveDocIndex()` using key `notch:doc:index`
+    - `getDocument(id) / saveDocument(doc) / deleteDocumentFromStorage(id)` using key `notch:doc:{id}`
+    - `checkStorageQuota()` — emits `STORAGE_QUOTA_WARNING` when usage > 9 MB
+    - _Requirements: 1.5, 14.1, 14.3, 14.4_
+  - [x] 2.3 Implement `src/lib/idb.ts` — IndexedDB abstraction (`notch_db` v1)
+    - `openDB()` — creates `chunks` and `embeddings` object stores with `documentId` indexes
+    - `saveChunk(chunk: DocumentChunk)`, `saveEmbedding(id, vector: Float32Array)`
+    - `getChunksByDocument(documentId)`, `getEmbeddingsByDocument(documentId)`
+    - `deleteDocumentFromIDB(documentId)` — removes all chunks and embeddings atomically
+    - _Requirements: 14.2, 14.4_
+  - [x] 2.4 Implement `deleteDocument(id)` in `src/lib/storage.ts`
+    - Calls both `deleteDocumentFromStorage` and `deleteDocumentFromIDB` in sequence, updates the index
+    - _Requirements: 14.4, 14.5_
+  - [x] 2.5 Write property test for Document storage round-trip (Property 4)
+    - **Property 4: Document Storage Round-Trip**
+    - Use `fast-check` to generate arbitrary `Document` objects and verify `saveDocument` → `getDocument` returns an equal object
+    - **Validates: Requirements 2.5, 14.1, 14.2**
+  - [x] 2.6 Write property test for Settings round-trip persistence (Property 2)
+    - **Property 2: Settings Round-Trip Persistence**
+    - Use `fast-check` to generate arbitrary `Settings` objects and verify `saveSettings` → `getSettings` returns an equal object
+    - **Validates: Requirements 1.5, 3.6, 12.5**
+  - [x] 2.7 Write property test for storage deletion atomicity (Property 19)
+    - **Property 19: Storage Deletion Atomicity**
+    - After `deleteDocument(id)`, verify document absent from storage, ID absent from index, and all chunks/embeddings absent from IndexedDB
+    - **Validates: Requirements 14.4**
+  - [x] 2.8 Write property test for storage quota warning threshold (Property 20)
+    - **Property 20: Storage Quota Warning Threshold**
+    - Use `fast-check` to generate usage values and verify `checkStorageQuota` emits warning iff usage > 9,437,184 bytes
+    - **Validates: Requirements 14.3**
+
+- [x] 3. Settings and Onboarding screen
+  - [x] 3.1 Scaffold `src/entrypoints/options/` WXT entry point
+    - Create `index.html`, `main.tsx`, `style.css`, and `App.tsx`
+    - Register the options page in `wxt.config.ts` with `open_in_tab: true`
+    - _Requirements: 12.1_
+  - [x] 3.2 Implement `src/lib/validation.ts` — API key format validators
+    - `validateGeminiKey(key)`, `validateOpenAIKey(key)`, `validateAnthropicKey(key)` — each returns `'valid' | 'invalid'`
+    - Validate within 500ms (synchronous regex check)
+    - _Requirements: 1.2, 1.3, 1.4_
+  - [x] 3.3 Write property test for API key validation correctness (Property 1)
+    - **Property 1: API Key Validation Correctness**
+    - Use `fast-check` to generate arbitrary strings and verify each validator returns `valid` iff the string matches the provider's known pattern
+    - **Validates: Requirements 1.2, 1.3, 1.4**
+  - [x] 3.4 Build `SettingsApp` component tree
+    - `GettingStartedSection` with external quickstart link
+    - `ProviderBlock` (×3: Gemini, OpenAI, Anthropic) — password input, `[VERIFIED]`/`[INVALID]` indicator, `GET API KEY ↗` link
+    - `GenerationModeSection` with three selectable `ModeOption` cards (FAST / DEEP / LOCAL)
+    - `SaveButton` — shows `[SETTINGS SAVED ✓]` for 2 s then reverts
+    - Pre-populate inputs from `getSettings()` on mount (keys shown as masked dots)
+    - _Requirements: 1.1–1.7, 12.2–12.6_
+  - [x] 3.5 Wire first-run auto-open logic in `src/entrypoints/background.ts`
+    - On `chrome.runtime.onInstalled`, call `getSettings()` and open the options tab if no API key is configured
+    - _Requirements: 12.1_
+
+- [x] 4. Extension Popup
+  - [x] 4.1 Scaffold popup entry point and layout shell
+    - Replace the default `App.tsx` with the `PopupApp` shell (320×480px fixed, dark background)
+    - `StatusBar` — NOTCH wordmark + three provider connection dots (violet if key present, red if absent)
+    - _Requirements: 1.8, 2.9_
+  - [x] 4.2 Write property test for popup provider status indicator (Property 3)
+    - **Property 3: Popup Provider Status Indicator**
+    - Use `fast-check` to generate Settings with arbitrary key presence and verify each dot color matches the presence rule
+    - **Validates: Requirements 1.8**
+  - [x] 4.3 Implement `PageContextZone`
+    - Query the active tab via `chrome.tabs.query` and display title and domain
+    - Show skeleton loading state while querying
+    - _Requirements: 2.9, 13.10_
+  - [x] 4.4 Implement `ModeSelector`
+    - Three toggle boxes: FAST / DEEP / LOCAL
+    - Active box gets `2px #5E6AD2` border; load and persist selection via `getSettings` / `saveSettings`
+    - _Requirements: 3.1, 3.2, 3.6_
+  - [x] 4.5 Implement `TagInput` with chip list
+    - Text input — `Enter` adds a chip rendered as a square chip with `1px #222222` border
+    - `×` button on each chip removes it from the list
+    - _Requirements: 11.1, 11.2, 11.4_
+  - [x] 4.6 Implement `CaptureButton` with all four states
+    - `idle` → `[CAPTURE PAGE]` violet border
+    - `loading` → `[PARSING...]` with `.capture-loading` pulse animation
+    - `success` → `[OPEN IN READER →]` surface background; clicking opens Reader tab
+    - `error` → `[ERROR — RETRY]` danger red border
+    - Show `NoKeyWarning` inline when no key is configured for the selected mode
+    - _Requirements: 2.1–2.10, 3.7_
+  - [x] 4.7 Wire popup capture flow — send `CAPTURE_PAGE` message to background
+    - On button click, send `{ type: 'CAPTURE_PAGE', payload: { tabId, mode, tags } }` via `browser.runtime.sendMessage`
+    - Listen for `CAPTURE_COMPLETE` / `CAPTURE_ERROR` responses and update button state
+    - _Requirements: 2.1, 2.3, 2.6, 2.7, 2.8_
+
+- [x] 5. Content script — DOM extraction
+  - [x] 5.1 Implement DOM extraction in `src/entrypoints/content.ts`
+    - Listen for `EXTRACT_DOM` message from background
+    - Use `@mozilla/readability` `Readability` to extract main article content
+    - Collect all `<img>` elements with `url`, `alt`, and `paragraphContext` (innerText of closest ancestor `<p>`)
+    - Build and return a `DOMExtraction` payload via `browser.runtime.sendMessage({ type: 'DOM_PAYLOAD', ... })`
+    - _Requirements: 2.1, 9.1_
+  - [x] 5.2 Write property test for DOM extraction image context (Property 14)
+    - **Property 14: DOM Extraction Collects All Images with Context**
+    - Use `fast-check` to generate HTML strings with `<img>` elements and verify every returned image entry has a non-empty `url` and a `paragraphContext` from the nearest `<p>`
+    - **Validates: Requirements 9.1**
+
+- [x] 6. Background service worker — message routing, AI client, capture orchestration
+  - [x] 6.1 Implement message router in `src/entrypoints/background.ts`
+    - `browser.runtime.onMessage` switch on `NotchMessage.type`
+    - Route `CAPTURE_PAGE` → capture orchestration, `RAG_QUERY` → RAG pipeline
+    - _Requirements: 2.1_
+  - [x] 6.2 Implement `src/lib/ai-client.ts` — LLM provider abstraction
+    - `sendCaptureRequest(content, imageRefs, mode, settings): Promise<string>` — selects provider and model based on mode, builds prompt from FAST/DEEP templates, calls provider REST API with stored key
+    - `sendRAGRequest(query, chunks, settings): Promise<string>` — builds RAG prompt and calls provider
+    - Handle 30 s timeout; throw typed errors for API errors and missing keys
+    - _Requirements: 2.2, 3.3, 3.4, 3.5, 10.3_
+  - [x] 6.3 Implement capture orchestration in background
+    - On `CAPTURE_PAGE`: inject content script if needed, send `EXTRACT_DOM`, await `DOM_PAYLOAD`
+    - Call `ai-client.sendCaptureRequest`, parse response into a `Document` (UUID v4 id, ISO 8601 `capturedAt`, all fields)
+    - Persist via `saveDocument`, update index, call `checkStorageQuota`
+    - Reply `CAPTURE_COMPLETE` or `CAPTURE_ERROR`
+    - _Requirements: 2.2–2.7, 9.2, 9.4_
+  - [x] 6.4 Write property test for AI response parsing produces valid Document (Property 5)
+    - **Property 5: AI Response Parsing Produces Valid Document**
+    - Use `fast-check` to generate non-empty markdown strings and verify the parser produces a Document with non-empty `id`, non-empty `title`, `content === input`, and valid ISO 8601 `capturedAt`
+    - **Validates: Requirements 2.4**
+  - [x] 6.5 Implement `src/lib/embedding-engine.ts`
+    - Load `Xenova/all-MiniLM-L6-v2` via `@xenova/transformers` (lazy, cached after first load)
+    - `chunkText(content, maxTokens=512)` — split on paragraph then sentence boundaries, 50-token overlap
+    - `embedDocument(documentId, content)` — chunk, embed each chunk, store via `saveChunk` + `saveEmbedding`, update `doc.embeddingsGenerated`
+    - `embedQuery(query): Promise<Float32Array>`
+    - _Requirements: 10.1_
+  - [x] 6.6 Write property test for chunk size invariant (Property 15)
+    - **Property 15: Chunk Size Invariant**
+    - Use `fast-check` to generate arbitrary content strings and verify every chunk ≤ 512 tokens and the union of all chunks covers the full content
+    - **Validates: Requirements 10.1**
+  - [x] 6.7 Implement `cosineSimilarity` and top-K retrieval in background
+    - `cosineSimilarity(a: Float32Array, b: Float32Array): number`
+    - `retrieveTopK(documentId, queryEmbedding, k=5)` — loads all embeddings for document, scores, returns top `min(5, N)` chunks sorted descending
+    - _Requirements: 10.2_
+  - [x] 6.8 Write property test for top-K retrieval count (Property 16)
+    - **Property 16: Top-K Retrieval Count**
+    - Use `fast-check` to generate N chunks (N ≥ 1) and a query embedding and verify retrieval returns exactly `min(5, N)` chunks ordered by cosine similarity descending
+    - **Validates: Requirements 10.2**
+  - [x] 6.9 Wire RAG pipeline in background
+    - On `RAG_QUERY`: call `embedQuery`, `retrieveTopK`, `sendRAGRequest`, parse `[N]` citations, reply `RAG_RESPONSE` or `RAG_ERROR`
+    - Trigger `embedDocument` after each successful capture (non-blocking)
+    - _Requirements: 10.2, 10.3_
+
+- [x] 7. Checkpoint — core pipeline complete
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 8. Library dashboard
+  - [x] 8.1 Scaffold `src/entrypoints/newtab/` WXT entry point
+    - Create `index.html`, `main.tsx`, `style.css`, `App.tsx`
+    - Register as `newtab` override in `wxt.config.ts`
+    - _Requirements: 4.1_
+  - [x] 8.2 Implement `Sidebar` component
+    - `NotchLogo`, nav items: ALL DOCUMENTS / FAVORITES / ARCHIVE / SETTINGS
+    - SETTINGS nav item opens the options page
+    - _Requirements: 4.8, 4.10, 12.6_
+  - [x] 8.3 Implement `DocumentCard` component
+    - Displays title, domain label, word count, capture date, tag chip list
+    - Star action (toggle `isStarred`), archive action (toggle `isArchived`)
+    - Clicking the card opens the Reader tab for that document
+    - _Requirements: 4.2, 4.4, 4.7, 4.9, 11.5_
+  - [x] 8.4 Implement `DocumentGrid` with empty state
+    - Responsive 4-column grid of `DocumentCard`
+    - Empty state: `NO DOCUMENTS FOUND. CAPTURE SOMETHING.` centered
+    - Skeleton loading cards while documents load
+    - _Requirements: 4.1, 4.5, 13.10_
+  - [x] 8.5 Implement `LibraryHeader` with sort control
+    - Sort by: newest first / oldest first / title A–Z
+    - _Requirements: 4.6_
+  - [x] 8.6 Implement `SearchInput` with Fuse.js fuzzy search
+    - Build Fuse index over `title` (0.5), `tags` (0.3), `content` (0.2); threshold 0.3; debounce 150 ms
+    - `/` shortcut focuses the input when no other input is focused
+    - Invalidate and rebuild index when document list changes
+    - _Requirements: 4.3, 15.5_
+  - [x] 8.7 Write property test for fuzzy search returns relevant results (Property 7)
+    - **Property 7: Fuzzy Search Returns Relevant Results**
+    - Use `fast-check` to generate document collections and verify that a query exactly matching a document's title always includes that document in results
+    - **Validates: Requirements 4.3**
+  - [x] 8.8 Write property test for document sort order invariant (Property 8)
+    - **Property 8: Document Sort Order Invariant**
+    - Use `fast-check` to generate document collections and verify that after sorting by `capturedAt` descending, each document's timestamp ≥ the next document's timestamp
+    - **Validates: Requirements 4.6**
+  - [x] 8.9 Implement tag filter — clicking a tag chip filters the grid
+    - _Requirements: 11.6_
+  - [x] 8.10 Write property test for tag filter correctness (Property 18)
+    - **Property 18: Tag Filter Correctness**
+    - Use `fast-check` to generate document collections with arbitrary tags and verify that filtering by a tag returns exactly the documents that contain that tag
+    - **Validates: Requirements 11.6**
+  - [x] 8.11 Implement `StorageQuotaWarning` banner
+    - Listen for `STORAGE_QUOTA_WARNING` message and show persistent warning when storage > 90%
+    - _Requirements: 14.3_
+  - [x] 8.12 Implement document state mutations (star, archive, delete) with immediate UI update
+    - Optimistic update: update local state immediately, then persist via `saveDocument`
+    - Delete: call `deleteDocument(id)`, remove card from grid without refresh
+    - _Requirements: 4.7–4.10, 14.4, 14.5_
+  - [x] 8.13 Write property test for document state mutations persist and reflect (Property 9)
+    - **Property 9: Document State Mutations Persist and Reflect**
+    - Use `fast-check` to generate Documents and mutation operations (star/unstar/archive/unarchive) and verify the persisted state matches the applied mutation
+    - **Validates: Requirements 4.7, 4.8, 4.9, 4.10**
+  - [x] 8.14 Write property test for Library renders all documents with required fields (Property 6)
+    - **Property 6: Library Renders All Documents with Required Fields**
+    - Use `fast-check` to generate document collections and verify the grid renders exactly one card per document, each containing title, domain, word count, capture date, and all tags
+    - **Validates: Requirements 4.1, 4.2**
+
+- [x] 9. Reader view
+  - [x] 9.1 Scaffold `src/entrypoints/reader/` WXT entry point
+    - Create `index.html`, `main.tsx`, `style.css`, `App.tsx`
+    - Read `documentId` from URL search params; load document via `getDocument(id)`
+    - _Requirements: 6.1_
+  - [x] 9.2 Implement `ReaderTopBar`
+    - Breadcrumb `LIBRARY / [TITLE]` in JetBrains Mono 12px; clicking LIBRARY navigates back
+    - `[NOTES]` / `[CHAT]` tab switcher
+    - `ExportMenu` with `[EXPORT .MD]` and `[EXPORT PDF]` actions
+    - _Requirements: 6.8, 6.9, 6.10_
+  - [x] 9.3 Implement `DocumentRenderer` — markdown to HTML
+    - Parse `document.content` markdown to HTML (use `marked` or `unified`)
+    - Syntax-highlight code blocks
+    - Assign `data-paragraph-index` attributes to each rendered paragraph for scroll-linking
+    - Render images at their semantic positions; show alt-text placeholder for broken images (4xx/5xx)
+    - _Requirements: 6.1, 6.2, 9.3_
+  - [x] 9.4 Implement `MermaidBlock` component
+    - On mount call `mermaid.render(id, code)` → inject SVG
+    - On error show raw code + `[DIAGRAM ERROR]` label
+    - Initialize mermaid once with dark theme variables from design system
+    - _Requirements: 7.2, 7.3, 7.4_
+  - [x] 9.5 Implement `PlantUMLBlock` component
+    - Encode with `plantuml-encoder`, fetch SVG from PlantUML server
+    - On network error show raw code + `[DIAGRAM UNAVAILABLE]` label
+    - _Requirements: 8.2, 8.3, 8.4_
+  - [x] 9.6 Write property test for diagram renderer produces SVG for valid syntax (Property 12)
+    - **Property 12: Diagram Renderer Produces SVG for Valid Syntax**
+    - Use `fast-check` to generate valid Mermaid/PlantUML code strings and verify the renderer returns a non-empty string beginning with `<svg`
+    - **Validates: Requirements 7.2, 8.2**
+  - [x] 9.7 Implement `NotesPanel` — right pane with SUMMARY, KEY ENTITIES, TIMELINE, CONCEPTS sections
+    - Each section in a bordered container; clicking an entity scrolls left pane to `data-paragraph-index` and applies `#5E6AD2` at 20% opacity highlight
+    - Right pane is sticky while left pane scrolls
+    - _Requirements: 6.3, 6.4, 6.7_
+  - [x] 9.8 Implement `SelectionTooltip`
+    - On `mouseup` in left pane, if selection is non-empty show floating tooltip with `[HIGHLIGHT]` and `[ASK AI]`
+    - `[ASK AI]` switches to CHAT tab and pre-fills the selected text as query context
+    - _Requirements: 6.5, 6.6_
+  - [x] 9.9 Implement keyboard shortcuts in Reader
+    - `Cmd/Ctrl+K` → open CHAT tab and focus chat input
+    - `Escape` → close CHAT tab and restore NOTES tab
+    - _Requirements: 15.1, 15.2_
+
+- [x] 10. RAG Chat pane
+  - [x] 10.1 Implement `ChatPanel` component
+    - `ContextPill` — `CHATTING WITH: [title]`
+    - `MessageList` — right-aligned `UserBubble`, left-aligned `NotchBubble` with inline `CitationChip[N]`
+    - `ThinkingIndicator` — `[NOTCH IS THINKING █]` with `.blink-cursor` animation in primary violet
+    - `ChatInput` — multiline textarea; `Enter` submits, `Shift+Enter` inserts newline
+    - _Requirements: 10.4, 10.5, 10.9, 10.10, 10.11_
+  - [x] 10.2 Wire RAG query flow in ChatPanel
+    - On submit: append user bubble, clear input, show `ThinkingIndicator`, send `RAG_QUERY` to background
+    - On `RAG_RESPONSE`: hide indicator, render `NotchBubble` with parsed citations
+    - On `RAG_ERROR`: show `[CONNECTION FAILED]` in danger color
+    - _Requirements: 10.3, 10.4, 10.5, 10.8_
+  - [x] 10.3 Implement citation scroll-linking
+    - Clicking a `CitationChip` scrolls left pane to the linked paragraph and applies `#222222` background highlight
+    - Hovering a `CitationChip` applies `#222222` highlight without scrolling
+    - _Requirements: 10.6, 10.7_
+
+- [x] 11. Export pipeline
+  - [x] 11.1 Implement markdown export in `src/lib/export.ts`
+    - `buildMarkdownExport(doc: Document): string` — prepend YAML front-matter (title, source, captured, tags), append `doc.content`
+    - Trigger browser file download with `.md` extension from `[EXPORT .MD]` button
+    - _Requirements: 5.1, 5.2, 5.4, 5.5_
+  - [x] 11.2 Write property test for markdown export preserves required fields (Property 10)
+    - **Property 10: Markdown Export Preserves Required Fields**
+    - Use `fast-check` to generate Documents and verify the exported string contains title, source URL, capture date, all content sections, and Mermaid/PlantUML fenced blocks with correct language identifiers
+    - **Validates: Requirements 5.1, 5.2, 5.4**
+  - [x] 11.3 Write property test for image positions preserved in export (Property 11)
+    - **Property 11: Image Positions Preserved in Export**
+    - Use `fast-check` to generate Documents with images at assigned `sectionIndex` values and verify each image reference appears within its assigned section in the exported markdown
+    - **Validates: Requirements 5.5, 9.5**
+  - [x] 11.4 Implement PDF export — SVG injection and print trigger
+    - Clone the rendered document DOM
+    - For each `mermaid` block: call `mermaid.render` → replace `<code>` with `<img src="data:image/svg+xml,..."/>`
+    - For each `plantuml` block: fetch SVG → replace `<code>` with `<img src="data:image/svg+xml,..."/>`
+    - Inject print CSS (single column, white background)
+    - Call `window.print()`
+    - _Requirements: 5.3, 5.6, 5.7, 5.8_
+  - [x] 11.5 Write property test for PDF export embeds diagrams as inline SVG (Property 13)
+    - **Property 13: PDF Export Embeds Diagrams as Inline SVG**
+    - Use `fast-check` to generate Documents with Mermaid/PlantUML fenced blocks and verify the PDF-export DOM transformation replaces every fenced block with an `<img>` whose `src` begins with `data:image/svg+xml` and no raw fenced blocks remain
+    - **Validates: Requirements 5.6, 5.7, 7.6, 8.6**
+
+- [x] 12. Tag persistence and round-trip
+  - [x] 12.1 Write property test for tag persistence round-trip (Property 17)
+    - **Property 17: Tag Persistence Round-Trip**
+    - Use `fast-check` to generate Documents with arbitrary tag arrays and verify `saveDocument` → `getDocument` returns the same tags in the same order
+    - **Validates: Requirements 11.3**
+
+- [x] 13. Final checkpoint — Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+## Notes
+
+- Tasks marked with `*` are optional and can be skipped for a faster MVP
+- Each task references specific requirements for traceability
+- Property tests use `fast-check` with a minimum of 100 iterations
+- Unit tests and property tests are complementary — both should be present where marked
+- The design uses TypeScript throughout; all implementation tasks target TypeScript
+- WXT handles HMR and multi-entrypoint bundling; no manual webpack config needed
+- `@xenova/transformers` model download (~23 MB) happens lazily on first RAG use
