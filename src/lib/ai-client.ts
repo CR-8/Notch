@@ -114,20 +114,6 @@ async function callGemini(model: string, prompt: string, apiKey: string, signal:
   return text;
 }
 
-async function callOllama(endpoint: string, model: string, prompt: string, signal: AbortSignal): Promise<string> {
-  const res = await fetch(`${endpoint}/api/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, prompt, stream: false }),
-    signal,
-  });
-  if (!res.ok) {
-    throw new AIClientError(`Ollama error: ${res.status} ${res.statusText}`, 'API_ERROR', res.status);
-  }
-  const data = await res.json();
-  return data.response ?? '';
-}
-
 // ─── Timeout Helper ───────────────────────────────────────────────────────────
 
 function withTimeout(ms: number): { signal: AbortSignal; clear: () => void } {
@@ -152,7 +138,7 @@ export async function sendCaptureRequest(
     ? buildDeepPrompt(content, imageRefsText)
     : buildFastPrompt(content, imageRefsText);
 
-  const { signal, clear } = withTimeout(30_000);
+  const { signal, clear } = withTimeout(300_000);
   try {
     if (!settings.apiKeys.gemini) {
       throw new AIClientError('No Gemini API key configured. Add your key in Settings.', 'MISSING_KEY');
@@ -182,10 +168,10 @@ export async function sendRAGRequest(
   const chunksText = chunks.map((c, i) => `[${i + 1}] ${c.text}`).join('\n\n');
   const prompt = buildRAGPrompt(query, chunksText);
 
-  // RAG always uses FAST model to preserve quota
-  const model = MODE_TO_MODEL['FAST'];
+  // RAG always uses BALANCED model to preserve quota
+  const model = MODE_TO_MODEL['BALANCED'];
 
-  const { signal, clear } = withTimeout(30_000);
+  const { signal, clear } = withTimeout(120_000);
   try {
     return await callGemini(model, prompt, settings.apiKeys.gemini, signal);
   } catch (err) {

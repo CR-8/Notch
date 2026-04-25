@@ -21,7 +21,14 @@ const idbChunks = new Map<string, unknown[]>();
 const idbEmbeddings = new Map<string, unknown[]>();
 
 vi.mock('../idb', () => ({
+  saveDocumentToIDB: vi.fn(async (doc: any) => {
+    (globalThis as any).__idbDocStore?.set(doc.id, doc);
+  }),
+  getDocumentFromIDB: vi.fn(async (id: string) => {
+    return (globalThis as any).__idbDocStore?.get(id) ?? null;
+  }),
   deleteDocumentFromIDB: vi.fn(async (id: string) => {
+    (globalThis as any).__idbDocStore?.delete(id);
     idbChunks.delete(id);
     idbEmbeddings.delete(id);
   }),
@@ -111,6 +118,7 @@ describe('Property 19: Storage Deletion Atomicity', () => {
     store.clear();
     idbChunks.clear();
     idbEmbeddings.clear();
+    (globalThis as any).__idbDocStore?.clear();
     vi.clearAllMocks();
   });
 

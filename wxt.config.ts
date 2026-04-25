@@ -14,9 +14,9 @@ export default defineConfig({
       },
     },
     optimizeDeps: {
-      // Exclude @xenova/transformers from pre-bundling — it uses dynamic imports
+      // Exclude @huggingface/transformers from pre-bundling — it uses dynamic imports
       // and WASM that must be loaded at runtime, not bundled by Vite.
-      exclude: ['@xenova/transformers'],
+      exclude: ['@huggingface/transformers'],
     },
   }),
   manifest: ({ browser }) => ({
@@ -34,13 +34,24 @@ export default defineConfig({
       open_in_tab: true,
     },
     permissions: ['storage', 'tabs', 'activeTab'],
-    ...(browser === 'firefox' && {
-      browser_specific_settings: {
-        gecko: {
-          id: 'notch@notch-extension',
-          strict_min_version: '109.0',
-        },
-      },
-    }),
+    // wasm-unsafe-eval is required by @xenova/transformers (ONNX Runtime WASM backend).
+    // MV3 (Chrome) uses extension_pages; MV2 (Firefox) uses the top-level key.
+    ...(browser === 'firefox'
+      ? {
+          // Firefox MV2 CSP — must allow wasm-unsafe-eval for ONNX WASM
+          content_security_policy: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+          browser_specific_settings: {
+            gecko: {
+              id: 'notch@notch-extension',
+              strict_min_version: '109.0',
+            },
+          },
+        }
+      : {
+          // Chrome MV3 CSP
+          content_security_policy: {
+            extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+          },
+        }),
   }),
 });

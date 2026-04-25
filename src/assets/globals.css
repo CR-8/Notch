@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 @theme {
   /* Color tokens */
@@ -187,5 +188,85 @@
 
   .input:focus-visible {
     box-shadow: var(--focus-ring);
+  }
+}
+
+/* ── Prose (Tiptap reader) — override typography plugin defaults ─────────────── */
+@layer base {
+  .prose {
+    --tw-prose-body: #eaeaea;
+    --tw-prose-headings: #ffffff;
+    --tw-prose-lead: #cccccc;
+    --tw-prose-links: #5e6ad2;
+    --tw-prose-bold: #ffffff;
+    --tw-prose-counters: #888888;
+    --tw-prose-bullets: #888888;
+    --tw-prose-hr: #222222;
+    --tw-prose-quotes: #cccccc;
+    --tw-prose-quote-borders: #5e6ad2;
+    --tw-prose-captions: #888888;
+    --tw-prose-code: #eaeaea;
+    --tw-prose-pre-code: #eaeaea;
+    --tw-prose-pre-bg: #0f0f0f;
+    --tw-prose-th-borders: #222222;
+    --tw-prose-td-borders: #222222;
+  }
+
+  /* Headings use Space Grotesk, body uses Inter Tight */
+  .prose h1, .prose h2, .prose h3, .prose h4 {
+    font-family: var(--font-heading);
+  }
+
+  .prose p, .prose li, .prose blockquote {
+    font-family: var(--font-body);
+  }
+
+  .prose code, .prose pre {
+    font-family: var(--font-mono);
+  }
+
+  /* Code blocks — match design system surface */
+  .prose pre {
+    background: var(--color-surface) !important;
+    border: 1px solid var(--color-border);
+  }
+
+  /* Inline code */
+  .prose :not(pre) > code {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    padding: 0.1em 0.3em;
+    border-radius: 0 !important;
+    font-size: 0.85em;
+  }
+
+  /* Horizontal rules */
+  .prose hr {
+    border-color: var(--color-border);
+  }
+
+  /* Blockquotes */
+  .prose blockquote {
+    border-left-color: var(--color-primary);
+    color: #cccccc;
+  }
+
+  /* Tables */
+  .prose table {
+    border-collapse: collapse;
+  }
+
+  .prose th, .prose td {
+    border: 1px solid var(--color-border);
+    padding: 0.5rem 0.75rem;
+  }
+
+  .prose th {
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 }

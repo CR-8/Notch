@@ -5,8 +5,6 @@ export type GeminiModel =
   | 'gemma-3-12b-it';                // BALANCED — good quality, higher free quota
 
 export type GenerationMode = 'FAST' | 'DEEP' | 'BALANCED';
-
-// Keep LLMProvider for document metadata (which model was used)
 export type LLMProvider = 'gemini' | 'ollama';
 
 export interface Entity {
@@ -34,12 +32,34 @@ export interface ImageRef {
   paragraphContext: string;
 }
 
-export interface Document {
-  id: string;                      // UUID v4
+/**
+ * Lightweight metadata record — used by the Library page.
+ * Derived from Document; never contains content, keyEntities, timeline, concepts, or images.
+ * Stored separately so the library never has to deserialise full documents.
+ */
+export interface DocumentMeta {
+  id: string;
   title: string;
   url: string;
   domain: string;
-  capturedAt: string;              // ISO 8601
+  capturedAt: string;
+  wordCount: number;
+  summary: string;
+  tags: string[];
+  isStarred: boolean;
+  isArchived: boolean;
+  isRead: boolean;
+  mode: GenerationMode;
+  provider: LLMProvider;
+}
+
+/** Full document — only loaded by the Reader. */
+export interface Document {
+  id: string;
+  title: string;
+  url: string;
+  domain: string;
+  capturedAt: string;
   wordCount: number;
   mode: GenerationMode;
   provider: LLMProvider;
@@ -58,7 +78,7 @@ export interface Document {
 }
 
 export interface DocumentChunk {
-  id: string;                      // `${documentId}_${chunkIndex}`
+  id: string;
   documentId: string;
   chunkIndex: number;
   text: string;

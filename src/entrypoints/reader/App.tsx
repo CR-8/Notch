@@ -12,12 +12,16 @@ import { ChatPanel } from '@/components/ChatPanel';
 // ── Tiptap document renderer ──────────────────────────────────────────────────
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { Markdown } from '@tiptap/markdown';
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
-import { MermaidExtension } from '@/components/MermaidExtension';
-import { PlantUMLExtension } from '@/components/PlantUMLExtension';
+import { CodeBlockExtension } from '@/components/CodeBlockExtension';
+import { marked } from 'marked';
+
+/** Convert markdown → HTML string for Tiptap's parseHTML path */
+function mdToHtml(md: string): string {
+  return marked.parse(md, { async: false }) as string;
+}
 
 interface DocumentRendererProps {
   content: string;
@@ -31,25 +35,24 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef }: DocumentRendererPro
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ codeBlock: false }),
-      Markdown,
+      StarterKit.configure({ codeBlock: false, link: false }),
       Highlight.configure({ multicolor: false }),
-      MermaidExtension,
-      PlantUMLExtension,
+      CodeBlockExtension,
       Image.configure({ inline: false }),
       Link.configure({ openOnClick: true }),
     ],
-    content,
-    editable: false,
+    content: content ? mdToHtml(content) : '',
     editorProps: {
       attributes: {
         class: 'prose prose-invert max-w-none font-body text-base leading-relaxed text-[#EAEAEA] focus:outline-none',
       },
     },
+    editable: false,
   });
 
   useEffect(() => {
-    if (editor && content) editor.commands.setContent(content);
+    if (!editor || !content) return;
+    editor.commands.setContent(mdToHtml(content));
   }, [editor, content]);
 
   // Add data-paragraph-index to each <p> element after editor mounts/updates

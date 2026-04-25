@@ -28,6 +28,9 @@ export default defineBackground(() => {
       case 'RAG_QUERY':
         handleRagQuery(message.payload, sendResponse);
         return true;
+      case 'DOM_PAYLOAD':
+        // Content script sends this as a fire-and-forget in older code paths — ignore silently
+        return;
     }
   });
 });
@@ -37,32 +40,78 @@ async function handleCapturePage(
   sendResponse: (response: NotchMessage) => void,
 ) {
   const { tabId, mode, tags } = payload;
-  log.info('background', `Capture started — tab: ${tabId}, mode: ${mode}, tags: [${tags.join(', ')}]`);
+  log.info('background', `Capture started — tab: ${tabId}, mode: ${mode}`);
   try {
-    // 1. Extract DOM
-    const extraction = await browser.tabs.sendMessage(tabId, { type: 'EXTRACT_DOM', payload: {} }) as DOMExtraction | { type: string; payload: DOMExtraction };
-    const domPayload = (extraction as { type: string; payload: DOMExtraction }).type === 'DOM_PAYLOAD'
-      ? (extraction as { type: string; payload: DOMExtraction }).payload
-      : extraction as DOMExtraction;
+    // 1. Extract DOM — content script responds directly with DOMExtraction
+    const extraction = await browser.tabs.sendMessage(
+      tabId,
+      { type: 'EXTRACT_DOM', payload: {} },
+    ) as DOMExtraction | { error: string } | undefined;
+
+    if (!extraction) {
+      throw new Error('No response from content script. Make sure the page is fully loaded and try again.');
+    }
+    if ('error' in extraction) {
+      throw new Error(`Content script error: ${extraction.error}`);
+    }
+
+    const domPayload = extraction;
     log.success('background', `DOM extracted — ${domPayload.wordCount} words from ${domPayload.domain}`);
 
-    // 2. Get settings and call AI
+    // 2. Call AI
     const settings = await getSettings();
-    const aiMarkdown = await sendCaptureRequest(domPayload.textContent, domPayload.images, mode, settings);
-    log.success('background', `AI response received (${aiMarkdown.length} chars)`);
+    const rawResponse = await sendCaptureRequest(domPayload.textContent, domPayload.images, mode, settings);
+    log.success('background', `AI response received (${rawResponse.length} chars)`);
 
-    // 3. Provider
-    const provider: import('../lib/types').LLMProvider = 'gemini';
+    // Strip wrapping ```markdown ... ``` fence that some models add around the entire output
+    const aiMarkdown = rawResponse
+      .replace(/^```(?:markdown)?\s*\n([\s\S]*?)\n```\s*$/m, '$1')
+      .trim();
 
-    // 4. Parse title
+    // 3. Parse title + summary + structured fields
     const titleMatch = aiMarkdown.match(/^#\s+(.+)$/m);
     const title = titleMatch ? titleMatch[1].trim() : domPayload.title;
-
-    // 5. Parse summary
-    const summaryMatch = aiMarkdown.match(/^##\s+SUMMARY\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
+    const summaryMatch = aiMarkdown.match(/^##\s+(?:SUMMARY|Summary)\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
     const summary = summaryMatch ? summaryMatch[1].trim() : '';
 
-    // 6. Build Document
+    // Parse key entities from "## Key Entities" section
+    // Expects lines like: * **Name:** (Type) Description  or  * **Name** (Type) Description
+    const keyEntities: Document['keyEntities'] = [];
+    const entitiesMatch = aiMarkdown.match(/^##\s+Key Entities\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
+    if (entitiesMatch) {
+      const lines = entitiesMatch[1].split('\n');
+      lines.forEach((line, i) => {
+        // Match: * **Name (optional colon):** (Type) Description
+        const m = line.match(/^\s*[*-]\s+\*\*([^*:]+):?\*\*:?\s+\(([^)]+)\)\s+(.*)/);
+        if (m) keyEntities.push({ name: m[1].trim(), type: m[2].trim(), paragraphIndex: i });
+      });
+    }
+
+    // Parse timeline from "## Timeline" section
+    // Expects lines like: * **Date:** Description
+    const timeline: Document['timeline'] = [];
+    const timelineMatch = aiMarkdown.match(/^##\s+Timeline\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
+    if (timelineMatch) {
+      const lines = timelineMatch[1].split('\n');
+      lines.forEach((line, i) => {
+        const m = line.match(/^\s*[*-]\s+\*\*([^*]+)\*\*:?\s+(.*)/);
+        if (m) timeline.push({ date: m[1].trim(), description: m[2].trim(), paragraphIndex: i });
+      });
+    }
+
+    // Parse concepts from "## Concepts" section
+    // Expects lines like: * **Term:** Definition
+    const concepts: Document['concepts'] = [];
+    const conceptsMatch = aiMarkdown.match(/^##\s+Concepts\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
+    if (conceptsMatch) {
+      const lines = conceptsMatch[1].split('\n');
+      lines.forEach((line, i) => {
+        const m = line.match(/^\s*[*-]\s+\*\*([^*:]+):?\*\*:?\s+(.*)/);
+        if (m) concepts.push({ term: m[1].trim(), definition: m[2].trim(), paragraphIndex: i });
+      });
+    }
+
+    // 4. Build Document
     const doc: Document = {
       id: crypto.randomUUID(),
       title,
@@ -71,12 +120,12 @@ async function handleCapturePage(
       capturedAt: new Date().toISOString(),
       wordCount: domPayload.wordCount,
       mode,
-      provider,
+      provider: 'gemini',
       content: aiMarkdown,
       summary,
-      keyEntities: [],
-      timeline: [],
-      concepts: [],
+      keyEntities,
+      timeline,
+      concepts,
       tags,
       images: domPayload.images.map(img => ({
         url: img.url,
@@ -91,22 +140,27 @@ async function handleCapturePage(
       missingImageQueries: [],
     };
 
-    // 7. Persist
+    // 5. Persist — saveDocument writes full doc to IDB + meta to storage.local
     await saveDocument(doc);
     const index = await getDocIndex();
     await saveDocIndex([doc.id, ...index]);
     log.success('background', `Document saved — id: ${doc.id}, title: "${title}"`);
 
-    // 8. Quota check
+    // 6. Quota check
     await checkStorageQuota();
 
-    // 9. Reply
+    // 7. Reply to popup immediately
     sendResponse({ type: 'CAPTURE_COMPLETE', payload: { documentId: doc.id } });
 
-    // 10. Embed (fire and forget)
-    embedDocument(doc.id, doc.content).catch(err =>
-      log.error('background', 'Background embedding failed', err)
-    );
+    // 8. Embed after a short delay to avoid CPU spike right after capture
+    //    Only embed when a Gemini key is present (RAG is enabled)
+    if (settings.apiKeys.gemini) {
+      setTimeout(() => {
+        embedDocument(doc.id, doc.content).catch(err =>
+          log.error('background', 'Background embedding failed', err)
+        );
+      }, 3000);
+    }
   } catch (err) {
     log.error('background', 'Capture failed', err);
     sendResponse({ type: 'CAPTURE_ERROR', payload: { error: (err as Error).message } });
@@ -118,14 +172,17 @@ async function handleRagQuery(
   sendResponse: (response: NotchMessage) => void,
 ) {
   const { documentId, query } = payload;
+  log.info('background', `RAG query — doc: ${documentId}`);
   try {
     const queryEmbedding = await embedQuery(query);
     const chunks = await retrieveTopK(documentId, queryEmbedding, 5);
     const settings = await getSettings();
     const answer = await sendRAGRequest(query, chunks, settings);
     const citations = parseCitations(answer, chunks);
+    log.success('background', `RAG answered with ${citations.length} citations`);
     sendResponse({ type: 'RAG_RESPONSE', payload: { answer, citations } });
   } catch (err) {
+    log.error('background', 'RAG query failed', err);
     sendResponse({ type: 'RAG_ERROR', payload: { error: (err as Error).message } });
   }
 }

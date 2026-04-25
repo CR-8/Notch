@@ -1,17 +1,25 @@
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
+import { MermaidBlock } from './MermaidBlock';
 import { PlantUMLBlock } from './PlantUMLBlock';
 
 /**
- * Tiptap ReactNodeView for code blocks.
- * - When language is "plantuml": renders PlantUMLBlock (SVG diagram via PlantUML server)
- * - Otherwise: renders a standard <pre><code> block with syntax highlighting
+ * Unified node view for all fenced code blocks.
+ * Dispatches to the appropriate renderer based on the language attribute.
  */
-export function PlantUMLNodeView({ node }: NodeViewProps) {
+export function UnifiedCodeNodeView({ node }: NodeViewProps) {
   const language: string = node.attrs.language ?? '';
+  const code = node.textContent ?? '';
+
+  if (language === 'mermaid') {
+    return (
+      <NodeViewWrapper>
+        <MermaidBlock code={code} />
+      </NodeViewWrapper>
+    );
+  }
 
   if (language === 'plantuml') {
-    const code = node.textContent ?? '';
     return (
       <NodeViewWrapper>
         <PlantUMLBlock code={code} />
@@ -19,7 +27,6 @@ export function PlantUMLNodeView({ node }: NodeViewProps) {
     );
   }
 
-  // Default: standard code block rendering (lowlight handles highlighting via CSS)
   return (
     <NodeViewWrapper as="pre">
       <NodeViewContent as="code" className={language ? `language-${language}` : ''} />
