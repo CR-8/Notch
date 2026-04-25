@@ -1,4 +1,4 @@
-import type { GenerationMode, GeminiModel, Settings } from './types';
+import type { GenerationMode, Settings } from './types';
 import { log } from './logger';
 
 // ─── Typed Errors ────────────────────────────────────────────────────────────
@@ -17,10 +17,11 @@ export class AIClientError extends Error {
 // ─── Model Mapping ────────────────────────────────────────────────────────────
 
 // Maps each generation mode to its Gemini API model string
-const MODE_TO_MODEL: Record<GenerationMode, GeminiModel> = {
-  FAST:     'gemini-3.1-flash-lite-preview', // 500 RPD free — fastest, most quota
-  BALANCED: 'gemma-3-12b-it',               // 14.4K RPD free — good quality
-  DEEP:     'gemma-3-27b-it',               // 14.4K RPD free — best quality
+const MODE_TO_MODEL: Record<GenerationMode, string> = {
+  FAST: 'gemini-3.1-flash-lite-preview',  // 500 RPD free — fastest, most quota
+  BALANCED: 'google/gemma-4-26b-a4b-it',      // MoE model — good quality
+  DEEP: 'google/gemma-4-31b-it',           // Dense model — best quality
+  LOCAL: 'google/gemma-3-27b-it',   // Local mode falls back to FAST
 };
 
 // ─── Prompt Templates ────────────────────────────────────────────────────────

@@ -37,8 +37,8 @@ A high-density browser extension for capturing, structuring, and interrogating w
 | Mode | Model | Free quota |
 |---|---|---|
 | `FAST` | `gemini-3.1-flash-lite-preview` | 500 req/day |
-| `BALANCED` | `gemma-3-12b-it` | 14,400 req/day |
-| `DEEP` | `gemma-3-27b-it` | 14,400 req/day |
+| `BALANCED` | `google/gemma-4-26b-a4b-it` | 14,400 req/day |
+| `DEEP` | `google/gemma-4-31b-it` | 14,400 req/day |
 
 RAG queries always use `BALANCED` to preserve quota.
 

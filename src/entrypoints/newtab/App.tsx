@@ -4,6 +4,7 @@ import { browser } from 'wxt/browser';
 import { cn } from '@/lib/utils';
 import type { DocumentMeta } from '@/lib/types';
 import { getDocIndex, getDocumentMetas, saveDocument, deleteDocument, updateDocumentMeta, getDocument, deriveDocumentMeta } from '@/lib/storage';
+import { importNotchPDF } from '@/lib/import';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -115,7 +116,15 @@ function LibraryHeader({
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({ activeFilter, onFilterChange }: { activeFilter: Filter; onFilterChange: (f: Filter) => void }) {
+function Sidebar({ 
+  activeFilter, 
+  onFilterChange,
+  onImport
+}: { 
+  activeFilter: Filter; 
+  onFilterChange: (f: Filter) => void;
+  onImport: () => void;
+}) {
   const items: { label: string; value: Filter | 'settings' }[] = [
     { label: 'ALL DOCUMENTS', value: 'all' },
     { label: 'FAVORITES',     value: 'favorites' },
@@ -127,20 +136,31 @@ function Sidebar({ activeFilter, onFilterChange }: { activeFilter: Filter; onFil
       <div className="font-mono font-semibold text-sm uppercase tracking-widest px-4 pb-6 text-white">
         NOTCH
       </div>
-      {items.map(({ label, value }) => (
+      <div className="flex-1">
+        {items.map(({ label, value }) => (
+          <button
+            key={value}
+            onClick={() => value === 'settings' ? browser.runtime.openOptionsPage() : onFilterChange(value as Filter)}
+            className={cn(
+              'font-mono font-semibold text-[11px] uppercase tracking-wider px-4 py-2 text-left w-full transition-colors border-l-2',
+              activeFilter === value
+                ? 'text-white border-primary'
+                : 'text-muted border-transparent hover:text-white'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      
+      <div className="px-4 mt-auto">
         <button
-          key={value}
-          onClick={() => value === 'settings' ? browser.runtime.openOptionsPage() : onFilterChange(value as Filter)}
-          className={cn(
-            'font-mono font-semibold text-[11px] uppercase tracking-wider px-4 py-2 text-left transition-colors border-l-2',
-            activeFilter === value
-              ? 'text-white border-primary'
-              : 'text-muted border-transparent hover:text-white'
-          )}
+          onClick={onImport}
+          className="w-full font-mono font-semibold text-[10px] uppercase tracking-wider py-2 border border-dashed border-border text-muted hover:text-primary hover:border-primary transition-all"
         >
-          {label}
+          + IMPORT PDF
         </button>
-      ))}
+      </div>
     </div>
   );
 }
@@ -304,6 +324,7 @@ function DocumentGrid({ metas, loading, onStar, onArchive, onDelete, onTagClick,
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 export default function LibraryApp() {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeFilter, setActiveFilter] = useState<Filter>('all');
   const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
   const [metas, setMetas] = useState<DocumentMeta[]>([]);
@@ -364,6 +385,33 @@ export default function LibraryApp() {
     deleteDocument(id);
   }
 
+  async function handleImportClick() {
+    fileInputRef.current?.click();
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setLoading(true);
+      const docId = await importNotchPDF(file);
+      
+      // Refresh meta from storage (to get the newly imported one)
+      const index = await getDocIndex();
+      const updatedMetas = await getDocumentMetas(index);
+      setMetas(updatedMetas);
+      
+      // Navigate to it? Or just show a toast?
+      // For now, let's just make it visible in the list.
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setLoading(false);
+      if (e.target) e.target.value = ''; // Reset input
+    }
+  }
+
   // ── Reset page on filter/sort/search/tag change
   function handleFilterChange(f: Filter) { setActiveFilter(f); setPage(1); }
   function handleSortChange(s: SortOrder) { setSortOrder(s); setPage(1); }
@@ -393,7 +441,18 @@ export default function LibraryApp() {
 
   return (
     <div className="flex h-screen bg-background text-white">
-      <Sidebar activeFilter={activeFilter} onFilterChange={handleFilterChange} />
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept="application/pdf"
+        className="hidden"
+      />
+      <Sidebar 
+        activeFilter={activeFilter} 
+        onFilterChange={handleFilterChange} 
+        onImport={handleImportClick}
+      />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         <LibraryHeader

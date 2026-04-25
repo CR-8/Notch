@@ -1,11 +1,11 @@
-// The three supported Gemini-family models
+// The three supported models
 export type GeminiModel =
   | 'gemini-3.1-flash-lite-preview'  // FAST — highest free RPD (500/day)
-  | 'gemma-3-27b-it'                 // DEEP — best quality open model
-  | 'gemma-3-12b-it';                // BALANCED — good quality, higher free quota
+  | 'google/gemma-4-31b-it'          // DEEP — best quality
+  | 'google/gemma-4-26b-a4b-it';     // BALANCED — MoE, good quality
 
-export type GenerationMode = 'FAST' | 'DEEP' | 'BALANCED';
-export type LLMProvider = 'gemini' | 'ollama';
+export type GenerationMode = 'FAST' | 'DEEP' | 'BALANCED' | 'LOCAL';
+export type LLMProvider = 'gemini' | 'ollama' | 'openai' | 'anthropic';
 
 export interface Entity {
   name: string;

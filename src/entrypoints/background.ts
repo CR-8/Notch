@@ -152,15 +152,20 @@ async function handleCapturePage(
     // 7. Reply to popup immediately
     sendResponse({ type: 'CAPTURE_COMPLETE', payload: { documentId: doc.id } });
 
-    // 8. Embed after a short delay to avoid CPU spike right after capture
-    //    Only embed when a Gemini key is present (RAG is enabled)
-    if (settings.apiKeys.gemini) {
-      setTimeout(() => {
-        embedDocument(doc.id, doc.content).catch(err =>
+    // 8. Embed after a short delay to avoid CPU spike right after capture.
+    //    Embedding is local-only (ONNX WASM), no Gemini key required.
+    setTimeout(() => {
+      embedDocument(doc.id, doc.content)
+        .then(async () => {
+          // Mark the document as embedded so the UI knows RAG is ready
+          const updatedDoc: Document = { ...doc, embeddingsGenerated: true };
+          await saveDocument(updatedDoc);
+          log.success('background', `Embeddings ready for document ${doc.id}`);
+        })
+        .catch((err) =>
           log.error('background', 'Background embedding failed', err)
         );
-      }, 3000);
-    }
+    }, 3000);
   } catch (err) {
     log.error('background', 'Capture failed', err);
     sendResponse({ type: 'CAPTURE_ERROR', payload: { error: (err as Error).message } });

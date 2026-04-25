@@ -393,7 +393,7 @@ export default function ReaderApp() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onExportMd={() => downloadMarkdown(doc)}
-          onExportPdf={() => exportPDF(leftPaneRef.current!)}
+          onExportPdf={() => exportPDF(doc)}
           theme={theme}
           onThemeToggle={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
         />

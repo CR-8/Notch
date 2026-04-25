@@ -24,19 +24,31 @@ async function getExtractor() {
     log.info('embedding', 'Loading Xenova/all-MiniLM-L6-v2 (~23 MB, first use only)');
 
     // Vite/Rollup statically traces `import('literal-string')` and bundles the
-    // entire @huggingface/transformers library (~55 MB) into background.js.
+    // entire @huggingface/transformers library into background.js.
     // Splitting the specifier across a variable prevents static analysis while
-    // remaining valid ESM — the module is still resolved from the extension
-    // bundle at runtime by the browser's own module loader.
+    // remaining valid ESM.
     const pkg = '@huggingface' + '/transformers';
     const { pipeline, env } = await import(/* @vite-ignore */ pkg);
 
     // Point ONNX Runtime to locally bundled WASM files — no CDN, works offline
     // and satisfies Firefox's strict 'self' CSP.
-    env.backends.onnx.wasm.wasmPaths = browser.runtime.getURL('/ort/');
+    env.backends.onnx.wasm.wasmPaths = browser.runtime.getURL('/ort/' as any);
 
-    extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-    log.success('embedding', 'Model loaded and cached');
+    // In Transformers.js v4, env.localModelPath was removed.
+    // allowRemoteModels must be false to prevent CDN fetches (blocked by CSP).
+    // The local model URL is passed directly as the model identifier to pipeline().
+    env.allowLocalModels = true;
+    env.allowRemoteModels = false;
+
+    // Build the extension-local URL for the bundled model.
+    // Cast to 'any' to bypass WXT's strict entrypoint route type constraint.
+    const modelUrl = browser.runtime.getURL('/models/Xenova/all-MiniLM-L6-v2' as any);
+    log.info('embedding', `Model URL: ${modelUrl}`);
+
+    extractor = await pipeline('feature-extraction', modelUrl, {
+      dtype: 'q8',  // use quantized weights for smaller memory footprint
+    });
+    log.success('embedding', 'Local model loaded and cached');
   }
   resetIdleTimer();
   return extractor;
