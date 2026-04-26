@@ -32,8 +32,6 @@
   --color-ring: #c7a15a;
 
   /* Typography tokens */
-  --font-heading: "Cinzel", serif;
-  --font-body: "Cormorant Garamond", serif;
   --font-mono: "IBM Plex Mono", monospace;
 
   /* Border radius — zero everywhere */

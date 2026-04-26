@@ -1,4 +1,4 @@
-import type { Document, DocumentMeta, Settings } from './types';
+import type { Document, DocumentMeta, Folder, Settings } from './types';
 import { deleteDocumentFromIDB, saveDocumentToIDB, getDocumentFromIDB } from './idb';
 import { browser } from 'wxt/browser';
 import { log } from './logger';
@@ -7,6 +7,7 @@ import { log } from './logger';
 const KEYS = {
   settings:  'notch:settings',
   docIndex:  'notch:doc:index',
+  folders:   'notch:folders',
   meta:      (id: string) => `notch:meta:${id}`,
   // Legacy key — kept for backward-compat migration only
   legacyDoc: (id: string) => `notch:doc:${id}`,
@@ -67,6 +68,7 @@ export function deriveDocumentMeta(doc: Document): DocumentMeta {
     wordCount:  doc.wordCount,
     summary:    doc.summary,
     tags:       doc.tags,
+    folder:     doc.folder,
     isStarred:  doc.isStarred,
     isArchived: doc.isArchived,
     isRead:     doc.isRead,
@@ -238,7 +240,7 @@ export async function deleteDocument(id: string): Promise<void> {
  */
 export async function updateDocumentMeta(
   id: string,
-  patch: Partial<Pick<DocumentMeta, 'isStarred' | 'isArchived' | 'isRead' | 'tags'>>,
+  patch: Partial<Pick<DocumentMeta, 'isStarred' | 'isArchived' | 'isRead' | 'tags' | 'folder'>>,
 ): Promise<void> {
   const meta = await getDocumentMeta(id);
   if (!meta) return;
@@ -273,4 +275,37 @@ export async function checkStorageQuota(): Promise<void> {
   } catch (err) {
     log.warn('storage', 'Could not estimate storage quota', err);
   }
+}
+
+// ── Folder CRUD ────────────────────────────────────────────────────────────────────────────────
+
+export async function getFolders(): Promise<Folder[]> {
+  const result = await browser.storage.local.get(KEYS.folders);
+  return (result[KEYS.folders] as Folder[]) ?? [];
+}
+
+export async function saveFolder(folder: Folder): Promise<void> {
+  const folders = await getFolders();
+  const idx = folders.findIndex(f => f.id === folder.id);
+  if (idx >= 0) folders[idx] = folder;
+  else folders.push(folder);
+  await browser.storage.local.set({ [KEYS.folders]: folders });
+}
+
+export async function deleteFolder(folderId: string): Promise<void> {
+  const folders = await getFolders();
+  await browser.storage.local.set({ [KEYS.folders]: folders.filter(f => f.id !== folderId) });
+  // Unset folder on all docs that had it
+  const index = await getDocIndex();
+  const keys = index.map(id => KEYS.meta(id));
+  const result = await browser.storage.local.get(keys);
+  const patches: Record<string, DocumentMeta> = {};
+  for (const id of index) {
+    const meta = result[KEYS.meta(id)] as DocumentMeta | undefined;
+    if (meta?.folder === folderId) {
+      patches[KEYS.meta(id)] = { ...meta, folder: undefined };
+    }
+  }
+  if (Object.keys(patches).length > 0) await browser.storage.local.set(patches);
+  await invalidateCache();
 }

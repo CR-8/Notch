@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import Fuse from 'fuse.js';
 import { browser } from 'wxt/browser';
 import { cn } from '@/lib/utils';
-import type { DocumentMeta } from '@/lib/types';
-import { getDocIndex, getDocumentMetas, saveDocument, deleteDocument, updateDocumentMeta, getDocument, deriveDocumentMeta } from '@/lib/storage';
+import type { DocumentMeta, Folder } from '@/lib/types';
+import { getDocIndex, getDocumentMetas, deleteDocument, updateDocumentMeta, getFolders, saveFolder, deleteFolder } from '@/lib/storage';
 import { importNotchPDF } from '@/lib/import';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -31,6 +31,14 @@ const fuseOptions = {
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Filter = 'all' | 'favorites' | 'archive';
 type SortOrder = 'newest' | 'oldest' | 'title-az';
+type ImportStatus = 'idle' | 'importing' | 'done' | 'error';
+type ViewMode = 'compact' | 'comfortable' | 'detailed';
+
+// ── Folder color palette ───────────────────────────────────────────────────────
+const FOLDER_COLORS = [
+  '#c7a15a', '#be5b50', '#5e6ad2', '#4da89a', '#a05eb5',
+  '#d4845a', '#5a9ed4', '#b5a05e', '#5eb55e', '#ac9a7d',
+];
 
 // ── Search input ──────────────────────────────────────────────────────────────
 function SearchInput({
@@ -80,10 +88,14 @@ function SearchInput({
 function LibraryHeader({
   sortOrder,
   onSortChange,
+  viewMode,
+  onViewModeChange,
   searchSlot,
 }: {
   sortOrder: SortOrder;
   onSortChange: (s: SortOrder) => void;
+  viewMode: ViewMode;
+  onViewModeChange: (v: ViewMode) => void;
   searchSlot?: React.ReactNode;
 }) {
   const sorts: { label: string; value: SortOrder }[] = [
@@ -91,11 +103,17 @@ function LibraryHeader({
     { label: 'OLDEST', value: 'oldest' },
     { label: 'A–Z',    value: 'title-az' },
   ];
+  const views: { label: string; value: ViewMode; icon: string }[] = [
+    { label: 'COMPACT',     value: 'compact',     icon: '⣿' },
+    { label: 'COMFORTABLE', value: 'comfortable', icon: '▤' },
+    { label: 'DETAILED',    value: 'detailed',    icon: '▬' },
+  ];
   return (
-    <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-      <span className="font-heading font-bold text-2xl text-white">LIBRARY</span>
+    <div className="flex items-center justify-between px-6 py-3 border-b border-border">
+      <span className="font-mono font-bold text-2xl text-white">LIBRARY</span>
       <div className="flex items-center gap-3">
         {searchSlot}
+        {/* Sort */}
         <div className="flex gap-1">
           {sorts.map(({ label, value }) => (
             <button
@@ -110,40 +128,88 @@ function LibraryHeader({
             </button>
           ))}
         </div>
+        {/* View mode */}
+        <div className="flex gap-0.5 border border-border">
+          {views.map(({ value, icon, label }) => (
+            <button
+              key={value}
+              onClick={() => onViewModeChange(value)}
+              title={label}
+              className={cn(
+                'px-2 py-1 font-mono text-[13px] transition-colors',
+                viewMode === value ? 'bg-surface text-primary' : 'text-muted hover:text-white'
+              )}
+            >
+              {icon}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({ 
-  activeFilter, 
+function Sidebar({
+  activeFilter,
   onFilterChange,
-  onImport
-}: { 
-  activeFilter: Filter; 
+  onImport,
+  importStatus,
+  folders,
+  activeFolderId,
+  onFolderSelect,
+  onFolderCreate,
+  onFolderDelete,
+}: {
+  activeFilter: Filter;
   onFilterChange: (f: Filter) => void;
   onImport: () => void;
+  importStatus: ImportStatus;
+  folders: Folder[];
+  activeFolderId: string | null;
+  onFolderSelect: (id: string | null) => void;
+  onFolderCreate: (name: string, color: string) => void;
+  onFolderDelete: (id: string) => void;
 }) {
-  const items: { label: string; value: Filter | 'settings' }[] = [
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLORS[0]);
+  const [showFolderInput, setShowFolderInput] = useState(false);
+
+  const topItems: { label: string; value: Filter | 'settings' }[] = [
     { label: 'ALL DOCUMENTS', value: 'all' },
     { label: 'FAVORITES',     value: 'favorites' },
     { label: 'ARCHIVE',       value: 'archive' },
     { label: 'SETTINGS',      value: 'settings' },
   ];
+
+  function submitFolder() {
+    const name = newFolderName.trim();
+    if (!name) return;
+    onFolderCreate(name, newFolderColor);
+    setNewFolderName('');
+    setNewFolderColor(FOLDER_COLORS[0]);
+    setShowFolderInput(false);
+  }
+
+  const importLabel = importStatus === 'importing' ? '[ IMPORTING... ]'
+    : importStatus === 'done' ? '[ IMPORTED ✓ ]'
+    : importStatus === 'error' ? '[ FAILED — RETRY ]'
+    : '+ IMPORT PDF';
+
   return (
-    <div className="w-48 h-screen bg-background border-r border-border shrink-0 flex flex-col py-6">
+    <div className="w-52 h-screen bg-background border-r border-border shrink-0 flex flex-col py-6">
       <div className="font-mono font-semibold text-sm uppercase tracking-widest px-4 pb-6 text-white">
         NOTCH
       </div>
-      <div className="flex-1">
-        {items.map(({ label, value }) => (
+
+      <div className="flex-1 overflow-y-auto">
+        {topItems.map(({ label, value }) => (
           <button
             key={value}
             onClick={() => value === 'settings' ? browser.runtime.openOptionsPage() : onFilterChange(value as Filter)}
             className={cn(
               'font-mono font-semibold text-[11px] uppercase tracking-wider px-4 py-2 text-left w-full transition-colors border-l-2',
-              activeFilter === value
+              activeFilter === value && activeFolderId === null
                 ? 'text-white border-primary'
                 : 'text-muted border-transparent hover:text-white'
             )}
@@ -151,57 +217,248 @@ function Sidebar({
             {label}
           </button>
         ))}
+
+        {/* Folders section */}
+        <Separator className="bg-border my-3" />
+        <div className="flex items-center justify-between px-4 mb-1">
+          <span className="font-mono text-[9px] uppercase tracking-widest text-muted">FOLDERS</span>
+          <button
+            onClick={() => setShowFolderInput(v => !v)}
+            className="font-mono text-[10px] text-muted hover:text-primary transition-colors leading-none"
+            title="New folder"
+          >
+            +
+          </button>
+        </div>
+
+        {showFolderInput && (
+          <div className="px-4 mb-2 flex flex-col gap-1.5">
+            <input
+              autoFocus
+              value={newFolderName}
+              onChange={e => setNewFolderName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submitFolder(); if (e.key === 'Escape') setShowFolderInput(false); }}
+              placeholder="Folder name"
+              className="w-full bg-surface border border-border text-white font-mono text-[10px] px-2 py-1 focus:border-primary outline-none"
+            />
+            {/* Color picker */}
+            <div className="flex gap-1 flex-wrap">
+              {FOLDER_COLORS.map(c => (
+                <button
+                  key={c}
+                  onClick={() => setNewFolderColor(c)}
+                  className="w-4 h-4 transition-transform hover:scale-110"
+                  style={{
+                    backgroundColor: c,
+                    outline: newFolderColor === c ? `2px solid ${c}` : 'none',
+                    outlineOffset: '2px',
+                  }}
+                  title={c}
+                />
+              ))}
+            </div>
+            <button onClick={submitFolder} className="font-mono text-[9px] uppercase tracking-wider text-primary text-left">
+              ✓ CREATE
+            </button>
+          </div>
+        )}
+
+        {folders.map(folder => (
+          <div key={folder.id} className="group flex items-center">
+            <button
+              onClick={() => { onFolderSelect(folder.id); onFilterChange('all'); }}
+              className={cn(
+                'font-mono text-[11px] uppercase tracking-wider px-4 py-1.5 text-left flex-1 transition-colors border-l-2 truncate flex items-center gap-2',
+                activeFolderId === folder.id
+                  ? 'text-white'
+                  : 'text-muted border-transparent hover:text-white'
+              )}
+              style={{
+                borderLeftColor: activeFolderId === folder.id ? folder.color : 'transparent',
+              }}
+            >
+              <span
+                className="inline-block w-2 h-2 shrink-0"
+                style={{ backgroundColor: folder.color }}
+              />
+              <span className="truncate">{folder.name}</span>
+            </button>
+            <button
+              onClick={() => onFolderDelete(folder.id)}
+              className="pr-3 text-muted hover:text-danger text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Delete folder"
+            >
+              ×
+            </button>
+          </div>
+        ))}
       </div>
-      
-      <div className="px-4 mt-auto">
+
+      <div className="px-4 mt-4">
         <button
           onClick={onImport}
-          className="w-full font-mono font-semibold text-[10px] uppercase tracking-wider py-2 border border-dashed border-border text-muted hover:text-primary hover:border-primary transition-all"
+          disabled={importStatus === 'importing'}
+          className={cn(
+            'w-full font-mono font-semibold text-[10px] uppercase tracking-wider py-2 border border-dashed transition-all',
+            importStatus === 'importing' ? 'border-primary text-primary opacity-60 cursor-not-allowed'
+              : importStatus === 'done' ? 'border-primary text-primary'
+              : importStatus === 'error' ? 'border-danger text-danger'
+              : 'border-border text-muted hover:text-primary hover:border-primary'
+          )}
         >
-          + IMPORT PDF
+          {importLabel}
         </button>
       </div>
     </div>
+
   );
 }
 
 // ── Document card (uses DocumentMeta) ─────────────────────────────────────────
+// ── Document card (uses DocumentMeta) ─────────────────────────────────────────
 interface DocumentCardProps {
   meta: DocumentMeta;
+  folders: Folder[];
+  viewMode: ViewMode;
   onStar: (id: string, v: boolean) => void;
   onArchive: (id: string, v: boolean) => void;
   onDelete: (id: string) => void;
   onTagClick: (tag: string) => void;
+  onMoveToFolder: (id: string, folderId: string | undefined) => void;
   activeTag: string | null;
 }
 
-function DocumentCard({ meta, onStar, onArchive, onDelete, onTagClick, activeTag }: DocumentCardProps) {
+function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, onTagClick, onMoveToFolder, activeTag }: DocumentCardProps) {
+  const [showFolderMenu, setShowFolderMenu] = useState(false);
+
   function stop<T>(fn: () => T) {
     return (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
   }
 
+  const currentFolder = folders.find(f => f.id === meta.folder);
+
+  const folderMenu = (
+    <div className="relative" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={() => setShowFolderMenu(v => !v)}
+        title="Move to folder"
+        className="font-mono text-[14px] text-muted hover:text-primary transition-colors leading-none"
+      >
+        📁
+      </button>
+      {showFolderMenu && (
+        <div className="absolute right-0 bottom-full mb-1 z-50 bg-surface border border-border min-w-[140px] shadow-lg max-h-48 overflow-y-auto">
+          <button
+            onClick={() => { onMoveToFolder(meta.id, undefined); setShowFolderMenu(false); }}
+            className="w-full text-left font-mono text-[10px] uppercase tracking-wider px-3 py-2 text-muted hover:text-white hover:bg-surface-hover transition-colors"
+          >
+            — No folder
+          </button>
+          {folders.map(f => (
+            <button
+              key={f.id}
+              onClick={() => { onMoveToFolder(meta.id, f.id); setShowFolderMenu(false); }}
+              className={cn(
+                'w-full flex items-center gap-2 text-left font-mono text-[10px] uppercase tracking-wider px-3 py-2 transition-colors hover:bg-surface-hover',
+                meta.folder === f.id ? 'text-primary' : 'text-muted hover:text-white'
+              )}
+            >
+              <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: f.color }} />
+              <span className="truncate">{f.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  if (viewMode === 'compact') {
+    return (
+      <div
+        onClick={() => browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${meta.id}`) })}
+        className="group card px-4 py-2 cursor-pointer flex items-center hover:bg-surface-hover transition-colors relative h-12"
+      >
+        <div className="flex-1 flex items-center gap-4 min-w-0 pr-24">
+          <button
+            onClick={stop(() => onStar(meta.id, !meta.isStarred))}
+            title={meta.isStarred ? 'Unstar' : 'Star'}
+            className={cn('font-mono text-[16px] transition-colors shrink-0 leading-none', meta.isStarred ? 'text-primary' : 'text-muted hover:text-white')}
+          >
+            {meta.isStarred ? '★' : '☆'}
+          </button>
+          <p className="font-mono font-bold text-[13px] text-white truncate max-w-[40%] shrink-0">{meta.title}</p>
+          <span className="font-mono text-[10px] text-muted uppercase shrink-0 truncate max-w-[15%]">{meta.domain}</span>
+          
+          {currentFolder && (
+            <div className="flex items-center gap-1.5 shrink-0 max-w-[15%]">
+              <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: currentFolder.color }} />
+              <span className="font-mono text-[9px] uppercase truncate" style={{ color: currentFolder.color }}>{currentFolder.name}</span>
+            </div>
+          )}
+
+          <div className="flex gap-1.5 overflow-hidden opacity-60">
+            {meta.tags.slice(0, 3).map(tag => (
+              <span key={tag} className="font-mono text-[9px] text-muted uppercase px-1 border border-border truncate leading-tight py-0.5">{tag}</span>
+            ))}
+          </div>
+        </div>
+
+        <div className="absolute right-4 top-0 bottom-0 flex items-center gap-3 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-l from-surface-hover via-surface-hover to-transparent pl-8">
+          <button onClick={stop(() => onArchive(meta.id, !meta.isArchived))} title={meta.isArchived ? 'Unarchive' : 'Archive'} className={cn('font-mono text-[16px] transition-colors hover:text-white leading-none', meta.isArchived ? 'text-primary' : 'text-muted')}>⊡</button>
+          {folderMenu}
+          <button onClick={stop(() => onDelete(meta.id))} title="Delete" className="font-mono font-semibold text-[16px] text-danger hover:text-danger/80 transition-colors leading-none">×</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Comfortable (default) & Detailed
   return (
     <div
       onClick={() => browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${meta.id}`) })}
-      className="card p-3 cursor-pointer flex flex-col gap-1.5 hover:bg-surface-hover transition-colors"
+      className={cn(
+        'card cursor-pointer flex flex-col gap-2 hover:bg-surface-hover transition-colors relative',
+        viewMode === 'detailed' ? 'p-4' : 'p-3'
+      )}
     >
-      <p className="font-heading font-bold text-sm text-white truncate">{meta.title}</p>
+      <div className="flex gap-3 justify-between items-start">
+        <p className={cn("font-mono font-bold text-white leading-tight", viewMode === 'detailed' ? 'text-base' : 'text-sm')}>{meta.title}</p>
+        <button
+          onClick={stop(() => onStar(meta.id, !meta.isStarred))}
+          title={meta.isStarred ? 'Unstar' : 'Star'}
+          className={cn('font-mono transition-colors shrink-0 leading-none', viewMode === 'detailed' ? 'text-[20px]' : 'text-[18px]', meta.isStarred ? 'text-primary' : 'text-muted hover:text-white')}
+        >
+          {meta.isStarred ? '★' : '☆'}
+        </button>
+      </div>
 
-      <div className="flex gap-3 items-center">
+      <div className="flex gap-3 items-center flex-wrap">
         <span className="font-mono text-[10px] text-muted uppercase">{meta.domain}</span>
         <span className="font-mono text-[10px] text-muted">{meta.wordCount}w</span>
         <span className="font-mono text-[10px] text-muted">{meta.capturedAt.slice(0, 10)}</span>
+        {currentFolder && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: currentFolder.color }} />
+            <span className="font-mono text-[9px] uppercase truncate" style={{ color: currentFolder.color }}>{currentFolder.name}</span>
+          </div>
+        )}
       </div>
 
+      {viewMode === 'detailed' && meta.summary && (
+        <p className="font-mono text-[11px] text-muted leading-relaxed line-clamp-3 my-1 border-l-2 border-border pl-3">
+          {meta.summary}
+        </p>
+      )}
+
       {meta.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1 mt-1">
           {meta.tags.map((tag) => (
             <Badge
               key={tag}
               variant="outline"
               onClick={stop(() => onTagClick(tag))}
               className={cn(
-                'font-mono text-[9px] uppercase px-1 py-0 cursor-pointer transition-colors',
+                'font-mono text-[9px] uppercase px-1.5 py-0.5 cursor-pointer transition-colors',
                 activeTag === tag
                   ? 'border-primary text-primary'
                   : 'border-border text-muted hover:border-white hover:text-white'
@@ -213,25 +470,19 @@ function DocumentCard({ meta, onStar, onArchive, onDelete, onTagClick, activeTag
         </div>
       )}
 
-      <div className="flex gap-2 mt-0.5 items-center">
-        <button
-          onClick={stop(() => onStar(meta.id, !meta.isStarred))}
-          title={meta.isStarred ? 'Unstar' : 'Star'}
-          className={cn('font-mono text-[24px] transition-colors', meta.isStarred ? 'text-primary' : 'text-muted hover:text-white')}
-        >
-          {meta.isStarred ? '★' : '☆'}
-        </button>
+      <div className="flex gap-3 mt-1 items-center">
         <button
           onClick={stop(() => onArchive(meta.id, !meta.isArchived))}
           title={meta.isArchived ? 'Unarchive' : 'Archive'}
-          className={cn('font-mono text-[24px] transition-colors', meta.isArchived ? 'text-primary' : 'text-muted hover:text-white')}
+          className={cn('font-mono text-[18px] transition-colors leading-none', meta.isArchived ? 'text-primary' : 'text-muted hover:text-white')}
         >
           ⊡
         </button>
+        {folderMenu}
         <button
           onClick={stop(() => onDelete(meta.id))}
           title="Delete"
-          className="font-mono font-semibold text-[24px] text-danger hover:text-danger/80 ml-auto transition-colors"
+          className="font-mono font-semibold text-[18px] text-danger hover:text-danger/80 ml-auto transition-colors leading-none"
         >
           ×
         </button>
@@ -280,19 +531,22 @@ function Pagination({ page, totalPages, onPrev, onNext }: { page: number; totalP
 }
 
 // ── Document grid ─────────────────────────────────────────────────────────────
-function DocumentGrid({ metas, loading, onStar, onArchive, onDelete, onTagClick, activeTag }: {
+function DocumentGrid({ metas, folders, viewMode, loading, onStar, onArchive, onDelete, onTagClick, onMoveToFolder, activeTag }: {
   metas: DocumentMeta[];
+  folders: Folder[];
+  viewMode: ViewMode;
   loading: boolean;
   onStar: (id: string, v: boolean) => void;
   onArchive: (id: string, v: boolean) => void;
   onDelete: (id: string) => void;
   onTagClick: (tag: string) => void;
+  onMoveToFolder: (id: string, folderId: string | undefined) => void;
   activeTag: string | null;
 }) {
   if (loading) {
     return (
-      <div className="grid grid-cols-4 gap-3 p-6">
-        {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-40" />)}
+      <div className={cn("grid gap-3 p-6", viewMode === 'compact' ? 'grid-cols-1' : viewMode === 'detailed' ? 'grid-cols-3' : 'grid-cols-4')}>
+        {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className={viewMode === 'compact' ? "h-12" : viewMode === 'detailed' ? "h-56" : "h-40"} />)}
       </div>
     );
   }
@@ -306,15 +560,18 @@ function DocumentGrid({ metas, loading, onStar, onArchive, onDelete, onTagClick,
     );
   }
   return (
-    <div className="grid grid-cols-4 gap-3 p-6">
+    <div className={cn("grid gap-3 p-6", viewMode === 'compact' ? 'grid-cols-1' : viewMode === 'detailed' ? 'grid-cols-3' : 'grid-cols-4')}>
       {metas.map((meta) => (
         <DocumentCard
           key={meta.id}
           meta={meta}
+          folders={folders}
+          viewMode={viewMode}
           onStar={onStar}
           onArchive={onArchive}
           onDelete={onDelete}
           onTagClick={onTagClick}
+          onMoveToFolder={onMoveToFolder}
           activeTag={activeTag}
         />
       ))}
@@ -327,25 +584,26 @@ export default function LibraryApp() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeFilter, setActiveFilter] = useState<Filter>('all');
   const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
+  const [viewMode, setViewMode] = useState<ViewMode>('comfortable');
   const [metas, setMetas] = useState<DocumentMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchResults, setSearchResults] = useState<DocumentMeta[] | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [quotaWarning, setQuotaWarning] = useState<{ usedBytes: number; quotaBytes: number } | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [importStatus, setImportStatus] = useState<ImportStatus>('idle');
 
-  // ── Boot: load cached first 20 metas immediately, hydrate rest in background
+  // ── Boot
   useEffect(() => {
     async function boot() {
-      const index = await getDocIndex();
+      const [index, storedFolders] = await Promise.all([getDocIndex(), getFolders()]);
+      setFolders(storedFolders);
       if (index.length === 0) { setLoading(false); return; }
-
-      // Phase 1: serve first CACHE_SIZE from warm cache — instant
       const firstBatch = await getDocumentMetas(index.slice(0, 20));
       setMetas(firstBatch);
       setLoading(false);
-
-      // Phase 2: hydrate the rest in the background
       if (index.length > 20) {
         const rest = await getDocumentMetas(index.slice(20));
         setMetas(prev => {
@@ -369,57 +627,84 @@ export default function LibraryApp() {
     return () => browser.runtime.onMessage.removeListener(onMsg);
   }, []);
 
-  // ── Mutations — update meta state + warm cache + full doc in IDB
+  // ── Mutations
   function handleStar(id: string, starred: boolean) {
     setMetas(prev => prev.map(m => m.id === id ? { ...m, isStarred: starred } : m));
     updateDocumentMeta(id, { isStarred: starred });
   }
-
   function handleArchive(id: string, archived: boolean) {
     setMetas(prev => prev.map(m => m.id === id ? { ...m, isArchived: archived } : m));
     updateDocumentMeta(id, { isArchived: archived });
   }
-
   function handleDelete(id: string) {
     setMetas(prev => prev.filter(m => m.id !== id));
     deleteDocument(id);
   }
 
-  async function handleImportClick() {
-    fileInputRef.current?.click();
+  // ── Folder mutations
+  async function handleFolderCreate(name: string) {
+    const folder: Folder = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString() };
+    await saveFolder(folder);
+    setFolders(prev => [...prev, folder]);
   }
+  async function handleFolderDelete(id: string) {
+    await deleteFolder(id);
+    setFolders(prev => prev.filter(f => f.id !== id));
+    if (activeFolderId === id) setActiveFolderId(null);
+    setMetas(prev => prev.map(m => m.folder === id ? { ...m, folder: undefined } : m));
+  }
+  function handleMoveToFolder(docId: string, folderId: string | undefined) {
+    setMetas(prev => prev.map(m => m.id === docId ? { ...m, folder: folderId } : m));
+    updateDocumentMeta(docId, { folder: folderId });
+  }
+
+  // ── PDF import — try Notch bundle first, fall back to general PDF parse
+  async function handleImportClick() { fileInputRef.current?.click(); }
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-
+    setImportStatus('importing');
     try {
-      setLoading(true);
-      const docId = await importNotchPDF(file);
-      
-      // Refresh meta from storage (to get the newly imported one)
+      let docId: string;
+      try {
+        // Try Notch-exported PDF (has embedded notch_data.json)
+        docId = await importNotchPDF(file);
+      } catch {
+        // Fallback: send raw bytes to the background IMPORT_PDF pipeline
+        const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+        const response = await browser.runtime.sendMessage({
+          type: 'IMPORT_PDF',
+          payload: { fileName: file.name, bytes, tags: [] },
+        }) as { type: string; payload: { documentId?: string; error?: string } };
+        if (response.type === 'CAPTURE_ERROR') throw new Error(response.payload.error ?? 'Import failed');
+        docId = response.payload.documentId!;
+      }
       const index = await getDocIndex();
       const updatedMetas = await getDocumentMetas(index);
       setMetas(updatedMetas);
-      
-      // Navigate to it? Or just show a toast?
-      // For now, let's just make it visible in the list.
+      setImportStatus('done');
+      setTimeout(() => setImportStatus('idle'), 2500);
+      // Open the newly imported doc
+      browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${docId}`) });
     } catch (err) {
-      alert((err as Error).message);
+      setImportStatus('error');
+      setTimeout(() => setImportStatus('idle'), 3000);
+      console.error('PDF import failed:', err);
     } finally {
-      setLoading(false);
-      if (e.target) e.target.value = ''; // Reset input
+      if (e.target) e.target.value = '';
     }
   }
 
   // ── Reset page on filter/sort/search/tag change
-  function handleFilterChange(f: Filter) { setActiveFilter(f); setPage(1); }
+  function handleFilterChange(f: Filter) { setActiveFilter(f); setActiveFolderId(null); setPage(1); }
   function handleSortChange(s: SortOrder) { setSortOrder(s); setPage(1); }
   function handleTagClick(tag: string) { setActiveTag(prev => prev === tag ? null : tag); setPage(1); }
   function handleSearchReset() { setPage(1); }
 
   // ── Derived display list
   const filtered = metas.filter(m => {
+    if (activeFolderId) return m.folder === activeFolderId;
     if (activeFilter === 'favorites') return m.isStarred;
     if (activeFilter === 'archive')   return m.isArchived;
     return !m.isArchived;
@@ -448,16 +733,24 @@ export default function LibraryApp() {
         accept="application/pdf"
         className="hidden"
       />
-      <Sidebar 
-        activeFilter={activeFilter} 
-        onFilterChange={handleFilterChange} 
+      <Sidebar
+        activeFilter={activeFilter}
+        onFilterChange={handleFilterChange}
         onImport={handleImportClick}
+        importStatus={importStatus}
+        folders={folders}
+        activeFolderId={activeFolderId}
+        onFolderSelect={id => { setActiveFolderId(id); setPage(1); }}
+        onFolderCreate={handleFolderCreate}
+        onFolderDelete={handleFolderDelete}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         <LibraryHeader
           sortOrder={sortOrder}
           onSortChange={handleSortChange}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
           searchSlot={
             <SearchInput
               metas={filtered}
@@ -488,11 +781,14 @@ export default function LibraryApp() {
         <ScrollArea className="flex-1">
           <DocumentGrid
             metas={pageSlice}
+            folders={folders}
+            viewMode={viewMode}
             loading={loading}
             onStar={handleStar}
             onArchive={handleArchive}
             onDelete={handleDelete}
             onTagClick={handleTagClick}
+            onMoveToFolder={handleMoveToFolder}
             activeTag={activeTag}
           />
         </ScrollArea>

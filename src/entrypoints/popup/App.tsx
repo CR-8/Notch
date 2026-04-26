@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { browser } from 'wxt/browser';
-import { getSettings, saveSettings } from '../../lib/storage';
-import type { Settings, GenerationMode } from '../../lib/types';
+import { getSettings, saveSettings, getFolders } from '../../lib/storage';
+import type { Settings, GenerationMode, Folder } from '../../lib/types';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -63,7 +63,7 @@ function PageContextZone() {
         </>
       ) : (
         <>
-          <p className="font-body text-[13px] text-white truncate">{title}</p>
+          <p className="font-mono text-[13px] text-white truncate">{title}</p>
           <p className="font-mono text-[11px] text-muted uppercase mt-0.5">{domain}</p>
         </>
       )}
@@ -107,7 +107,7 @@ function ModeSelector({ mode, onModeChange }: { mode: GenerationMode; onModeChan
 type ServiceProvider = 'gemini' | 'offline';
 
 const SERVICE_MODES: { provider: ServiceProvider; label: string; sub: string }[] = [
-  { provider: 'gemini', label: 'BEAST', sub: 'Online services + RAG' },
+  { provider: 'gemini',  label: 'BEAST',   sub: 'Online services + RAG' },
   { provider: 'offline', label: 'NOMINAL', sub: 'Offline NLP + history' },
 ];
 
@@ -154,7 +154,7 @@ function TagInput({ tags, onTagsChange }: { tags: string[]; onTagsChange: (t: st
   }
 
   return (
-    <div className="px-3 py-2.5 border-b border-border">
+    <div className="px-3 py-2 border-b border-border">
       <Input
         value={input}
         onChange={(e) => setInput(e.target.value)}
@@ -185,9 +185,83 @@ function TagInput({ tags, onTagsChange }: { tags: string[]; onTagsChange: (t: st
   );
 }
 
+// ── Folder selector ───────────────────────────────────────────────────────────
+function FolderSelector({
+  folders,
+  selectedId,
+  onSelect,
+}: {
+  folders: Folder[];
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = folders.find(f => f.id === selectedId);
+
+  return (
+    <div className="px-3 py-2 border-b border-border relative">
+      <p className="font-mono text-[9px] uppercase tracking-widest text-muted mb-1.5">SAVE TO FOLDER</p>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-2 border border-border bg-surface px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
+      >
+        {selected ? (
+          <>
+            <span
+              className="inline-block w-2 h-2 shrink-0"
+              style={{ backgroundColor: selected.color }}
+            />
+            <span className="font-mono text-[10px] uppercase tracking-wider text-white truncate flex-1">
+              {selected.name}
+            </span>
+          </>
+        ) : (
+          <span className="font-mono text-[10px] uppercase tracking-wider text-muted flex-1">
+            — None —
+          </span>
+        )}
+        <span className="font-mono text-[10px] text-muted ml-auto">▾</span>
+      </button>
+
+      {open && (
+        <div className="absolute left-3 right-3 top-full z-50 bg-surface border border-border shadow-lg mt-0.5 max-h-36 overflow-y-auto">
+          <button
+            onClick={() => { onSelect(null); setOpen(false); }}
+            className="w-full text-left font-mono text-[10px] uppercase tracking-wider px-3 py-2 text-muted hover:text-white hover:bg-surface-hover transition-colors"
+          >
+            — None —
+          </button>
+          {folders.map(f => (
+            <button
+              key={f.id}
+              onClick={() => { onSelect(f.id); setOpen(false); }}
+              className={cn(
+                'w-full text-left font-mono text-[10px] uppercase tracking-wider px-3 py-2 flex items-center gap-2 transition-colors hover:bg-surface-hover',
+                selectedId === f.id ? 'text-white' : 'text-muted hover:text-white'
+              )}
+            >
+              <span
+                className="inline-block w-2 h-2 shrink-0"
+                style={{ backgroundColor: f.color }}
+              />
+              <span className="truncate">{f.name}</span>
+              {selectedId === f.id && <span className="ml-auto text-primary">✓</span>}
+            </button>
+          ))}
+          {folders.length === 0 && (
+            <p className="font-mono text-[9px] text-muted px-3 py-2 uppercase">
+              No folders — create one in the library
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Capture button ────────────────────────────────────────────────────────────
 type CaptureState = 'idle' | 'loading' | 'success' | 'error';
-type ImportState = 'idle' | 'loading' | 'success' | 'error';
+type ImportState  = 'idle' | 'loading' | 'success' | 'error';
 
 const LABELS: Record<CaptureState, string> = {
   idle:    '[CAPTURE PAGE]',
@@ -238,7 +312,6 @@ function CaptureButton({
           : LABELS[state]}
       </button>
 
-      {/* Multi-segment progress bar */}
       {isMultiSegment && (
         <div className="w-full bg-surface border border-border h-1">
           <div
@@ -248,7 +321,6 @@ function CaptureButton({
         </div>
       )}
 
-      {/* Error detail */}
       {state === 'error' && errorMsg && (
         <p className="font-mono text-[9px] text-danger uppercase leading-tight px-0.5">
           {errorMsg.slice(0, 120)}{errorMsg.length > 120 ? '…' : ''}
@@ -275,19 +347,21 @@ function NoKeyWarning() {
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 export default function PopupApp() {
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [mode, setMode] = useState<GenerationMode>('FAST');
-  const [provider, setProvider] = useState<ServiceProvider>('offline');
-  const [geminiKey, setGeminiKey] = useState('');
-  const [tags, setTags] = useState<string[]>([]);
-  const [captureState, setCaptureState] = useState<CaptureState>('idle');
-  const [documentId, setDocumentId] = useState<string | undefined>();
-  const [progress, setProgress] = useState<{ current: number; total: number } | undefined>();
-  const [errorMsg, setErrorMsg] = useState<string | undefined>();
-  const [importState, setImportState] = useState<ImportState>('idle');
+  const [settings, setSettings]                   = useState<Settings | null>(null);
+  const [mode, setMode]                           = useState<GenerationMode>('FAST');
+  const [provider, setProvider]                   = useState<ServiceProvider>('offline');
+  const [geminiKey, setGeminiKey]                 = useState('');
+  const [tags, setTags]                           = useState<string[]>([]);
+  const [folders, setFolders]                     = useState<Folder[]>([]);
+  const [selectedFolderId, setSelectedFolderId]   = useState<string | null>(null);
+  const [captureState, setCaptureState]           = useState<CaptureState>('idle');
+  const [documentId, setDocumentId]               = useState<string | undefined>();
+  const [progress, setProgress]                   = useState<{ current: number; total: number } | undefined>();
+  const [errorMsg, setErrorMsg]                   = useState<string | undefined>();
+  const [importState, setImportState]             = useState<ImportState>('idle');
   const [importedDocumentId, setImportedDocumentId] = useState<string | undefined>();
-  const [importErrorMsg, setImportErrorMsg] = useState<string | undefined>();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importErrorMsg, setImportErrorMsg]       = useState<string | undefined>();
+  const fileInputRef                              = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     getSettings().then((s) => {
@@ -296,6 +370,7 @@ export default function PopupApp() {
       setProvider(s.provider === 'gemini' ? 'gemini' : 'offline');
       setGeminiKey(s.apiKeys.gemini ?? '');
     });
+    getFolders().then(setFolders);
   }, []);
 
   async function handleSaveApiKey() {
@@ -342,7 +417,7 @@ export default function PopupApp() {
       setErrorMsg(undefined);
       const response: import('../../lib/types').NotchMessage = await browser.runtime.sendMessage({
         type: 'CAPTURE_PAGE',
-        payload: { tabId: tab.id, mode, tags },
+        payload: { tabId: tab.id, mode, tags, folderId: selectedFolderId ?? undefined },
       });
       if (response.type === 'CAPTURE_COMPLETE') {
         setDocumentId(response.payload.documentId);
@@ -381,7 +456,7 @@ export default function PopupApp() {
 
       const response: import('../../lib/types').NotchMessage = await browser.runtime.sendMessage({
         type: 'IMPORT_PDF',
-        payload: { fileName: file.name, bytes, tags },
+        payload: { fileName: file.name, bytes, tags, folderId: selectedFolderId ?? undefined },
       });
 
       if (response.type === 'CAPTURE_COMPLETE') {
@@ -402,18 +477,18 @@ export default function PopupApp() {
   }
 
   const importLabel: Record<ImportState, string> = {
-    idle: '[IMPORT PDF]',
+    idle:    '[IMPORT PDF]',
     loading: '[INDEXING PDF...]',
     success: '[OPEN PDF IN READER →]',
-    error: '[PDF IMPORT FAILED]',
+    error:   '[PDF IMPORT FAILED]',
   };
 
   return (
-    <div className="w-[320px] h-[480px] bg-background text-white flex flex-col overflow-hidden">
+    <div className="w-[320px] bg-background text-white flex flex-col overflow-hidden">
       <StatusBar settings={settings} />
       <PageContextZone />
-      <div className="px-3 py-2.5 border-b border-border">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-muted mb-2">API KEY</p>
+      <div className="px-3 py-2 border-b border-border">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-muted mb-1.5">API KEY</p>
         <div className="flex gap-2">
           <Input
             type="password"
@@ -435,6 +510,11 @@ export default function PopupApp() {
       <ServiceSelector provider={provider} onProviderChange={handleProviderChange} />
       <ModeSelector mode={mode} onModeChange={handleModeChange} />
       <TagInput tags={tags} onTagsChange={setTags} />
+      <FolderSelector
+        folders={folders}
+        selectedId={selectedFolderId}
+        onSelect={setSelectedFolderId}
+      />
       <div className="px-3 pb-3 pt-2 flex flex-col gap-2">
         <CaptureButton
           state={captureState}
@@ -448,10 +528,10 @@ export default function PopupApp() {
           onClick={handleImportClick}
           className={cn(
             'w-full py-3 font-mono font-semibold text-xs uppercase tracking-wider transition-colors',
-            importState === 'idle' && 'border border-border text-white hover:bg-surface-hover',
+            importState === 'idle'    && 'border border-border text-white hover:bg-surface-hover',
             importState === 'loading' && 'border border-primary text-primary capture-loading cursor-not-allowed',
             importState === 'success' && 'border-2 border-primary text-primary hover:bg-primary/10',
-            importState === 'error' && 'border border-danger text-danger hover:bg-danger/10',
+            importState === 'error'   && 'border border-danger text-danger hover:bg-danger/10',
           )}
         >
           {importLabel[importState]}
@@ -470,7 +550,6 @@ export default function PopupApp() {
         )}
         {hasNoKey && <NoKeyWarning />}
       </div>
-      <div className="flex-1" />
     </div>
   );
 }

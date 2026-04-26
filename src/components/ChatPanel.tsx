@@ -124,7 +124,7 @@ function UserBubble({ text }: { text: string }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[85%] bg-surface border border-border px-3 py-2">
-        <p className="font-body text-sm text-white leading-relaxed whitespace-pre-wrap">{text}</p>
+        <p className="font-mono text-sm text-white leading-relaxed whitespace-pre-wrap">{text}</p>
       </div>
     </div>
   );
@@ -143,7 +143,7 @@ function NotchBubble({ text, citations, isError, leftPaneRef }: NotchBubbleProps
   const content = isError
     ? <span className="font-mono text-[11px] text-danger">[CONNECTION FAILED]</span>
     : (
-      <p className="font-body text-sm text-foreground leading-relaxed">
+      <p className="font-mono text-sm text-foreground leading-relaxed">
         {citations && citations.length > 0
           ? parseAnswerWithCitations(text, citations, leftPaneRef)
           : text

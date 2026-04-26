@@ -44,6 +44,13 @@ export interface ImageRef {
  * Derived from Document; never contains content, keyEntities, timeline, concepts, or images.
  * Stored separately so the library never has to deserialise full documents.
  */
+export interface Folder {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: string;
+}
+
 export interface DocumentMeta {
   id: string;
   title: string;
@@ -53,6 +60,7 @@ export interface DocumentMeta {
   wordCount: number;
   summary: string;
   tags: string[];
+  folder?: string; // folder id, undefined = Uncategorised
   isStarred: boolean;
   isArchived: boolean;
   isRead: boolean;
@@ -77,6 +85,7 @@ export interface Document {
   timeline: TimelineEvent[];
   concepts: Concept[];
   tags: string[];
+  folder?: string; // folder id, undefined = Uncategorised
   images: ImageRef[];
   isStarred: boolean;
   isArchived: boolean;

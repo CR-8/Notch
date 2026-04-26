@@ -35,8 +35,8 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef, theme }: DocumentRend
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
 
   const proseClass = theme === 'light'
-    ? 'prose max-w-none font-body text-base leading-relaxed text-[#2e241d] focus:outline-none'
-    : 'prose prose-invert max-w-none font-body text-base leading-relaxed text-foreground focus:outline-none';
+    ? 'prose max-w-none font-mono text-base leading-relaxed text-[#2e241d] focus:outline-none'
+    : 'prose prose-invert max-w-none font-mono text-base leading-relaxed text-foreground focus:outline-none';
 
   const editor = useEditor({
     extensions: [
@@ -237,7 +237,7 @@ function NotesPanel({ doc, leftPaneRef }: NotesPanelProps) {
       <div className="border border-border p-3">
         <p className="font-mono font-semibold text-[10px] uppercase tracking-widest text-muted mb-2">SUMMARY</p>
         {doc.summary
-          ? <p className="font-body text-sm text-foreground leading-relaxed">{doc.summary}</p>
+          ? <p className="font-mono text-sm text-foreground leading-relaxed">{doc.summary}</p>
           : <p className="font-mono text-[11px] text-muted">[NO SUMMARY AVAILABLE]</p>
         }
       </div>
@@ -427,7 +427,7 @@ export default function ReaderApp() {
           >
             <div className="px-10 py-8">
               <h1 className={cn(
-                'font-heading font-bold text-4xl mb-4 leading-tight',
+                'font-mono font-bold text-4xl mb-4 leading-tight',
                 theme === 'light' ? 'text-[#2a211a]' : 'text-white'
               )}>
                 {doc.title}
