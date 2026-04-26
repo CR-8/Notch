@@ -10,6 +10,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
   const rawId = useId();
   const id = 'mermaid-' + rawId.replace(/[^a-zA-Z0-9]/g, '');
   const [ready, setReady] = useState(false);
+  const [status, setStatus] = useState<'loading' | 'rendered' | 'error'>('loading');
 
   // Lazy-load mermaid — always use 'default' (light) theme so arrows/lines
   // are visible regardless of the reader's dark/light mode. The diagram sits
@@ -22,23 +23,29 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
         startOnLoad: false,
       });
       setReady(true);
+      setStatus('loading');
+    }).catch(() => {
+      setStatus('error');
     });
   }, []);
 
   useEffect(() => {
     if (!ready || !containerRef.current) return;
     let cancelled = false;
+    setStatus('loading');
 
     import('mermaid').then(({ default: mermaid }) => mermaid.render(id, code))
       .then(({ svg }) => {
         if (cancelled || !containerRef.current) return;
         containerRef.current.innerHTML = svg;
         if (errorRef.current) errorRef.current.style.display = 'none';
+        setStatus('rendered');
       })
       .catch(() => {
         if (cancelled || !containerRef.current) return;
         containerRef.current.innerHTML = '';
         if (errorRef.current) errorRef.current.style.display = 'block';
+        setStatus('error');
       });
 
     return () => { cancelled = true; };
@@ -46,7 +53,11 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
 
   return (
     // Parchment card keeps line contrast high while matching the app theme.
-    <div className="my-4 border border-border bg-[#f5ead3] p-4 overflow-x-auto">
+    <div
+      className="my-4 border border-border bg-[#f5ead3] p-4 overflow-x-auto"
+      data-diagram-kind="mermaid"
+      data-diagram-status={status}
+    >
       <div ref={containerRef} />
       <div ref={errorRef} style={{ display: 'none' }}>
         <span className="font-mono text-xs text-danger">[DIAGRAM ERROR]</span>

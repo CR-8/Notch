@@ -116,7 +116,7 @@ function ContextPill({ title, folderColor }: { title: string; folderColor?: stri
         <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: folderColor }} />
       )}
       <span className="font-mono text-[10px] uppercase tracking-wider text-muted">CHATTING WITH: </span>
-      <span className="font-mono text-[10px] uppercase tracking-wider text-white truncate">{title}</span>
+      <span className="font-mono text-[10px] uppercase tracking-wider text-foreground truncate">{title}</span>
     </div>
   );
 }
@@ -127,7 +127,7 @@ function UserBubble({ text }: { text: string }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[85%] bg-surface border border-border px-3 py-2">
-        <p className="font-mono text-sm text-white leading-relaxed whitespace-pre-wrap">{text}</p>
+        <p className="font-mono text-sm text-foreground leading-relaxed whitespace-pre-wrap">{text}</p>
       </div>
     </div>
   );
@@ -260,7 +260,7 @@ function ChatInput({ onSubmit, disabled, initialValue }: ChatInputProps) {
         rows={1}
         className={cn(
           'w-full resize-none overflow-hidden font-mono text-[11px] uppercase tracking-wider',
-          'bg-surface border-border text-white placeholder:text-muted',
+          'bg-surface border-border text-foreground placeholder:text-muted',
           'focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-primary',
           'min-h-0 py-2 px-3',
           disabled && 'opacity-50 cursor-not-allowed'

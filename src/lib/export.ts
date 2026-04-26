@@ -1,10 +1,19 @@
+import html2canvas from 'html2canvas';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import type { Document, DocumentChunk } from './types';
+import type { Document } from './types';
 import { getChunksByDocument, getEmbeddingsByDocument } from './idb';
 import { log } from './logger';
-// @ts-ignore
-import plantumlEncoder from 'plantuml-encoder';
-import mermaid from 'mermaid';
+
+export interface PDFExportOptions {
+  sourceElement?: HTMLElement | null;
+  theme?: 'dark' | 'light';
+}
+
+const PDF_PAGE_WIDTH = 595.28; // A4 portrait width in points
+const PDF_PAGE_HEIGHT = 841.89; // A4 portrait height in points
+const PDF_PAGE_MARGIN = 28;
+const MEDIA_WAIT_TIMEOUT_MS = 5000;
+const MEDIA_WAIT_POLL_MS = 120;
 
 // ── Markdown Export ───────────────────────────────────────────────────────────
 
@@ -48,20 +57,6 @@ function toWinAnsi(text: string): string {
     .replace(/[\u0000-\u001F]/g, ''); // remove control chars
 }
 
-// ── Markdown-to-plain-text ────────────────────────────────────────────────────
-// Strip common markdown syntax so the PDF reads cleanly.
-function stripMarkdown(md: string): string {
-  return md
-    .replace(/```[\s\S]*?```/g, '[code block]') // fenced code blocks
-    .replace(/`[^`]+`/g, (m) => m.slice(1, -1)) // inline code
-    .replace(/^#{1,6}\s+/gm, '')                 // headings
-    .replace(/\*\*([^*]+)\*\*/g, '$1')           // bold
-    .replace(/\*([^*]+)\*/g, '$1')               // italic
-    .replace(/^[\*\-]\s+/gm, '• ')              // unordered list items
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')        // images
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');    // links
-}
-
 // ── Text wrapping ─────────────────────────────────────────────────────────────
 
 function wrapText(text: string, maxWidth: number, font: any, fontSize: number): string[] {
@@ -84,11 +79,166 @@ function wrapText(text: string, maxWidth: number, font: any, fontSize: number): 
   return lines;
 }
 
-export async function exportPDF(doc: Document): Promise<void> {
+function hasPendingVisualElements(sourceElement: HTMLElement): boolean {
+  const hasPendingDiagram = sourceElement.querySelector('[data-diagram-status="loading"]') !== null;
+  if (hasPendingDiagram) return true;
+
+  const images = sourceElement.querySelectorAll<HTMLImageElement>('img');
+  for (const image of images) {
+    const src = image.getAttribute('src')?.trim();
+    if (!src) continue;
+    if (!image.complete) return true;
+  }
+
+  return false;
+}
+
+async function waitForVisualElements(sourceElement: HTMLElement): Promise<void> {
+  const start = Date.now();
+
+  while (Date.now() - start < MEDIA_WAIT_TIMEOUT_MS) {
+    if (!hasPendingVisualElements(sourceElement)) break;
+    await new Promise((resolve) => setTimeout(resolve, MEDIA_WAIT_POLL_MS));
+  }
+
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+async function captureSnapshotCanvas(
+  sourceElement: HTMLElement,
+  captureWidth: number,
+  captureHeight: number,
+  theme: 'dark' | 'light',
+  scale: number,
+): Promise<HTMLCanvasElement> {
+  const baseOptions = {
+    backgroundColor: theme === 'light' ? '#efe6d8' : '#120e0b',
+    scale,
+    useCORS: true,
+    allowTaint: false,
+    imageTimeout: 15000,
+    logging: false,
+    width: captureWidth,
+    height: captureHeight,
+    windowWidth: Math.max(document.documentElement.clientWidth, captureWidth),
+    windowHeight: Math.max(document.documentElement.clientHeight, captureHeight),
+    scrollX: 0,
+    scrollY: 0,
+    onclone: (clonedDoc: globalThis.Document) => {
+      const clonedImages = clonedDoc.querySelectorAll<HTMLImageElement>('img');
+      clonedImages.forEach((img) => {
+        img.setAttribute('crossorigin', 'anonymous');
+        img.setAttribute('loading', 'eager');
+        img.decoding = 'sync';
+      });
+
+      const clonedSvgs = clonedDoc.querySelectorAll<SVGElement>('svg');
+      clonedSvgs.forEach((svg) => {
+        if (!svg.getAttribute('preserveAspectRatio')) {
+          svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        }
+      });
+    },
+  };
+
+  try {
+    return await html2canvas(sourceElement, {
+      ...baseOptions,
+      foreignObjectRendering: true,
+    });
+  } catch (firstErr) {
+    log.warn('storage', 'Snapshot capture with foreignObjectRendering failed; retrying standard capture', firstErr);
+    return await html2canvas(sourceElement, {
+      ...baseOptions,
+      foreignObjectRendering: false,
+    });
+  }
+}
+
+async function renderReaderSnapshotToPdf(
+  pdfDoc: PDFDocument,
+  sourceElement: HTMLElement,
+  theme: 'dark' | 'light',
+): Promise<boolean> {
+  try {
+    await waitForVisualElements(sourceElement);
+
+    const rect = sourceElement.getBoundingClientRect();
+    const captureWidth = Math.max(sourceElement.scrollWidth, Math.ceil(rect.width));
+    const captureHeight = Math.max(sourceElement.scrollHeight, Math.ceil(rect.height));
+    if (captureWidth <= 0 || captureHeight <= 0) return false;
+
+    const scale = Math.min(2, Math.max(1.25, window.devicePixelRatio || 1));
+    const canvas = await captureSnapshotCanvas(sourceElement, captureWidth, captureHeight, theme, scale);
+
+    if (canvas.width <= 0 || canvas.height <= 0) return false;
+
+    const targetWidth = PDF_PAGE_WIDTH - (PDF_PAGE_MARGIN * 2);
+    const targetHeight = PDF_PAGE_HEIGHT - (PDF_PAGE_MARGIN * 2);
+    const pixelsPerPoint = canvas.width / targetWidth;
+    const sliceHeightPx = Math.max(1, Math.floor(targetHeight * pixelsPerPoint));
+    const pageBackground = theme === 'light' ? rgb(0.937, 0.902, 0.847) : rgb(0.071, 0.055, 0.043);
+
+    for (let offsetPx = 0; offsetPx < canvas.height; offsetPx += sliceHeightPx) {
+      const currentSliceHeightPx = Math.min(sliceHeightPx, canvas.height - offsetPx);
+      const sliceCanvas = document.createElement('canvas');
+      sliceCanvas.width = canvas.width;
+      sliceCanvas.height = currentSliceHeightPx;
+
+      const sliceCtx = sliceCanvas.getContext('2d');
+      if (!sliceCtx) return false;
+
+      sliceCtx.drawImage(
+        canvas,
+        0,
+        offsetPx,
+        canvas.width,
+        currentSliceHeightPx,
+        0,
+        0,
+        canvas.width,
+        currentSliceHeightPx,
+      );
+
+      const page = pdfDoc.addPage([PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT]);
+      page.drawRectangle({
+        x: 0,
+        y: 0,
+        width: PDF_PAGE_WIDTH,
+        height: PDF_PAGE_HEIGHT,
+        color: pageBackground,
+      });
+
+      const image = await pdfDoc.embedPng(sliceCanvas.toDataURL('image/png'));
+      const drawnHeight = currentSliceHeightPx / pixelsPerPoint;
+
+      page.drawImage(image, {
+        x: PDF_PAGE_MARGIN,
+        y: PDF_PAGE_HEIGHT - PDF_PAGE_MARGIN - drawnHeight,
+        width: targetWidth,
+        height: drawnHeight,
+      });
+    }
+
+    return true;
+  } catch (err) {
+    log.warn('storage', 'Reader snapshot export failed; falling back to markdown layout', err);
+    return false;
+  }
+}
+
+export async function exportPDF(doc: Document, options: PDFExportOptions = {}): Promise<void> {
   log.info('storage', `Exporting RAG PDF for: ${doc.title}`);
   
   try {
     const pdfDoc = await PDFDocument.create();
+    const renderedFromSnapshot = options.sourceElement
+      ? await renderReaderSnapshotToPdf(pdfDoc, options.sourceElement, options.theme ?? 'dark')
+      : false;
+
+    if (!renderedFromSnapshot) {
     const timesRomanFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
     const boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
     const codeFont = await pdfDoc.embedFont(StandardFonts.Courier);
@@ -252,6 +402,9 @@ export async function exportPDF(doc: Document): Promise<void> {
 
     flushParagraph(paragraphBuffer);
     flushCodeBlock(codeBuffer, codeLanguage);
+    } else {
+      log.info('storage', 'PDF content rendered from Reader page snapshot');
+    }
 
 
     // 2. Fetch and Attach RAG Bundle (optional — failure does not abort the PDF)

@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import type { Document, Folder } from '@/lib/types';
 import { getDocument, getFolders } from '@/lib/storage';
 import { downloadMarkdown, exportPDF } from '@/lib/export';
+import { ReaderThemeContext, useReaderTheme, type ReaderTheme } from '@/lib/reader-theme';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -26,6 +27,15 @@ function mdToHtml(md: string): string {
   return marked.parse(md, { async: false }) as string;
 }
 
+const READER_THEME_STORAGE_KEY = 'notch:reader-theme';
+
+function getInitialReaderTheme(): ReaderTheme {
+  if (typeof window === 'undefined') return 'dark';
+  const saved = window.localStorage.getItem(READER_THEME_STORAGE_KEY);
+  if (saved === 'dark' || saved === 'light') return saved;
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
 // ── Fallback renderer for unknown blocks ──────────────────────────────────────
 
 interface FallbackRendererProps {
@@ -41,10 +51,10 @@ interface DocumentRendererProps {
   content: string;
   onAskAI: (text: string) => void;
   leftPaneRef?: React.RefObject<HTMLDivElement | null>;
-  theme: 'dark' | 'light';
 }
 
-function DocumentRenderer({ content, onAskAI, leftPaneRef, theme }: DocumentRendererProps) {
+function DocumentRenderer({ content, onAskAI, leftPaneRef }: DocumentRendererProps) {
+  const { theme } = useReaderTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
 
@@ -64,7 +74,7 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef, theme }: DocumentRend
   );
 
   const proseClass = theme === 'light'
-    ? 'prose max-w-none font-mono text-base leading-relaxed text-[#2e241d] focus:outline-none'
+    ? 'prose max-w-none font-mono text-base leading-relaxed text-foreground focus:outline-none'
     : 'prose prose-invert max-w-none font-mono text-base leading-relaxed text-foreground focus:outline-none';
 
   const editor = useEditor({
@@ -149,14 +159,14 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef, theme }: DocumentRend
         >
           <button
             onClick={() => { editor?.chain().focus().toggleHighlight().run(); setTooltip(null); }}
-            className="font-mono font-semibold text-[10px] uppercase tracking-wider px-2 py-1 text-muted hover:text-white transition-colors"
+            className="font-mono font-semibold text-[10px] uppercase tracking-wider px-2 py-1 text-muted hover:text-foreground transition-colors"
           >
             [HIGHLIGHT]
           </button>
           <Separator orientation="vertical" className="bg-border" />
           <button
             onClick={() => { onAskAI(tooltip.text); setTooltip(null); }}
-            className="font-mono font-semibold text-[10px] uppercase tracking-wider px-2 py-1 text-primary hover:text-white transition-colors"
+            className="font-mono font-semibold text-[10px] uppercase tracking-wider px-2 py-1 text-primary hover:text-foreground transition-colors"
           >
             [ASK AI]
           </button>
@@ -177,13 +187,13 @@ function ExportMenu({ onExportMd, onExportPdf }: { onExportMd?: () => void; onEx
     <div className="flex gap-2">
       <button
         onClick={onExportMd}
-        className="font-mono font-semibold text-[11px] uppercase tracking-wider text-muted border border-border px-2.5 py-1 hover:text-white hover:border-white transition-colors"
+        className="font-mono font-semibold text-[11px] uppercase tracking-wider text-muted border border-border px-2.5 py-1 hover:text-foreground hover:border-foreground transition-colors"
       >
         [EXPORT .MD]
       </button>
       <button
         onClick={onExportPdf}
-        className="font-mono font-semibold text-[11px] uppercase tracking-wider text-muted border border-border px-2.5 py-1 hover:text-white hover:border-white transition-colors"
+        className="font-mono font-semibold text-[11px] uppercase tracking-wider text-muted border border-border px-2.5 py-1 hover:text-foreground hover:border-foreground transition-colors"
       >
         [EXPORT PDF]
       </button>
@@ -198,20 +208,20 @@ interface ReaderTopBarProps {
   onTabChange: (t: 'notes' | 'chat') => void;
   onExportMd?: () => void;
   onExportPdf?: () => void;
-  theme: 'dark' | 'light';
-  onThemeToggle: () => void;
   folderName?: string;
   folderColor?: string;
 }
 
-function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, theme, onThemeToggle, folderName, folderColor }: ReaderTopBarProps) {
+function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, folderName, folderColor }: ReaderTopBarProps) {
+  const { theme, toggleTheme } = useReaderTheme();
+
   return (
     <div className="h-12 bg-background border-b border-border flex items-center justify-between px-6 shrink-0">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
         <button
           onClick={() => browser.tabs.create({ url: browser.runtime.getURL('/newtab.html') })}
-          className="font-mono text-xs uppercase tracking-wider text-muted hover:text-white transition-colors shrink-0"
+          className="font-mono text-xs uppercase tracking-wider text-muted hover:text-foreground transition-colors shrink-0"
         >
           LIBRARY
         </button>
@@ -230,7 +240,7 @@ function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, 
           </>
         )}
         <span className="font-mono text-xs text-muted shrink-0">/</span>
-        <span className="font-mono text-xs uppercase tracking-wider text-white truncate min-w-0">
+        <span className="font-mono text-xs uppercase tracking-wider text-foreground truncate min-w-0">
           {title}
         </span>
       </div>
@@ -245,7 +255,7 @@ function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, 
               'font-mono font-semibold text-[11px] uppercase tracking-wider px-3 py-1 transition-colors',
               activeTab === tab
                 ? 'border-2 border-primary text-primary'
-                : 'border-2 border-transparent text-muted hover:text-white'
+                : 'border-2 border-transparent text-muted hover:text-foreground'
             )}
           >
             [{tab}]
@@ -256,9 +266,9 @@ function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, 
       <div className="flex items-center gap-2 shrink-0">
         {/* Theme toggle */}
         <button
-          onClick={onThemeToggle}
+          onClick={toggleTheme}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          className="font-mono font-semibold text-[11px] uppercase tracking-wider text-muted border border-border px-2.5 py-1 hover:text-white hover:border-white transition-colors"
+          className="font-mono font-semibold text-[11px] uppercase tracking-wider text-muted border border-border px-2.5 py-1 hover:text-foreground hover:border-foreground transition-colors"
         >
           {theme === 'dark' ? '[☀ LIGHT]' : '[☾ DARK]'}
         </button>
@@ -331,7 +341,7 @@ function NotesPanel({ doc, leftPaneRef }: NotesPanelProps) {
                   <Badge variant="outline" className="font-mono text-[9px] uppercase border-border text-muted shrink-0">
                     {e.type}
                   </Badge>
-                  <span className="font-mono text-[11px] text-white">{e.name}</span>
+                  <span className="font-mono text-[11px] text-foreground">{e.name}</span>
                 </button>
               ))}
             </div>
@@ -374,7 +384,7 @@ function NotesPanel({ doc, leftPaneRef }: NotesPanelProps) {
                   onClick={() => scrollToAndHighlight(leftPaneRef, c.paragraphIndex)}
                   className="text-left hover:opacity-70 transition-opacity cursor-pointer"
                 >
-                  <p className="font-mono text-[11px] font-semibold text-white uppercase">{c.term}</p>
+                  <p className="font-mono text-[11px] font-semibold text-foreground uppercase">{c.term}</p>
                   <p className="font-mono text-[10px] text-muted leading-relaxed">{c.definition}</p>
                 </button>
               ))}
@@ -400,10 +410,20 @@ export default function ReaderApp() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes');
   const [chatPrefill, setChatPrefill] = useState<string | undefined>();
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<ReaderTheme>(getInitialReaderTheme);
   const [folder, setFolder] = useState<Folder | null>(null);
   const [showRawMarkdown, setShowRawMarkdown] = useState(false);
   const leftPaneRef = useRef<HTMLDivElement>(null);
+  const exportContentRef = useRef<HTMLDivElement>(null);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((current) => current === 'dark' ? 'light' : 'dark');
+  }, []);
+
+  const themeContextValue = useMemo(
+    () => ({ theme, setTheme, toggleTheme }),
+    [theme, toggleTheme]
+  );
 
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get('documentId');
@@ -420,6 +440,12 @@ export default function ReaderApp() {
       setLoading(false);
     });
   }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.body.dataset.theme = theme;
+    window.localStorage.setItem(READER_THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -469,16 +495,15 @@ export default function ReaderApp() {
   }
 
   return (
-    <TooltipProvider>
-      <div className="h-screen bg-background text-white flex flex-col overflow-hidden">
+    <ReaderThemeContext.Provider value={themeContextValue}>
+      <TooltipProvider>
+        <div data-theme={theme} className="h-screen bg-background text-foreground flex flex-col overflow-hidden">
         <ReaderTopBar
           title={doc.title}
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onExportMd={() => downloadMarkdown(doc)}
-          onExportPdf={() => exportPDF(doc)}
-          theme={theme}
-          onThemeToggle={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+          onExportPdf={() => exportPDF(doc, { sourceElement: exportContentRef.current, theme })}
           folderName={folder?.name}
           folderColor={folder?.color}
         />
@@ -489,13 +514,13 @@ export default function ReaderApp() {
             ref={leftPaneRef}
             className={cn(
               'flex-7 border-r border-border overflow-y-auto transition-colors duration-200',
-              theme === 'light' ? 'bg-[#f8f0df] text-[#2e241d]' : 'bg-background text-white'
+              theme === 'light' ? 'bg-[#f8f0df] text-foreground' : 'bg-background text-foreground'
             )}
           >
-            <div className="px-10 py-8">
+            <div ref={exportContentRef} className="px-10 py-8">
               <h1 className={cn(
                 'font-mono font-bold text-4xl mb-4 leading-tight',
-                theme === 'light' ? 'text-[#2a211a]' : 'text-white'
+                theme === 'light' ? 'text-[#2a211a]' : 'text-foreground'
               )}>
                 {doc.title}
               </h1>
@@ -549,14 +574,13 @@ export default function ReaderApp() {
                   content={doc.content}
                   onAskAI={handleAskAI}
                   leftPaneRef={leftPaneRef}
-                  theme={theme}
                 />
               )}
             </div>
           </div>
 
           {/* Right pane — 30%, sticky */}
-          <div className="flex-3 flex flex-col overflow-hidden sticky top-0 self-start h-[calc(100vh-3rem)]">
+          <div className="flex-3 flex flex-col overflow-hidden sticky top-0 self-start h-[calc(100vh-3rem)] bg-background text-foreground">
             <ScrollArea className="flex-1 p-6">
               {activeTab === 'notes'
                 ? <NotesPanel doc={doc} leftPaneRef={leftPaneRef} />
@@ -565,7 +589,8 @@ export default function ReaderApp() {
             </ScrollArea>
           </div>
         </div>
-      </div>
-    </TooltipProvider>
+        </div>
+      </TooltipProvider>
+    </ReaderThemeContext.Provider>
   );
 }

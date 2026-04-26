@@ -11,6 +11,7 @@ export function PlantUMLBlock({ code }: PlantUMLBlockProps) {
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const status: 'loading' | 'rendered' | 'error' = loading ? 'loading' : error ? 'error' : 'rendered';
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +43,11 @@ export function PlantUMLBlock({ code }: PlantUMLBlockProps) {
 
   return (
     // Parchment card — PlantUML server renders with dark strokes, needs light bg
-    <div className="my-4 border border-border bg-[#f5ead3] p-4 overflow-x-auto">
+    <div
+      className="my-4 border border-border bg-[#f5ead3] p-4 overflow-x-auto"
+      data-diagram-kind="plantuml"
+      data-diagram-status={status}
+    >
       {loading && <Skeleton className="h-32 w-full" />}
 
       {!loading && !error && svg && (
