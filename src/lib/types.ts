@@ -1,8 +1,10 @@
 // The three supported models
 export type GeminiModel =
-  | 'gemini-3.1-flash-lite-preview'  // FAST — highest free RPD (500/day)
-  | 'gemma-3-12b-it'                 // BALANCED — good quality
-  | 'gemma-3-27b-it';                // DEEP — best quality
+  | 'gemini-3.1-flash-lite-preview'  
+  | 'gemma-3-12b-it'             
+  | 'gemma-3-4b-it'             
+  | 'gemma-3-1b-it'             
+  | 'gemma-3-27b-it';             
 
 export interface ContentFrame {
   index: number;

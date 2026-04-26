@@ -1,4 +1,4 @@
-import { sendCaptureRequest, sendRAGRequest } from '../lib/ai-client';
+import { AIClientError, sendCaptureRequest, sendRAGRequest } from '../lib/ai-client';
 import { chunkText, embedDocument, embedHistoryTurn, embedQuery } from '../lib/embedding-engine';
 import { getChunksByDocument, saveChatMessage } from '../lib/idb';
 import { buildOfflineCaptureMarkdown, answerWithOfflineNLP, rankChunksByKeywords } from '../lib/nlp-fallback';
@@ -33,6 +33,18 @@ function extractPageDom(): DOMExtraction {
     wordCount: readableText.split(/\s+/).filter(Boolean).length,
     metaDescription: document.querySelector('meta[name="description"]')?.getAttribute('content') ?? '',
   };
+}
+
+function isQuotaExhaustedError(err: unknown): boolean {
+  if (err instanceof AIClientError) {
+    return err.status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(err.message);
+  }
+
+  if (err instanceof Error) {
+    return /429|RESOURCE_EXHAUSTED|quota/i.test(err.message);
+  }
+
+  return false;
 }
 
 async function extractDomFromTab(tabId: number): Promise<DOMExtraction> {
@@ -124,9 +136,22 @@ async function handleCapturePage(
     log.info('background', '  [2/8] Loading settings...');
     const settings = await getSettings();
     const useOfflineCapture = settings.provider === 'offline' || mode === 'LOCAL';
-    const rawResponse = useOfflineCapture
-      ? buildOfflineCaptureMarkdown(domPayload.title, domPayload.textContent)
-      : await sendCaptureRequest(domPayload.textContent, domPayload.images, mode, settings);
+    let captureProvider: Document['provider'] = useOfflineCapture ? 'offline' : (settings.provider ?? 'gemini');
+    let rawResponse: string;
+
+    if (useOfflineCapture) {
+      rawResponse = buildOfflineCaptureMarkdown(domPayload.title, domPayload.textContent);
+    } else {
+      try {
+        rawResponse = await sendCaptureRequest(domPayload.textContent, domPayload.images, mode, settings);
+      } catch (err) {
+        if (!isQuotaExhaustedError(err)) throw err;
+
+        log.warn('background', 'Gemini quota exceeded during capture. Falling back to offline markdown for this page.', err);
+        captureProvider = 'offline';
+        rawResponse = buildOfflineCaptureMarkdown(domPayload.title, domPayload.textContent);
+      }
+    }
     log.success('background', `Capture response received (${rawResponse.length} chars)`);
 
     // Strip wrapping ```markdown ... ``` fence that some models add around the entire output
@@ -201,7 +226,7 @@ async function handleCapturePage(
       capturedAt: new Date().toISOString(),
       wordCount: domPayload.wordCount,
       mode,
-      provider: useOfflineCapture ? 'offline' : (settings.provider ?? 'gemini'),
+      provider: captureProvider,
       content: aiMarkdown,
       summary,
       keyPoints,
@@ -359,14 +384,27 @@ async function handleRagQuery(
       }
     }
 
-    const rankedForAnswer = (useOffline || embeddingRetrievalFailed)
-      ? rankChunksByKeywords(query, chunks, 6)
+    const offlineRankedChunks = rankChunksByKeywords(query, chunks, 6);
+    let chunksForAnswer = (useOffline || embeddingRetrievalFailed)
+      ? offlineRankedChunks
       : chunks.slice(0, 6);
-    const answer = useOffline
-      ? answerWithOfflineNLP(query, rankedForAnswer)
-      : await sendRAGRequest(query, rankedForAnswer, settings);
 
-    const citations = parseCitations(answer, rankedForAnswer);
+    let answer: string;
+    if (useOffline) {
+      answer = answerWithOfflineNLP(query, chunksForAnswer);
+    } else {
+      try {
+        answer = await sendRAGRequest(query, chunksForAnswer, settings);
+      } catch (err) {
+        if (!isQuotaExhaustedError(err)) throw err;
+
+        log.warn('background', 'Gemini quota exceeded during RAG. Falling back to offline NLP answer.', err);
+        chunksForAnswer = offlineRankedChunks;
+        answer = answerWithOfflineNLP(query, chunksForAnswer);
+      }
+    }
+
+    const citations = parseCitations(answer, chunksForAnswer);
 
     await persistChatMessage(documentId, 'notch', answer, citations);
     void embedHistoryTurn(documentId, query, answer);

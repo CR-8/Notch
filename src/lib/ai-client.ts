@@ -16,12 +16,61 @@ export class AIClientError extends Error {
 
 // ─── Model Mapping ────────────────────────────────────────────────────────────
 
-// Maps each generation mode to its Gemini API model string
-const MODE_TO_MODEL: Record<Exclude<GenerationMode, 'LOCAL'>, GeminiModel> = {
-  FAST:     'gemini-3.1-flash-lite-preview', // 500 RPD free — fastest, most quota
-  BALANCED: 'gemma-3-12b-it',               // 14.4K RPD free — good quality
-  DEEP:     'gemma-3-27b-it',               // 14.4K RPD free — best quality
+// Ordered model fallback chains by generation mode.
+// If a model returns 429 quota exhaustion, the next model is tried automatically.
+const MODE_TO_MODEL_CHAIN: Record<Exclude<GenerationMode, 'LOCAL'>, GeminiModel[]> = {
+  FAST: ['gemini-3.1-flash-lite-preview', 'gemma-3-27b-it'],
+  BALANCED: ['gemma-3-12b-it', 'gemma-3-4b-it'],
+  DEEP: ['gemma-3-27b-it' , 'gemma-3-12b-it'],
 };
+
+const RAG_MODEL_CHAIN: GeminiModel[] = ['gemma-3-12b-it', 'gemini-3.1-flash-lite-preview'];
+
+const MAX_CAPTURE_CONTENT_CHARS = 18_000;
+const MAX_CAPTURE_IMAGE_REFS_CHARS = 4_000;
+const QUOTA_RETRY_LIMIT = 2;
+
+function trimForQuota(input: string, maxChars: number, label: string): string {
+  if (input.length <= maxChars) return input;
+
+  const headChars = Math.floor(maxChars * 0.75);
+  const tailChars = maxChars - headChars;
+  const removed = input.length - maxChars;
+  log.warn('ai-client', `${label} is large (${input.length} chars). Trimming ${removed} chars to reduce token usage.`);
+
+  return [
+    input.slice(0, headChars),
+    '',
+    `[TRUNCATED ${removed} CHARACTERS TO STAY WITHIN FREE-TIER QUOTA]`,
+    '',
+    input.slice(-tailChars),
+  ].join('\n');
+}
+
+function isQuotaExceededError(err: AIClientError): boolean {
+  if (err.status === 429) return true;
+  return /RESOURCE_EXHAUSTED|quota exceeded|quota/i.test(err.message);
+}
+
+function parseRetryDelayMs(message: string): number {
+  const msMatch = message.match(/retry in\s+([0-9.]+)ms/i);
+  if (msMatch) {
+    const parsed = Math.ceil(Number(msMatch[1]));
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+
+  const secMatch = message.match(/"retryDelay"\s*:\s*"([0-9.]+)s"/i);
+  if (secMatch) {
+    const parsed = Math.ceil(Number(secMatch[1]) * 1000);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+
+  return 1200;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // ─── Prompt Templates ─────────────────────────────────────────────────────────
 
@@ -121,6 +170,46 @@ async function callGemini(model: string, prompt: string, apiKey: string, signal:
   return text;
 }
 
+async function callGeminiWithFallback(
+  models: GeminiModel[],
+  prompt: string,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<string> {
+  let lastError: AIClientError | null = null;
+
+  for (const model of models) {
+    for (let attempt = 1; attempt <= QUOTA_RETRY_LIMIT; attempt++) {
+      try {
+        return await callGemini(model, prompt, apiKey, signal);
+      } catch (err) {
+        if (!(err instanceof AIClientError)) throw err;
+
+        lastError = err;
+        const quotaHit = isQuotaExceededError(err);
+        const hasNextRetry = attempt < QUOTA_RETRY_LIMIT;
+
+        if (quotaHit && hasNextRetry) {
+          const waitMs = parseRetryDelayMs(err.message) + Math.floor(Math.random() * 350) + 200;
+          log.warn('ai-client', `Quota hit on ${model}; retrying in ${waitMs}ms (attempt ${attempt + 1}/${QUOTA_RETRY_LIMIT})`);
+          await sleep(waitMs);
+          continue;
+        }
+
+        if (quotaHit) {
+          log.warn('ai-client', `Quota still exhausted on ${model}; trying fallback model.`);
+          break;
+        }
+
+        // For non-quota API errors, fail fast instead of silently hopping models.
+        throw err;
+      }
+    }
+  }
+
+  throw lastError ?? new AIClientError('All Gemini fallback models failed.', 'API_ERROR');
+}
+
 function normalizeOllamaEndpoint(endpoint: string): string {
   const base = endpoint.trim().replace(/\/$/, '');
   return base.endsWith('/api/generate') ? base : `${base}/api/generate`;
@@ -183,23 +272,17 @@ export async function sendCaptureRequest(
   settings: Settings,
   onProgress?: (current: number, total: number) => void,
 ): Promise<string> {
-  if (!settings.apiKeys.gemini) {
-    throw new AIClientError('No Gemini API key configured. Add your key in Settings.', 'MISSING_KEY');
-  }
-
-  const imageRefsText = imageRefs
-    .map(img => `[IMG: ${img.url} | ${img.alt} | ${img.paragraphContext}]`)
-    .join('\n');
-
-  const prompt = mode === 'DEEP'
-    ? buildDeepPrompt(content, imageRefsText)
-    : buildFastPrompt(content, imageRefsText);
-
   const { signal, clear } = withTimeout(300_000);
   try {
     const provider = settings.provider ?? 'gemini';
 
     if (provider === 'ollama') {
+      const imageRefsText = imageRefs
+        .map(img => `[IMG: ${img.url} | ${img.alt} | ${img.paragraphContext}]`)
+        .join('\n');
+      const prompt = mode === 'DEEP'
+        ? buildDeepPrompt(content, imageRefsText)
+        : buildFastPrompt(content, imageRefsText);
       return await callOllama(prompt, settings, signal);
     }
 
@@ -211,13 +294,24 @@ export async function sendCaptureRequest(
       throw new AIClientError('No Gemini API key configured. Add your key in Settings.', 'MISSING_KEY');
     }
 
+    const cappedContent = trimForQuota(content, MAX_CAPTURE_CONTENT_CHARS, 'Capture content');
+    const imageRefsText = trimForQuota(
+      imageRefs.map((img) => `[IMG: ${img.url} | ${img.alt} | ${img.paragraphContext}]`).join('\n'),
+      MAX_CAPTURE_IMAGE_REFS_CHARS,
+      'Image references',
+    );
+
+    const prompt = mode === 'DEEP'
+      ? buildDeepPrompt(cappedContent, imageRefsText)
+      : buildFastPrompt(cappedContent, imageRefsText);
+
     const effectiveMode: Exclude<GenerationMode, 'LOCAL'> = mode === 'LOCAL' ? 'BALANCED' : mode;
-    const model = MODE_TO_MODEL[effectiveMode];
-    return await callGemini(model, prompt, settings.apiKeys.gemini, signal);
+    const modelChain = MODE_TO_MODEL_CHAIN[effectiveMode];
+    return await callGeminiWithFallback(modelChain, prompt, settings.apiKeys.gemini, signal);
   } catch (err) {
     if (err instanceof AIClientError) throw err;
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new AIClientError('Request timed out after 30 seconds.', 'TIMEOUT');
+      throw new AIClientError('Request timed out after 5 minutes.', 'TIMEOUT');
     }
     throw new AIClientError(`Network error: ${(err as Error).message}`, 'NETWORK_ERROR');
   } finally {
@@ -253,9 +347,7 @@ export async function sendRAGRequest(
       throw new AIClientError('No Gemini API key configured.', 'MISSING_KEY');
     }
 
-    // RAG always uses BALANCED model to preserve quota
-    const model = MODE_TO_MODEL['BALANCED'];
-    return await callGemini(model, prompt, settings.apiKeys.gemini, signal);
+    return await callGeminiWithFallback(RAG_MODEL_CHAIN, prompt, settings.apiKeys.gemini, signal);
   } catch (err) {
     if (err instanceof AIClientError) throw err;
     if (err instanceof Error && err.name === 'AbortError') {

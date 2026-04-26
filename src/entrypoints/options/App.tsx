@@ -28,9 +28,9 @@ const MODEL_DEFS: { mode: GenerationMode; label: string; model: string; descript
   {
     mode: 'BALANCED',
     label: 'BALANCED',
-    model: 'gemini-3.1-flash',
+    model: 'gemma-3-12b-it',
     description: 'Balanced speed and quality for most captures',
-    quota: '250 req/day free',
+    quota: 'Better free-tier token headroom',
   },
   {
     mode: 'DEEP',

@@ -102,7 +102,7 @@
       repeating-linear-gradient(120deg, rgb(255 242 216 / 3%) 0 2px, transparent 2px 8px);
     background-attachment: fixed;
     color: var(--color-text);
-    font-family: var(--font-body);
+    font-family: var(--font-mono);
     font-size: 18px;
     line-height: 1.6;
   }
@@ -123,7 +123,7 @@
   }
 
   h1, h2, h3, h4, h5, h6 {
-    font-family: var(--font-heading);
+    font-family: var(--font-mono);
     font-weight: 700;
     letter-spacing: 0.03em;
   }
@@ -255,11 +255,11 @@
 
   /* Headings use Space Grotesk, body uses Inter Tight */
   .prose h1, .prose h2, .prose h3, .prose h4 {
-    font-family: var(--font-heading);
+    font-family: var(--font-mono);
   }
 
   .prose p, .prose li, .prose blockquote {
-    font-family: var(--font-body);
+    font-family: var(--font-mono);
   }
 
   .prose code, .prose pre {
