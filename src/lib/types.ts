@@ -13,6 +13,7 @@ export interface ContentFrame {
 
 export type GenerationMode = 'FAST' | 'DEEP' | 'BALANCED' | 'LOCAL';
 export type LLMProvider = 'gemini' | 'ollama' | 'offline' | 'openai' | 'anthropic';
+export type ViewMode = 'compact' | 'comfortable' | 'detailed';
 
 export interface Entity {
   name: string;
@@ -102,6 +103,10 @@ export interface DocumentChunk {
   paragraphIndex: number;
   embedding?: Float32Array;
   source?: 'document' | 'history';
+}
+
+export interface TagColorMap {
+  [tag: string]: string; // hex color
 }
 
 export interface Settings {

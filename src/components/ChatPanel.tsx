@@ -109,9 +109,12 @@ function parseAnswerWithCitations(
 
 // ── ContextPill ───────────────────────────────────────────────────────────────
 
-function ContextPill({ title }: { title: string }) {
+function ContextPill({ title, folderColor }: { title: string; folderColor?: string }) {
   return (
-    <div className="border border-border px-3 py-2 shrink-0">
+    <div className="border border-border px-3 py-2 shrink-0 flex items-center gap-2">
+      {folderColor && (
+        <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: folderColor }} />
+      )}
       <span className="font-mono text-[10px] uppercase tracking-wider text-muted">CHATTING WITH: </span>
       <span className="font-mono text-[10px] uppercase tracking-wider text-white truncate">{title}</span>
     </div>
@@ -276,9 +279,10 @@ export interface ChatPanelProps {
   doc: Document;
   prefillQuery?: string;
   leftPaneRef: React.RefObject<HTMLDivElement | null>;
+  folderColor?: string;
 }
 
-export function ChatPanel({ doc, prefillQuery, leftPaneRef }: ChatPanelProps) {
+export function ChatPanel({ doc, prefillQuery, leftPaneRef, folderColor }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
 
@@ -333,7 +337,7 @@ export function ChatPanel({ doc, prefillQuery, leftPaneRef }: ChatPanelProps) {
 
   return (
     <div className="flex flex-col h-full gap-3">
-      <ContextPill title={doc.title} />
+      <ContextPill title={doc.title} folderColor={folderColor} />
       <MessageList messages={messages} isThinking={isThinking} leftPaneRef={leftPaneRef} />
       <ChatInput onSubmit={handleSubmit} disabled={isThinking} initialValue={prefillQuery} />
     </div>

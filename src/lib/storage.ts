@@ -1,4 +1,4 @@
-import type { Document, DocumentMeta, Folder, Settings } from './types';
+import type { Document, DocumentMeta, Folder, Settings, TagColorMap, ViewMode } from './types';
 import { deleteDocumentFromIDB, saveDocumentToIDB, getDocumentFromIDB } from './idb';
 import { browser } from 'wxt/browser';
 import { log } from './logger';
@@ -8,6 +8,8 @@ const KEYS = {
   settings:  'notch:settings',
   docIndex:  'notch:doc:index',
   folders:   'notch:folders',
+  tagColors: 'notch:tag-colors',
+  viewMode:  'notch:view-mode',
   meta:      (id: string) => `notch:meta:${id}`,
   // Legacy key — kept for backward-compat migration only
   legacyDoc: (id: string) => `notch:doc:${id}`,
@@ -295,17 +297,62 @@ export async function saveFolder(folder: Folder): Promise<void> {
 export async function deleteFolder(folderId: string): Promise<void> {
   const folders = await getFolders();
   await browser.storage.local.set({ [KEYS.folders]: folders.filter(f => f.id !== folderId) });
-  // Unset folder on all docs that had it
+  // Move documents from deleted folder to unorganised root (undefined)
+  await moveFolderDocuments(folderId, undefined);
+}
+
+export async function renameFolder(id: string, newName: string): Promise<void> {
+  const folders = await getFolders();
+  const idx = folders.findIndex(f => f.id === id);
+  if (idx < 0) return;
+  folders[idx] = { ...folders[idx], name: newName };
+  await browser.storage.local.set({ [KEYS.folders]: folders });
+}
+
+export async function moveFolderDocuments(
+  fromFolderId: string,
+  toFolderId: string | undefined,
+): Promise<void> {
   const index = await getDocIndex();
   const keys = index.map(id => KEYS.meta(id));
   const result = await browser.storage.local.get(keys);
   const patches: Record<string, DocumentMeta> = {};
   for (const id of index) {
     const meta = result[KEYS.meta(id)] as DocumentMeta | undefined;
-    if (meta?.folder === folderId) {
-      patches[KEYS.meta(id)] = { ...meta, folder: undefined };
+    if (meta?.folder === fromFolderId) {
+      patches[KEYS.meta(id)] = { ...meta, folder: toFolderId };
     }
   }
   if (Object.keys(patches).length > 0) await browser.storage.local.set(patches);
   await invalidateCache();
+}
+
+// ── Tag color map ─────────────────────────────────────────────────────────────
+
+export async function getTagColors(): Promise<TagColorMap> {
+  const result = await browser.storage.local.get(KEYS.tagColors);
+  return (result[KEYS.tagColors] as TagColorMap) ?? {};
+}
+
+export async function setTagColor(tag: string, color: string | null): Promise<void> {
+  const map = await getTagColors();
+  if (color === null) {
+    delete map[tag];
+  } else {
+    map[tag] = color;
+  }
+  await browser.storage.local.set({ [KEYS.tagColors]: map });
+}
+
+// ── View mode persistence ─────────────────────────────────────────────────────
+
+const DEFAULT_VIEW_MODE: ViewMode = 'comfortable';
+
+export async function getViewMode(): Promise<ViewMode> {
+  const result = await browser.storage.local.get(KEYS.viewMode);
+  return (result[KEYS.viewMode] as ViewMode) ?? DEFAULT_VIEW_MODE;
+}
+
+export async function saveViewMode(mode: ViewMode): Promise<void> {
+  await browser.storage.local.set({ [KEYS.viewMode]: mode });
 }

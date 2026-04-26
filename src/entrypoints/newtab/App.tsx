@@ -2,14 +2,23 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import Fuse from 'fuse.js';
 import { browser } from 'wxt/browser';
 import { cn } from '@/lib/utils';
-import type { DocumentMeta, Folder } from '@/lib/types';
-import { getDocIndex, getDocumentMetas, deleteDocument, updateDocumentMeta, getFolders, saveFolder, deleteFolder } from '@/lib/storage';
+import type { DocumentMeta, Folder, TagColorMap, ViewMode } from '@/lib/types';
+import { getDocIndex, getDocumentMetas, deleteDocument, updateDocumentMeta, getFolders, saveFolder, deleteFolder, getTagColors, setTagColor, getViewMode, saveViewMode, getSettings } from '@/lib/storage';
+import { FOLDER_COLORS } from '@/lib/color-palette';
 import { importNotchPDF } from '@/lib/import';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { EmptyState } from '@/components/EmptyState';
+
+// exportFolderAsZip will be implemented in task 20; loaded lazily so missing module doesn't break build
+type ExportFolderFn = (folderId: string, format: 'markdown' | 'pdf') => Promise<Blob>;
+let _exportFolderAsZip: ExportFolderFn | undefined;
+void (import('@/lib/zip-export') as Promise<{ exportFolderAsZip: ExportFolderFn }>)
+  .then(m => { _exportFolderAsZip = m.exportFolderAsZip; })
+  .catch(() => { /* zip-export not yet implemented — will be wired in task 20 */ });
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PAGE_SIZE = 10;
@@ -32,13 +41,7 @@ const fuseOptions = {
 type Filter = 'all' | 'favorites' | 'archive';
 type SortOrder = 'newest' | 'oldest' | 'title-az';
 type ImportStatus = 'idle' | 'importing' | 'done' | 'error';
-type ViewMode = 'compact' | 'comfortable' | 'detailed';
 
-// ── Folder color palette ───────────────────────────────────────────────────────
-const FOLDER_COLORS = [
-  '#c7a15a', '#be5b50', '#5e6ad2', '#4da89a', '#a05eb5',
-  '#d4845a', '#5a9ed4', '#b5a05e', '#5eb55e', '#ac9a7d',
-];
 
 // ── Search input ──────────────────────────────────────────────────────────────
 function SearchInput({
@@ -91,12 +94,18 @@ function LibraryHeader({
   viewMode,
   onViewModeChange,
   searchSlot,
+  folders,
+  activeFolderId,
+  onFolderSelect,
 }: {
   sortOrder: SortOrder;
   onSortChange: (s: SortOrder) => void;
   viewMode: ViewMode;
   onViewModeChange: (v: ViewMode) => void;
   searchSlot?: React.ReactNode;
+  folders: Folder[];
+  activeFolderId: string | null;
+  onFolderSelect: (id: string | null) => void;
 }) {
   const sorts: { label: string; value: SortOrder }[] = [
     { label: 'NEWEST', value: 'newest' },
@@ -113,6 +122,19 @@ function LibraryHeader({
       <span className="font-mono font-bold text-2xl text-white">LIBRARY</span>
       <div className="flex items-center gap-3">
         {searchSlot}
+        {/* Folder filter */}
+        {folders.length > 0 && (
+          <select
+            value={activeFolderId ?? ''}
+            onChange={e => onFolderSelect(e.target.value || null)}
+            className="font-mono text-[10px] uppercase tracking-wider bg-surface border border-border text-muted hover:text-white px-2 py-1 h-7 focus:outline-none focus:border-primary cursor-pointer"
+          >
+            <option value="">ALL FOLDERS</option>
+            {folders.map(f => (
+              <option key={f.id} value={f.id}>{f.name.toUpperCase()}</option>
+            ))}
+          </select>
+        )}
         {/* Sort */}
         <div className="flex gap-1">
           {sorts.map(({ label, value }) => (
@@ -160,6 +182,11 @@ function Sidebar({
   onFolderSelect,
   onFolderCreate,
   onFolderDelete,
+  onDropDocumentOnFolder,
+  onExportFolder,
+  tagColors,
+  onSetTagColor,
+  allTags,
 }: {
   activeFilter: Filter;
   onFilterChange: (f: Filter) => void;
@@ -170,10 +197,16 @@ function Sidebar({
   onFolderSelect: (id: string | null) => void;
   onFolderCreate: (name: string, color: string) => void;
   onFolderDelete: (id: string) => void;
+  onDropDocumentOnFolder: (docId: string, folderId: string) => void;
+  onExportFolder: (folderId: string) => void;
+  tagColors: TagColorMap;
+  onSetTagColor: (tag: string, color: string | null) => void;
+  allTags: string[];
 }) {
   const [newFolderName, setNewFolderName] = useState('');
   const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLORS[0]);
   const [showFolderInput, setShowFolderInput] = useState(false);
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
 
   const topItems: { label: string; value: Filter | 'settings' }[] = [
     { label: 'ALL DOCUMENTS', value: 'all' },
@@ -264,7 +297,21 @@ function Sidebar({
         )}
 
         {folders.map(folder => (
-          <div key={folder.id} className="group flex items-center">
+          <div
+            key={folder.id}
+            className={cn(
+              'group flex items-center transition-colors',
+              dragOverFolderId === folder.id && 'bg-surface-hover'
+            )}
+            onDragOver={e => { e.preventDefault(); setDragOverFolderId(folder.id); }}
+            onDragLeave={() => setDragOverFolderId(null)}
+            onDrop={e => {
+              e.preventDefault();
+              setDragOverFolderId(null);
+              const docId = e.dataTransfer.getData('text/plain');
+              if (docId) onDropDocumentOnFolder(docId, folder.id);
+            }}
+          >
             <button
               onClick={() => { onFolderSelect(folder.id); onFilterChange('all'); }}
               className={cn(
@@ -282,6 +329,13 @@ function Sidebar({
                 style={{ backgroundColor: folder.color }}
               />
               <span className="truncate">{folder.name}</span>
+            </button>
+            <button
+              onClick={() => onExportFolder(folder.id)}
+              className="text-muted hover:text-primary text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Export folder as zip"
+            >
+              ↓
             </button>
             <button
               onClick={() => onFolderDelete(folder.id)}
@@ -309,6 +363,13 @@ function Sidebar({
           {importLabel}
         </button>
       </div>
+
+      <ColorLegend
+        folders={folders}
+        tagColors={tagColors}
+        onSetTagColor={onSetTagColor}
+        allTags={allTags}
+      />
     </div>
 
   );
@@ -326,10 +387,13 @@ interface DocumentCardProps {
   onTagClick: (tag: string) => void;
   onMoveToFolder: (id: string, folderId: string | undefined) => void;
   activeTag: string | null;
+  onDragStart?: (e: React.DragEvent, docId: string) => void;
+  tagColors: TagColorMap;
 }
 
-function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, onTagClick, onMoveToFolder, activeTag }: DocumentCardProps) {
+function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, onTagClick, onMoveToFolder, activeTag, onDragStart, tagColors }: DocumentCardProps) {
   const [showFolderMenu, setShowFolderMenu] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   function stop<T>(fn: () => T) {
     return (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
@@ -375,8 +439,14 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
   if (viewMode === 'compact') {
     return (
       <div
+        draggable
+        onDragStart={e => { setIsDragging(true); onDragStart?.(e, meta.id); }}
+        onDragEnd={() => setIsDragging(false)}
         onClick={() => browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${meta.id}`) })}
-        className="group card px-4 py-2 cursor-pointer flex items-center hover:bg-surface-hover transition-colors relative h-12"
+        className={cn(
+          'group card px-4 py-2 cursor-pointer flex items-center hover:bg-surface-hover transition-colors relative h-12',
+          isDragging && 'opacity-50'
+        )}
       >
         <div className="flex-1 flex items-center gap-4 min-w-0 pr-24">
           <button
@@ -398,7 +468,14 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
 
           <div className="flex gap-1.5 overflow-hidden opacity-60">
             {meta.tags.slice(0, 3).map(tag => (
-              <span key={tag} className="font-mono text-[9px] text-muted uppercase px-1 border border-border truncate leading-tight py-0.5">{tag}</span>
+              <span
+                key={tag}
+                className="font-mono text-[9px] uppercase px-1 border truncate leading-tight py-0.5"
+                style={tagColors[tag]
+                  ? { borderColor: tagColors[tag], color: tagColors[tag] }
+                  : { borderColor: 'var(--color-border)', color: 'var(--color-muted)' }
+                }
+              >{tag}</span>
             ))}
           </div>
         </div>
@@ -415,10 +492,14 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
   // Comfortable (default) & Detailed
   return (
     <div
+      draggable
+      onDragStart={e => { setIsDragging(true); onDragStart?.(e, meta.id); }}
+      onDragEnd={() => setIsDragging(false)}
       onClick={() => browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${meta.id}`) })}
       className={cn(
         'card cursor-pointer flex flex-col gap-2 hover:bg-surface-hover transition-colors relative',
-        viewMode === 'detailed' ? 'p-4' : 'p-3'
+        viewMode === 'detailed' ? 'p-4' : 'p-3',
+        isDragging && 'opacity-50'
       )}
     >
       <div className="flex gap-3 justify-between items-start">
@@ -452,21 +533,28 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
 
       {meta.tags.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-1">
-          {meta.tags.map((tag) => (
-            <Badge
-              key={tag}
-              variant="outline"
-              onClick={stop(() => onTagClick(tag))}
-              className={cn(
-                'font-mono text-[9px] uppercase px-1.5 py-0.5 cursor-pointer transition-colors',
-                activeTag === tag
-                  ? 'border-primary text-primary'
-                  : 'border-border text-muted hover:border-white hover:text-white'
-              )}
-            >
-              {tag}
-            </Badge>
-          ))}
+          {meta.tags.map((tag) => {
+            const tagColor = tagColors[tag];
+            return (
+              <Badge
+                key={tag}
+                variant="outline"
+                onClick={stop(() => onTagClick(tag))}
+                className={cn(
+                  'font-mono text-[9px] uppercase px-1.5 py-0.5 cursor-pointer transition-colors',
+                  activeTag === tag
+                    ? 'border-primary text-primary'
+                    : 'border-border text-muted hover:border-white hover:text-white'
+                )}
+                style={tagColor && activeTag !== tag
+                  ? { borderColor: tagColor, color: tagColor }
+                  : undefined
+                }
+              >
+                {tag}
+              </Badge>
+            );
+          })}
         </div>
       )}
 
@@ -487,6 +575,70 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
           ×
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Color legend ──────────────────────────────────────────────────────────────
+interface ColorLegendProps {
+  folders: Folder[];
+  tagColors: TagColorMap;
+  onSetTagColor: (tag: string, color: string | null) => void;
+  allTags: string[];
+}
+
+function ColorLegend({ folders, tagColors, onSetTagColor, allTags }: ColorLegendProps) {
+  const coloredFolders = folders.filter(f => f.color);
+  const coloredTags = Object.entries(tagColors);
+
+  if (coloredFolders.length === 0 && coloredTags.length === 0 && allTags.length === 0) return null;
+
+  return (
+    <div className="px-4 mt-4 border-t border-border pt-3">
+      <span className="font-mono text-[9px] uppercase tracking-widest text-muted block mb-2">COLOR LEGEND</span>
+
+      {coloredFolders.map(f => (
+        <div key={f.id} className="flex items-center gap-2 mb-1">
+          <span className="inline-block w-2.5 h-2.5 shrink-0" style={{ backgroundColor: f.color }} />
+          <span className="font-mono text-[9px] uppercase truncate" style={{ color: f.color }}>{f.name}</span>
+        </div>
+      ))}
+
+      {coloredTags.map(([tag, color]) => (
+        <div key={tag} className="flex items-center gap-2 mb-1">
+          <span className="inline-block w-2.5 h-2.5 shrink-0 rounded-sm" style={{ backgroundColor: color }} />
+          <span className="font-mono text-[9px] uppercase truncate" style={{ color }}>{tag}</span>
+          <button
+            onClick={() => onSetTagColor(tag, null)}
+            className="font-mono text-[9px] text-muted hover:text-danger transition-colors ml-auto shrink-0"
+            title="Remove color"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+
+      {allTags.filter(t => !tagColors[t]).length > 0 && (
+        <>
+          <span className="font-mono text-[8px] uppercase tracking-widest text-muted block mt-2 mb-1">UNCOLORED TAGS</span>
+          {allTags.filter(t => !tagColors[t]).map(tag => (
+            <div key={tag} className="flex items-center gap-1 mb-1 flex-wrap">
+              <span className="font-mono text-[9px] uppercase text-muted truncate max-w-[80px]">{tag}</span>
+              <div className="flex gap-0.5 flex-wrap">
+                {FOLDER_COLORS.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => onSetTagColor(tag, c)}
+                    className="w-3 h-3 transition-transform hover:scale-125"
+                    style={{ backgroundColor: c }}
+                    title={`Set ${tag} to ${c}`}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -531,7 +683,7 @@ function Pagination({ page, totalPages, onPrev, onNext }: { page: number; totalP
 }
 
 // ── Document grid ─────────────────────────────────────────────────────────────
-function DocumentGrid({ metas, folders, viewMode, loading, onStar, onArchive, onDelete, onTagClick, onMoveToFolder, activeTag }: {
+function DocumentGrid({ metas, folders, viewMode, loading, onStar, onArchive, onDelete, onTagClick, onMoveToFolder, activeTag, onDragStart, tagColors, activeFolderId, hasApiKey, onAddDocument }: {
   metas: DocumentMeta[];
   folders: Folder[];
   viewMode: ViewMode;
@@ -542,6 +694,11 @@ function DocumentGrid({ metas, folders, viewMode, loading, onStar, onArchive, on
   onTagClick: (tag: string) => void;
   onMoveToFolder: (id: string, folderId: string | undefined) => void;
   activeTag: string | null;
+  onDragStart: (e: React.DragEvent, docId: string) => void;
+  tagColors: TagColorMap;
+  activeFolderId: string | null;
+  hasApiKey: boolean;
+  onAddDocument: () => void;
 }) {
   if (loading) {
     return (
@@ -551,6 +708,28 @@ function DocumentGrid({ metas, folders, viewMode, loading, onStar, onArchive, on
     );
   }
   if (metas.length === 0) {
+    // Req 6.4 — empty folder filter
+    if (activeFolderId) {
+      return (
+        <div className="flex items-center justify-center flex-1 p-6">
+          <EmptyState
+            message="This folder is empty"
+            action={{ label: '+ Add Document', onClick: onAddDocument }}
+          />
+        </div>
+      );
+    }
+    // Req 6.1 — no docs and no API key
+    if (!hasApiKey) {
+      return (
+        <div className="flex items-center justify-center flex-1 p-6">
+          <EmptyState
+            message="No API key set"
+            action={{ label: 'Open Settings', onClick: () => browser.runtime.openOptionsPage() }}
+          />
+        </div>
+      );
+    }
     return (
       <div className="flex items-center justify-center flex-1 p-6">
         <span className="font-mono font-semibold text-xs uppercase tracking-wider text-muted">
@@ -573,6 +752,8 @@ function DocumentGrid({ metas, folders, viewMode, loading, onStar, onArchive, on
           onTagClick={onTagClick}
           onMoveToFolder={onMoveToFolder}
           activeTag={activeTag}
+          onDragStart={onDragStart}
+          tagColors={tagColors}
         />
       ))}
     </div>
@@ -594,12 +775,24 @@ export default function LibraryApp() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<ImportStatus>('idle');
+  const [tagColors, setTagColors] = useState<TagColorMap>({});
+  const [hasApiKey, setHasApiKey] = useState(false);
 
   // ── Boot
   useEffect(() => {
     async function boot() {
-      const [index, storedFolders] = await Promise.all([getDocIndex(), getFolders()]);
+      const [index, storedFolders, storedTagColors, storedViewMode, storedSettings] = await Promise.all([
+        getDocIndex(),
+        getFolders(),
+        getTagColors(),
+        getViewMode(),
+        getSettings(),
+      ]);
       setFolders(storedFolders);
+      setTagColors(storedTagColors);
+      setViewMode(storedViewMode);
+      const apiKeys = storedSettings.apiKeys ?? {};
+      setHasApiKey(Boolean(apiKeys.gemini || apiKeys.openai || apiKeys.anthropic));
       if (index.length === 0) { setLoading(false); return; }
       const firstBatch = await getDocumentMetas(index.slice(0, 20));
       setMetas(firstBatch);
@@ -642,8 +835,8 @@ export default function LibraryApp() {
   }
 
   // ── Folder mutations
-  async function handleFolderCreate(name: string) {
-    const folder: Folder = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString() };
+  async function handleFolderCreate(name: string, color: string) {
+    const folder: Folder = { id: crypto.randomUUID(), name, color, createdAt: new Date().toISOString() };
     await saveFolder(folder);
     setFolders(prev => [...prev, folder]);
   }
@@ -656,6 +849,49 @@ export default function LibraryApp() {
   function handleMoveToFolder(docId: string, folderId: string | undefined) {
     setMetas(prev => prev.map(m => m.id === docId ? { ...m, folder: folderId } : m));
     updateDocumentMeta(docId, { folder: folderId });
+  }
+
+  // ── Tag color mutations
+  async function handleSetTagColor(tag: string, color: string | null) {
+    await setTagColor(tag, color);
+    setTagColors(prev => {
+      const next = { ...prev };
+      if (color === null) delete next[tag];
+      else next[tag] = color;
+      return next;
+    });
+  }
+
+  // ── Drag-and-drop: set docId on dataTransfer so folder drop targets can read it
+  function handleDragStart(e: React.DragEvent, docId: string) {
+    e.dataTransfer.setData('text/plain', docId);
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  // ── Drop document onto folder (called from Sidebar)
+  function handleDropDocumentOnFolder(docId: string, folderId: string) {
+    handleMoveToFolder(docId, folderId);
+  }
+
+  // ── Export folder as zip
+  async function handleExportFolder(folderId: string) {
+    if (!_exportFolderAsZip) {
+      alert('Export is not yet available (will be implemented in task 20).');
+      return;
+    }
+    try {
+      const blob = await _exportFolderAsZip(folderId, 'markdown');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const folder = folders.find(f => f.id === folderId);
+      a.download = `${folder?.name ?? 'folder'}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export failed:', err);
+      alert('Export failed. Please try again.');
+    }
   }
 
   // ── PDF import — try Notch bundle first, fall back to general PDF parse
@@ -719,6 +955,13 @@ export default function LibraryApp() {
   const tagFiltered = activeTag ? sorted.filter(m => m.tags.includes(activeTag)) : sorted;
   const displayList = searchResults ?? tagFiltered;
 
+  // ── All unique tags across all metas (for color legend)
+  const allTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    metas.forEach(m => m.tags.forEach(t => tagSet.add(t)));
+    return Array.from(tagSet).sort();
+  }, [metas]);
+
   // ── Pagination
   const totalPages = Math.max(1, Math.ceil(displayList.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -743,6 +986,11 @@ export default function LibraryApp() {
         onFolderSelect={id => { setActiveFolderId(id); setPage(1); }}
         onFolderCreate={handleFolderCreate}
         onFolderDelete={handleFolderDelete}
+        onDropDocumentOnFolder={handleDropDocumentOnFolder}
+        onExportFolder={handleExportFolder}
+        tagColors={tagColors}
+        onSetTagColor={handleSetTagColor}
+        allTags={allTags}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -750,7 +998,10 @@ export default function LibraryApp() {
           sortOrder={sortOrder}
           onSortChange={handleSortChange}
           viewMode={viewMode}
-          onViewModeChange={setViewMode}
+          onViewModeChange={(v) => { setViewMode(v); saveViewMode(v); }}
+          folders={folders}
+          activeFolderId={activeFolderId}
+          onFolderSelect={id => { setActiveFolderId(id); setPage(1); }}
           searchSlot={
             <SearchInput
               metas={filtered}
@@ -790,6 +1041,11 @@ export default function LibraryApp() {
             onTagClick={handleTagClick}
             onMoveToFolder={handleMoveToFolder}
             activeTag={activeTag}
+            onDragStart={handleDragStart}
+            tagColors={tagColors}
+            activeFolderId={activeFolderId}
+            hasApiKey={hasApiKey}
+            onAddDocument={handleImportClick}
           />
         </ScrollArea>
 

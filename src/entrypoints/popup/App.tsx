@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/EmptyState';
 
 // ── Status bar ────────────────────────────────────────────────────────────────
 function StatusBar({ settings }: { settings: Settings | null }) {
@@ -516,13 +517,20 @@ export default function PopupApp() {
         onSelect={setSelectedFolderId}
       />
       <div className="px-3 pb-3 pt-2 flex flex-col gap-2">
-        <CaptureButton
-          state={captureState}
-          documentId={documentId}
-          onClick={handleCaptureClick}
-          progress={progress}
-          errorMsg={errorMsg}
-        />
+        {captureState === 'error' && errorMsg ? (
+          <EmptyState
+            message={`Capture failed: ${errorMsg.slice(0, 80)}${errorMsg.length > 80 ? '…' : ''}`}
+            action={{ label: '[Retry]', onClick: handleCaptureClick }}
+          />
+        ) : (
+          <CaptureButton
+            state={captureState}
+            documentId={documentId}
+            onClick={handleCaptureClick}
+            progress={progress}
+            errorMsg={errorMsg}
+          />
+        )}
         <button
           disabled={importState === 'loading'}
           onClick={handleImportClick}

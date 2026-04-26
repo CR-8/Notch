@@ -1,13 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { cn } from '@/lib/utils';
-import type { Document } from '@/lib/types';
-import { getDocument } from '@/lib/storage';
+import type { Document, Folder } from '@/lib/types';
+import { getDocument, getFolders } from '@/lib/storage';
 import { downloadMarkdown, exportPDF } from '@/lib/export';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ChatPanel } from '@/components/ChatPanel';
+import { EmptyState } from '@/components/EmptyState';
+import { parseMarkdown } from '@/lib/markdown-parser';
+import type { DocBlock } from '@/lib/markdown-parser';
 
 // ── Tiptap document renderer ──────────────────────────────────────────────────
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -23,6 +26,17 @@ function mdToHtml(md: string): string {
   return marked.parse(md, { async: false }) as string;
 }
 
+// ── Fallback renderer for unknown blocks ──────────────────────────────────────
+
+interface FallbackRendererProps {
+  block: DocBlock;
+}
+
+/** Renders unknown/unrecognised blocks as pre-formatted plain text (Req 1.3, 1.4) */
+function FallbackRenderer({ block }: FallbackRendererProps) {
+  return <pre className="font-mono text-sm text-muted whitespace-pre-wrap break-words border border-border p-3 my-2">{block.raw}</pre>;
+}
+
 interface DocumentRendererProps {
   content: string;
   onAskAI: (text: string) => void;
@@ -33,6 +47,21 @@ interface DocumentRendererProps {
 function DocumentRenderer({ content, onAskAI, leftPaneRef, theme }: DocumentRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+
+  // Parse markdown into blocks using the safe parser (Req 1.3, 1.4, 1.5, 1.6, 1.7)
+  const parseResult = useMemo(() => parseMarkdown(content ?? ''), [content]);
+
+  // Build the markdown for known blocks to feed into TipTap (exclude unknown blocks)
+  const knownBlocksMarkdown = useMemo(
+    () => parseResult.blocks.filter(b => b.type !== 'unknown').map(b => b.raw).join('\n\n'),
+    [parseResult.blocks]
+  );
+
+  // Collect unknown blocks for fallback rendering
+  const unknownBlocks = useMemo(
+    () => parseResult.blocks.filter(b => b.type === 'unknown'),
+    [parseResult.blocks]
+  );
 
   const proseClass = theme === 'light'
     ? 'prose max-w-none font-mono text-base leading-relaxed text-[#2e241d] focus:outline-none'
@@ -46,7 +75,7 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef, theme }: DocumentRend
       Image.configure({ inline: false }),
       Link.configure({ openOnClick: true }),
     ],
-    content: content ? mdToHtml(content) : '',
+    content: knownBlocksMarkdown ? mdToHtml(knownBlocksMarkdown) : '',
     editorProps: {
       attributes: { class: proseClass },
     },
@@ -60,19 +89,27 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef, theme }: DocumentRend
   }, [editor, theme, proseClass]);
 
   useEffect(() => {
-    if (!editor || !content) return;
-    editor.commands.setContent(mdToHtml(content));
-  }, [editor, content]);
+    if (!editor) return;
+    editor.commands.setContent(knownBlocksMarkdown ? mdToHtml(knownBlocksMarkdown) : '');
+  }, [editor, knownBlocksMarkdown]);
 
-  // Add data-paragraph-index to each <p> element after editor mounts/updates
+  // Assign data-paragraph-index (legacy) and data-paragraph-id (stable hash) to each <p> (Req 1.7, 11.x)
   useEffect(() => {
     const root = leftPaneRef?.current ?? containerRef.current;
     if (!root) return;
     const paragraphs = root.querySelectorAll('p');
+
+    // Build a map from paragraph index to paragraphId from parsed blocks
+    const paragraphBlocks = parseResult.blocks.filter(b => b.type === 'paragraph');
+
     paragraphs.forEach((p, index) => {
       p.setAttribute('data-paragraph-index', String(index));
+      const block = paragraphBlocks[index];
+      if (block?.paragraphId) {
+        p.setAttribute('data-paragraph-id', block.paragraphId);
+      }
     });
-  }, [editor, content, leftPaneRef]);
+  }, [editor, content, leftPaneRef, parseResult.blocks]);
 
   // Selection tooltip
   useEffect(() => {
@@ -126,6 +163,10 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef, theme }: DocumentRend
         </div>
       )}
       <EditorContent editor={editor} />
+      {/* Render fallback blocks for any unknown block types (Req 1.3, 1.4) */}
+      {unknownBlocks.map((block, i) => (
+        <FallbackRenderer key={i} block={block} />
+      ))}
     </div>
   );
 }
@@ -159,9 +200,11 @@ interface ReaderTopBarProps {
   onExportPdf?: () => void;
   theme: 'dark' | 'light';
   onThemeToggle: () => void;
+  folderName?: string;
+  folderColor?: string;
 }
 
-function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, theme, onThemeToggle }: ReaderTopBarProps) {
+function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, theme, onThemeToggle, folderName, folderColor }: ReaderTopBarProps) {
   return (
     <div className="h-12 bg-background border-b border-border flex items-center justify-between px-6 shrink-0">
       {/* Breadcrumb */}
@@ -172,6 +215,20 @@ function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, 
         >
           LIBRARY
         </button>
+        {folderName && (
+          <>
+            <span className="font-mono text-xs text-muted shrink-0">/</span>
+            <span
+              className="font-mono text-xs uppercase tracking-wider shrink-0 flex items-center gap-1.5"
+              style={folderColor ? { color: folderColor } : undefined}
+            >
+              {folderColor && (
+                <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: folderColor }} />
+              )}
+              {folderName}
+            </span>
+          </>
+        )}
         <span className="font-mono text-xs text-muted shrink-0">/</span>
         <span className="font-mono text-xs uppercase tracking-wider text-white truncate min-w-0">
           {title}
@@ -344,14 +401,22 @@ export default function ReaderApp() {
   const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes');
   const [chatPrefill, setChatPrefill] = useState<string | undefined>();
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [folder, setFolder] = useState<Folder | null>(null);
+  const [showRawMarkdown, setShowRawMarkdown] = useState(false);
   const leftPaneRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get('documentId');
     if (!id) { setError('No document ID provided.'); setLoading(false); return; }
-    getDocument(id).then((result) => {
+    Promise.all([getDocument(id), getFolders()]).then(([result, folders]) => {
       if (!result) setError(`Document not found: ${id}`);
-      else setDoc(result);
+      else {
+        setDoc(result);
+        if (result.folder) {
+          const f = folders.find(f => f.id === result.folder) ?? null;
+          setFolder(f);
+        }
+      }
       setLoading(false);
     });
   }, []);
@@ -414,6 +479,8 @@ export default function ReaderApp() {
           onExportPdf={() => exportPDF(doc)}
           theme={theme}
           onThemeToggle={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+          folderName={folder?.name}
+          folderColor={folder?.color}
         />
 
         <div className="flex flex-1 overflow-hidden">
@@ -443,12 +510,48 @@ export default function ReaderApp() {
                 ))}
               </div>
               <Separator className="bg-border mb-8" />
-              <DocumentRenderer
-                content={doc.content}
-                onAskAI={handleAskAI}
-                leftPaneRef={leftPaneRef}
-                theme={theme}
-              />
+              {/* Req 6.2 — no embeddings yet */}
+              {!doc.embeddingsGenerated && (
+                <EmptyState
+                  message="No embeddings yet"
+                  action={{
+                    label: 'Generate Embeddings',
+                    onClick: () => {
+                      browser.runtime.sendMessage({ type: 'GENERATE_EMBEDDINGS', payload: { documentId: doc.id } })
+                        .catch(() => {/* fire and forget */});
+                    },
+                  }}
+                  className="mb-6"
+                />
+              )}
+              {/* Req 6.3 — parse failed (all blocks unknown) */}
+              {(() => {
+                const parseResult = doc.content ? (() => { try { return parseMarkdown(doc.content); } catch { return null; } })() : null;
+                const parseFailed = parseResult !== null && parseResult.blocks.length > 0 && parseResult.blocks.every(b => b.type === 'unknown');
+                if (!parseFailed) return null;
+                return (
+                  <EmptyState
+                    message="Reader parse failed"
+                    action={{
+                      label: 'View Raw Markdown',
+                      onClick: () => setShowRawMarkdown(v => !v),
+                    }}
+                    className="mb-6"
+                  />
+                );
+              })()}
+              {showRawMarkdown ? (
+                <pre className="font-mono text-xs text-muted whitespace-pre-wrap break-words border border-border p-4">
+                  {doc.content}
+                </pre>
+              ) : (
+                <DocumentRenderer
+                  content={doc.content}
+                  onAskAI={handleAskAI}
+                  leftPaneRef={leftPaneRef}
+                  theme={theme}
+                />
+              )}
             </div>
           </div>
 
@@ -457,7 +560,7 @@ export default function ReaderApp() {
             <ScrollArea className="flex-1 p-6">
               {activeTab === 'notes'
                 ? <NotesPanel doc={doc} leftPaneRef={leftPaneRef} />
-                : <ChatPanel doc={doc} prefillQuery={chatPrefill} leftPaneRef={leftPaneRef} />
+                : <ChatPanel doc={doc} prefillQuery={chatPrefill} leftPaneRef={leftPaneRef} folderColor={folder?.color} />
               }
             </ScrollArea>
           </div>
