@@ -1,12 +1,11 @@
 import { AIClientError, sendCaptureRequest, sendRAGRequest } from '../lib/ai-client';
-import { chunkText, embedDocument, embedHistoryTurn, embedQuery } from '../lib/embedding-engine';
-import { getChunksByDocument, saveChatMessage } from '../lib/idb';
+import { getChunksByDocument, saveChatMessage, saveChunk } from '../lib/idb';
 import { buildOfflineCaptureMarkdown, answerWithOfflineNLP, rankChunksByKeywords } from '../lib/nlp-fallback';
 import { parsePdfBytes } from '../lib/pdf-parser';
-import { retrieveTopK } from '../lib/retrieval';
-import { checkStorageQuota, getDocIndex, getDocument, getSettings, saveDocIndex, saveDocument } from '../lib/storage';
+import { checkStorageQuota, getAppearance, getDocIndex, getDocument, getSettings, saveDocIndex, saveDocument } from '../lib/storage';
 import { log } from '../lib/logger';
-import type { Citation, DOMExtraction, Document, GenerationMode, NotchMessage } from '../lib/types';
+import { sanitizeAiResponse, sanitizeUserInput } from '../lib/sanitize';
+import type { Citation, DOMExtraction, Document, DocumentChunk, GenerationMode, NotchMessage } from '../lib/types';
 
 function extractPageDom(): DOMExtraction {
   const body = document.body ?? document.documentElement;
@@ -39,11 +38,9 @@ function isQuotaExhaustedError(err: unknown): boolean {
   if (err instanceof AIClientError) {
     return err.status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(err.message);
   }
-
   if (err instanceof Error) {
     return /429|RESOURCE_EXHAUSTED|quota/i.test(err.message);
   }
-
   return false;
 }
 
@@ -98,8 +95,54 @@ async function extractDomFromTab(tabId: number): Promise<DOMExtraction> {
 export default defineBackground(() => {
   log.info('background', '=== Service worker started ===', { extensionId: browser.runtime.id });
 
+  // Apply global appearance settings to all open tabs
+  async function applyAppearanceGlobally() {
+    try {
+      const appearance = await getAppearance();
+      const resolvedTheme = appearance.theme === 'system'
+        ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+        : appearance.theme;
+
+      const script = `
+        (function() {
+          document.documentElement.dataset.theme = '${resolvedTheme}';
+          document.body.dataset.theme = '${resolvedTheme}';
+          document.documentElement.style.setProperty('--color-primary', '${appearance.accentColor}');
+          document.documentElement.style.setProperty('--font-family', '${appearance.fontFamily}');
+        })();
+      `;
+
+      const windows = await browser.windows.getAll({ populate: true });
+      for (const win of windows) {
+        if (win.tabs) {
+          for (const tab of win.tabs) {
+            if (tab.id && tab.url?.startsWith('http')) {
+              try {
+                await browser.tabs.executeScript(tab.id, { code: script });
+              } catch { /* tab may not allow scripts */ }
+            }
+          }
+        }
+      }
+      log.info('background', `Applied appearance globally: theme=${resolvedTheme}, accent=${appearance.accentColor}`);
+    } catch (err) {
+      log.warn('background', 'Failed to apply appearance globally', err);
+    }
+  }
+
+  // Initial apply on startup
+  applyAppearanceGlobally();
+
+  // Listen for appearance changes and re-apply
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes['notch:appearance']) {
+      applyAppearanceGlobally();
+    }
+  });
+
   browser.runtime.onInstalled.addListener(async (details) => {
     log.info('background', `Install event: reason=${details.reason}`);
+    applyAppearanceGlobally();
   });
 
   browser.runtime.onMessage.addListener((message: NotchMessage, _sender, sendResponse) => {
@@ -120,6 +163,48 @@ export default defineBackground(() => {
   });
 });
 
+// ── Chunk creation for RAG ───────────────────────────────────────────────────
+
+function createChunksFromContent(documentId: string, content: string): DocumentChunk[] {
+  // Split content by paragraphs (double newlines) and assign paragraph indices
+  const paragraphs = content.split(/\n\n+/).filter(p => p.trim().length > 0);
+  const chunks: DocumentChunk[] = [];
+
+  // Group paragraphs into chunks of ~3-4 paragraphs each (roughly 500-800 chars)
+  const CHUNK_SIZE = 4;
+  let currentChunk: string[] = [];
+  let paragraphIndex = 0;
+
+  for (const para of paragraphs) {
+    currentChunk.push(para);
+
+    if (currentChunk.length >= CHUNK_SIZE || para.length > 600) {
+      chunks.push({
+        id: crypto.randomUUID(),
+        documentId,
+        chunkIndex: chunks.length,
+        text: currentChunk.join('\n\n'),
+        paragraphIndex,
+      });
+      paragraphIndex += currentChunk.length;
+      currentChunk = [];
+    }
+  }
+
+  // Don't forget the last chunk if any
+  if (currentChunk.length > 0) {
+    chunks.push({
+      id: crypto.randomUUID(),
+      documentId,
+      chunkIndex: chunks.length,
+      text: currentChunk.join('\n\n'),
+      paragraphIndex,
+    });
+  }
+
+  return chunks;
+}
+
 async function handleCapturePage(
   payload: { tabId: number; mode: GenerationMode; tags: string[] },
   sendResponse: (response: NotchMessage) => void,
@@ -127,16 +212,14 @@ async function handleCapturePage(
   const { tabId, mode, tags } = payload;
   log.info('background', `▶ Capture started — tab:${tabId} mode:${mode} tags:[${tags.join(',')}]`);
   try {
-    // 1. Extract DOM
     log.info('background', `  [1/8] Extracting DOM from tab ${tabId}...`);
     const domPayload = await extractDomFromTab(tabId);
     log.success('background', `  [1/8] DOM extracted — ${domPayload.wordCount} words, ${domPayload.images.length} images, domain: ${domPayload.domain}`);
 
-    // 2. Load settings
     log.info('background', '  [2/8] Loading settings...');
     const settings = await getSettings();
     const useOfflineCapture = settings.provider === 'offline' || mode === 'LOCAL';
-    let captureProvider: Document['provider'] = useOfflineCapture ? 'offline' : (settings.provider ?? 'gemini');
+    let captureProvider: Document['provider'] = useOfflineCapture ? 'offline' : (settings.provider ?? 'anthropic');
     let rawResponse: string;
 
     if (useOfflineCapture) {
@@ -147,76 +230,83 @@ async function handleCapturePage(
       } catch (err) {
         if (!isQuotaExhaustedError(err)) throw err;
 
-        log.warn('background', 'Gemini quota exceeded during capture. Falling back to offline markdown for this page.', err);
+        log.warn('background', 'Quota exceeded during capture. Falling back to offline markdown for this page.', err);
         captureProvider = 'offline';
         rawResponse = buildOfflineCaptureMarkdown(domPayload.title, domPayload.textContent);
       }
     }
     log.success('background', `Capture response received (${rawResponse.length} chars)`);
 
-    // Strip wrapping ```markdown ... ``` fence that some models add around the entire output
-    const aiMarkdown = rawResponse
+    const sanitizedResponse = sanitizeAiResponse(rawResponse);
+    const aiMarkdown = sanitizedResponse
       .replace(/^```(?:markdown)?\s*\n([\s\S]*?)\n```\s*$/m, '$1')
       .trim();
 
-    // [4/8] Parse title + summary + structured fields from AI markdown
     log.info('background', '  [4/8] Parsing AI response (title, summary, key points, entities, timeline, concepts)...');
     const titleMatch = aiMarkdown.match(/^#\s+(.+)$/m);
     const title = titleMatch ? titleMatch[1].trim() : domPayload.title;
     const summaryMatch = aiMarkdown.match(/^##\s+(?:SUMMARY|Summary)\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
     const summary = summaryMatch ? summaryMatch[1].trim() : '';
 
-    // Parse key points from "## Key Points" section
     const keyPoints: string[] = [];
     const keyPointsMatch = aiMarkdown.match(/^##\s+Key Points\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
     if (keyPointsMatch) {
-      const lines = keyPointsMatch[1].split('\n');
-      lines.forEach((line) => {
+      let skipped = 0;
+      for (const line of keyPointsMatch[1].split('\n')) {
         const m = line.match(/^\s*[*-]\s+(.*)/);
-        if (m) keyPoints.push(m[1].trim());
-      });
+        if (m && m[1].trim()) keyPoints.push(m[1].trim());
+        else if (line.trim()) skipped++;
+      }
+      if (skipped > 0) log.warn('background', `${skipped} Key Point lines could not be parsed`);
     }
 
-    // Parse key entities from "## Key Entities" section
-    // Expects lines like: * **Name:** (Type) Description  or  * **Name** (Type) Description
     const keyEntities: Document['keyEntities'] = [];
     const entitiesMatch = aiMarkdown.match(/^##\s+Key Entities\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
     if (entitiesMatch) {
-      const lines = entitiesMatch[1].split('\n');
-      lines.forEach((line, i) => {
-        // Match: * **Name (optional colon):** (Type) Description
+      let skipped = 0;
+      entitiesMatch[1].split('\n').forEach((line, i) => {
         const m = line.match(/^\s*[*-]\s+\*\*([^*:]+):?\*\*:?\s+\(([^)]+)\)\s+(.*)/);
-        if (m) keyEntities.push({ name: m[1].trim(), type: m[2].trim(), paragraphIndex: i });
+        if (m && m[1].trim() && m[2].trim() && m[3].trim()) {
+          keyEntities.push({ name: m[1].trim(), type: m[2].trim(), paragraphIndex: i });
+        } else {
+          skipped++;
+        }
       });
+      if (skipped > 0) log.warn('background', `${skipped} Key Entity lines could not be parsed`);
     }
 
-    // Parse timeline from "## Timeline" section
-    // Expects lines like: * **Date:** Description
     const timeline: Document['timeline'] = [];
     const timelineMatch = aiMarkdown.match(/^##\s+Timeline\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
     if (timelineMatch) {
-      const lines = timelineMatch[1].split('\n');
-      lines.forEach((line, i) => {
+      let skipped = 0;
+      timelineMatch[1].split('\n').forEach((line, i) => {
         const m = line.match(/^\s*[*-]\s+\*\*([^*]+)\*\*:?\s+(.*)/);
-        if (m) timeline.push({ date: m[1].trim(), description: m[2].trim(), paragraphIndex: i });
+        if (m && m[1].trim() && m[2].trim()) {
+          timeline.push({ date: m[1].trim(), description: m[2].trim(), paragraphIndex: i });
+        } else {
+          skipped++;
+        }
       });
+      if (skipped > 0) log.warn('background', `${skipped} Timeline lines could not be parsed`);
     }
 
-    // Parse concepts from "## Concepts" section
-    // Expects lines like: * **Term:** Definition
     const concepts: Document['concepts'] = [];
     const conceptsMatch = aiMarkdown.match(/^##\s+Concepts\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
     if (conceptsMatch) {
-      const lines = conceptsMatch[1].split('\n');
-      lines.forEach((line, i) => {
+      let skipped = 0;
+      conceptsMatch[1].split('\n').forEach((line, i) => {
         const m = line.match(/^\s*[*-]\s+\*\*([^*:]+):?\*\*:?\s+(.*)/);
-        if (m) concepts.push({ term: m[1].trim(), definition: m[2].trim(), paragraphIndex: i });
+        if (m && m[1].trim() && m[2].trim()) {
+          concepts.push({ term: m[1].trim(), definition: m[2].trim(), paragraphIndex: i });
+        } else {
+          skipped++;
+        }
       });
+      if (skipped > 0) log.warn('background', `${skipped} Concept lines could not be parsed`);
     }
 
     log.info('background', `  [4/8] Parsed — title: "${title}", key points: ${keyPoints.length}, entities: ${keyEntities.length}, timeline: ${timeline.length}, concepts: ${concepts.length}`);
 
-    // [5/8] Build Document object
     log.info('background', '  [5/8] Building document object...');
     const doc: Document = {
       id: crypto.randomUUID(),
@@ -247,27 +337,25 @@ async function handleCapturePage(
       missingImageQueries: [],
     };
 
-    // [6/8] Persist to IndexedDB + storage.local
     log.info('background', `  [6/8] Persisting document id=${doc.id} to storage...`);
     await saveDocument(doc);
     const index = await getDocIndex();
     await saveDocIndex([doc.id, ...index]);
     log.success('background', `  [6/8] Document saved — id: ${doc.id}, title: "${title}", words: ${domPayload.wordCount}`);
 
-    // [7/8] Quota check
+    // Create and save document chunks for RAG
+    log.info('background', '  [6.5/8] Creating document chunks for RAG...');
+    const chunks = createChunksFromContent(doc.id, aiMarkdown);
+    for (const chunk of chunks) {
+      await saveChunk(chunk);
+    }
+    log.success('background', `  [6.5/8] Created ${chunks.length} chunks`);
+
     log.info('background', '  [7/8] Checking storage quota...');
     await checkStorageQuota();
 
-    // [8/8] Reply to popup
     log.success('background', `  [8/8] Capture complete — sending CAPTURE_COMPLETE to popup`);
     sendResponse({ type: 'CAPTURE_COMPLETE', payload: { documentId: doc.id } });
-
-    // 8. Embed after a short delay to avoid CPU spike right after capture
-    setTimeout(() => {
-      embedDocument(doc.id, doc.content).catch(err =>
-        log.error('background', 'Background embedding failed', err)
-      );
-    }, 1500);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error('background', `Capture failed: ${message}`, err);
@@ -284,7 +372,6 @@ async function handleImportPdf(
 
   try {
     const parsed = await parsePdfBytes(bytes, fileName);
-
     const markdown = buildOfflineCaptureMarkdown(parsed.title, parsed.content);
     const doc: Document = {
       id: crypto.randomUUID(),
@@ -314,13 +401,6 @@ async function handleImportPdf(
     await saveDocIndex([doc.id, ...index]);
     await checkStorageQuota();
 
-    // Build local embeddings eagerly, but do not block import completion on embedding failures.
-    try {
-      await embedDocument(doc.id, doc.content);
-    } catch (embedErr) {
-      log.warn('background', `PDF embeddings failed for ${doc.id}; continuing with keyword fallback`, embedErr);
-    }
-
     sendResponse({ type: 'CAPTURE_COMPLETE', payload: { documentId: doc.id } });
     log.success('background', `PDF import completed — ${doc.id}`);
   } catch (err) {
@@ -334,82 +414,51 @@ async function handleRagQuery(
   sendResponse: (response: NotchMessage) => void,
 ) {
   const { documentId, query } = payload;
+  const sanitizedQuery = sanitizeUserInput(query);
   const t0 = Date.now();
-  log.info('background', `▶ RAG query — doc: ${documentId}, query: "${query.slice(0, 80)}${query.length > 80 ? '…' : ''}"`);
+  log.info('background', `▶ RAG query — doc: ${documentId}, query: "${sanitizedQuery.slice(0, 80)}${sanitizedQuery.length > 80 ? '…' : ''}"`);
   try {
-    await persistChatMessage(documentId, 'user', query);
+    await persistChatMessage(documentId, 'user', sanitizedQuery);
 
     const settings = await getSettings();
     const useOffline = settings.provider === 'offline';
 
-    let chunks: Array<{ text: string; paragraphIndex: number; score: number; source: 'document' | 'history' }> = [];
-    let embeddingRetrievalFailed = false;
-
-    try {
-      const queryEmbedding = await embedQuery(query);
-      chunks = await retrieveTopK(documentId, queryEmbedding, 8);
-
-      if (chunks.length === 0) {
-        const doc = await getDocument(documentId);
-        if (doc) {
-          log.info('background', `No embeddings found for ${documentId}; generating now`);
-          await embedDocument(documentId, doc.content);
-          chunks = await retrieveTopK(documentId, queryEmbedding, 8);
-        }
-      }
-    } catch (err) {
-      embeddingRetrievalFailed = true;
-      log.warn('background', 'Embedding retrieval unavailable; using keyword-only retrieval', err);
-    }
-
-    if (chunks.length === 0) {
-      const storedChunks = await getChunksByDocument(documentId);
-      if (storedChunks.length > 0) {
-        chunks = storedChunks.map((chunk) => ({
+    const storedChunks = await getChunksByDocument(documentId);
+    const chunks = storedChunks.length > 0
+      ? storedChunks.map((chunk) => ({
           text: chunk.text,
           paragraphIndex: chunk.paragraphIndex,
-          score: 0,
-          source: chunk.source ?? 'document',
-        }));
-      } else {
-        const doc = await getDocument(documentId);
-        if (doc) {
-          chunks = chunkText(doc.content).map((text, index) => ({
-            text,
-            paragraphIndex: index,
-            score: 0,
-            source: 'document' as const,
-          }));
-        }
-      }
-    }
+          source: chunk.source ?? 'document' as const,
+        }))
+      : [];
 
-    const offlineRankedChunks = rankChunksByKeywords(query, chunks, 6);
-    let chunksForAnswer = (useOffline || embeddingRetrievalFailed)
-      ? offlineRankedChunks
-      : chunks.slice(0, 6);
+    const offlineRankedChunks = rankChunksByKeywords(sanitizedQuery, chunks, 6);
+    // Use offline mode when: offline provider OR no chunks available from document
+    const chunksForAnswer = useOffline || chunks.length === 0 ? offlineRankedChunks : chunks.slice(0, 6);
 
     let answer: string;
     if (useOffline) {
-      answer = answerWithOfflineNLP(query, chunksForAnswer);
+      answer = answerWithOfflineNLP(sanitizedQuery, chunksForAnswer);
     } else {
       try {
-        answer = await sendRAGRequest(query, chunksForAnswer, settings);
+        answer = await sendRAGRequest(sanitizedQuery, chunksForAnswer, settings);
       } catch (err) {
         if (!isQuotaExhaustedError(err)) throw err;
 
-        log.warn('background', 'Gemini quota exceeded during RAG. Falling back to offline NLP answer.', err);
-        chunksForAnswer = offlineRankedChunks;
-        answer = answerWithOfflineNLP(query, chunksForAnswer);
+        log.warn('background', 'Quota exceeded during RAG. Falling back to offline NLP answer.', err);
+        chunksForAnswer.length = 0;
+        chunksForAnswer.push(...offlineRankedChunks);
+        answer = answerWithOfflineNLP(sanitizedQuery, chunksForAnswer);
       }
     }
 
+    answer = sanitizeAiResponse(answer);
     const citations = parseCitations(answer, chunksForAnswer);
 
     await persistChatMessage(documentId, 'notch', answer, citations);
-    void embedHistoryTurn(documentId, query, answer);
 
-    log.success('background', `RAG answered with ${citations.length} citations`);
+    const elapsed = Date.now() - t0;
+    log.success('background', `RAG answered with ${citations.length} citations in ${elapsed}ms`);
     sendResponse({ type: 'RAG_RESPONSE', payload: { answer, citations } });
   } catch (err) {
     log.error('background', 'RAG query failed', err);

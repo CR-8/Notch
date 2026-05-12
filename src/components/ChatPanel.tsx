@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { browser } from 'wxt/browser';
+import { marked } from 'marked';
 import { cn } from '@/lib/utils';
 import { getChatMessagesByDocument } from '@/lib/idb';
 import type { Document, Citation } from '@/lib/types';
 import { Textarea } from '@/components/ui/textarea';
+import { sanitizeUserInput, sanitizeHtml, ReassemblyBuffer } from '@/lib/sanitize';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -107,11 +109,77 @@ function parseAnswerWithCitations(
   });
 }
 
+// ── Markdown Renderer ─────────────────────────────────────────────────────────
+
+function renderMarkdownToHtml(markdown: string): string {
+  const rawHtml = marked.parse(markdown, { async: false }) as string;
+  return sanitizeHtml(rawHtml);
+}
+
+interface MarkdownContentProps {
+  content: string;
+  citations?: Citation[];
+  leftPaneRef: React.RefObject<HTMLDivElement | null>;
+}
+
+function MarkdownContent({ content, citations, leftPaneRef }: MarkdownContentProps) {
+  const html = useMemo(() => renderMarkdownToHtml(content), [content]);
+
+  // If there are citations, parse them separately and wrap the content
+  if (citations && citations.length > 0) {
+    const partsWithCitations = parseAnswerWithCitations(content, citations, leftPaneRef);
+    // Convert parsed React nodes back to text for markdown rendering
+    const textOnly = partsWithCitations.map(p =>
+      typeof p === 'string' ? p : ''
+    ).join('');
+
+    // Check if content has markdown formatting
+    const hasMarkdown = /^[#*`>\-]/.test(content.trim()) ||
+      content.includes('\n') && (content.includes('**') || content.includes('`') || content.includes('- '));
+
+    if (hasMarkdown) {
+      const markedHtml = marked.parse(textOnly, { async: false }) as string;
+      return (
+        <div
+          className="prose prose-invert prose-sm max-w-none font-mono [&>p]:mb-2 [&>h1]:text-lg [&>h1]:font-bold [&>h1]:mt-4 [&>h1]:mb-2 [&>h2]:text-base [&>h2]:font-semibold [&>h2]:mt-3 [&>h2]:mb-1 [&>ul]:my-1 [&>ul]:pl-4 [&>ul]:list-disc [&>li]:mb-0.5 [&>ol]:my-1 [&>ol]:pl-4 [&>ol]:list-decimal [&>code]:bg-surface [&>code]:px-1 [&>code]:py-0.5 [&>code]:rounded [&>pre]:bg-surface [&>pre]:p-2 [&>pre]:overflow-x-auto [&>pre]:text-xs [&>blockquote]:border-l-2 [&>blockquote]:border-primary [&>blockquote]:pl-3 [&>blockquote]:italic"
+          dangerouslySetInnerHTML={{ __html: sanitizeHtml(markedHtml) }}
+        />
+      );
+    }
+
+    return (
+      <div className="text-sm leading-relaxed space-y-1">
+        {partsWithCitations}
+      </div>
+    );
+  }
+
+  // Check if content has markdown formatting
+  const hasMarkdown = /^[#*`>\-]/.test(content.trim()) ||
+    content.includes('\n') && (content.includes('**') || content.includes('`') || content.includes('- '));
+
+  if (hasMarkdown) {
+    return (
+      <div
+        className="prose prose-invert prose-sm max-w-none font-mono [&>p]:mb-2 [&>h1]:text-lg [&>h1]:font-bold [&>h1]:mt-4 [&>h1]:mb-2 [&>h2]:text-base [&>h2]:font-semibold [&>h2]:mt-3 [&>h2]:mb-1 [&>ul]:my-1 [&>ul]:pl-4 [&>ul]:list-disc [&>li]:mb-0.5 [&>ol]:my-1 [&>ol]:pl-4 [&>ol]:list-decimal [&>code]:bg-surface [&>code]:px-1 [&>code]:py-0.5 [&>code]:rounded [&>pre]:bg-surface [&>pre]:p-2 [&>pre]:overflow-x-auto [&>pre]:text-xs [&>blockquote]:border-l-2 [&>blockquote]:border-primary [&>blockquote]:pl-3 [&>blockquote]:italic"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    );
+  }
+
+  // Plain text fallback
+  return (
+    <p className="font-mono text-sm text-foreground leading-relaxed whitespace-pre-wrap">
+      {content}
+    </p>
+  );
+}
+
 // ── ContextPill ───────────────────────────────────────────────────────────────
 
 function ContextPill({ title, folderColor }: { title: string; folderColor?: string }) {
   return (
-    <div className="border border-border px-3 py-2 shrink-0 flex items-center gap-2">
+    <div className="border border-border px-7 py-2 shrink-0 flex items-center gap-2">
       {folderColor && (
         <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: folderColor }} />
       )}
@@ -146,17 +214,12 @@ function NotchBubble({ text, citations, isError, leftPaneRef }: NotchBubbleProps
   const content = isError
     ? <span className="font-mono text-[11px] text-danger">[CONNECTION FAILED]</span>
     : (
-      <p className="font-mono text-sm text-foreground leading-relaxed">
-        {citations && citations.length > 0
-          ? parseAnswerWithCitations(text, citations, leftPaneRef)
-          : text
-        }
-      </p>
+      <MarkdownContent content={text} citations={citations} leftPaneRef={leftPaneRef} />
     );
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-[85%] border border-border px-3 py-2">
+      <div className="max-w-full border border-border px-3 py-2">
         <p className="font-mono text-[9px] uppercase tracking-widest text-primary mb-1.5">NOTCH</p>
         {content}
       </div>
@@ -240,7 +303,8 @@ function ChatInput({ onSubmit, disabled, initialValue }: ChatInputProps) {
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      const trimmed = value.trim();
+      // Sanitize user input before submission
+      const trimmed = sanitizeUserInput(value).trim();
       if (trimmed && !disabled) {
         onSubmit(trimmed);
         setValue('');
@@ -308,14 +372,13 @@ export function ChatPanel({ doc, prefillQuery, leftPaneRef, folderColor }: ChatP
   }, [doc.id]);
 
   const handleSubmit = useCallback(async (query: string) => {
-    // Append user bubble
     setMessages((prev) => [...prev, { role: 'user', text: query }]);
     setIsThinking(true);
 
     try {
       const response = await browser.runtime.sendMessage({
         type: 'RAG_QUERY',
-        payload: { documentId: doc.id, query },
+        payload: { documentId: doc.id, query: query },
       }) as { type: 'RAG_RESPONSE'; payload: { answer: string; citations: Citation[] } }
         | { type: 'RAG_ERROR'; payload: { error: string } };
 

@@ -1,7 +1,8 @@
-import type { ContentFrame, GenerationMode, GeminiModel, Settings } from './types';
+import type { ContentFrame, GenerationMode, Settings } from './types';
 import { log } from './logger';
+import { sanitizeAiResponse, formatMarkdown, formatChatResponse } from './sanitize';
 
-// ─── Typed Errors ────────────────────────────────────────────────────────────
+// ─── Typed Errors ──────────────────────────────────────────────────────────────
 
 export class AIClientError extends Error {
   constructor(
@@ -14,110 +15,144 @@ export class AIClientError extends Error {
   }
 }
 
-// ─── Model Mapping ────────────────────────────────────────────────────────────
-
-// Ordered model fallback chains by generation mode.
-// If a model returns 429 quota exhaustion, the next model is tried automatically.
-const MODE_TO_MODEL_CHAIN: Record<Exclude<GenerationMode, 'LOCAL'>, GeminiModel[]> = {
-  FAST: ['gemini-3.1-flash-lite-preview', 'gemma-3-27b-it'],
-  BALANCED: ['gemma-3-12b-it', 'gemma-3-4b-it'],
-  DEEP: ['gemma-3-27b-it' , 'gemma-3-12b-it'],
-};
-
-const RAG_MODEL_CHAIN: GeminiModel[] = ['gemma-3-12b-it', 'gemini-3.1-flash-lite-preview'];
+// ─── Constants ─────────────────────────────────────────────────────────────────
 
 const MAX_CAPTURE_CONTENT_CHARS = 18_000;
 const MAX_CAPTURE_IMAGE_REFS_CHARS = 4_000;
 const QUOTA_RETRY_LIMIT = 2;
+const FRAME_TARGET_CHARS = 14_000;
+const MAX_FRAMES = 8;
 
-function trimForQuota(input: string, maxChars: number, label: string): string {
-  if (input.length <= maxChars) return input;
-
-  const headChars = Math.floor(maxChars * 0.75);
-  const tailChars = maxChars - headChars;
-  const removed = input.length - maxChars;
-  log.warn('ai-client', `${label} is large (${input.length} chars). Trimming ${removed} chars to reduce token usage.`);
-
-  return [
-    input.slice(0, headChars),
-    '',
-    `[TRUNCATED ${removed} CHARACTERS TO STAY WITHIN FREE-TIER QUOTA]`,
-    '',
-    input.slice(-tailChars),
-  ].join('\n');
-}
-
-function isQuotaExceededError(err: AIClientError): boolean {
-  if (err.status === 429) return true;
-  return /RESOURCE_EXHAUSTED|quota exceeded|quota/i.test(err.message);
-}
-
-function parseRetryDelayMs(message: string): number {
-  const msMatch = message.match(/retry in\s+([0-9.]+)ms/i);
-  if (msMatch) {
-    const parsed = Math.ceil(Number(msMatch[1]));
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
-
-  const secMatch = message.match(/"retryDelay"\s*:\s*"([0-9.]+)s"/i);
-  if (secMatch) {
-    const parsed = Math.ceil(Number(secMatch[1]) * 1000);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
-
-  return 1200;
-}
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ─── Prompt Templates ─────────────────────────────────────────────────────────
-
-function buildFastPrompt(content: string, imageRefs: string, frame?: ContentFrame): string {
-  const frameHint = frame && frame.total > 1
-    ? `\n\n[FRAME ${frame.index + 1} of ${frame.total}] This is segment ${frame.index + 1} of a larger document. ${frame.index === 0 ? 'Include full structure: title, summary, key points, entities, concepts, timeline, diagrams, images, and main content.' : 'Continue the main content. Do NOT repeat the title, summary, key points, entities, concepts, or timeline — only add new content sections.'}\n`
-    : '';
-  return `You are a document structuring assistant. Given the following web page content, produce a structured markdown document.${frameHint}
-
-Requirements:
-  - Title: Extract or infer a clear document title as the top-level # heading
-  - Summary: 2-3 sentence summary under ## Summary
-  - Key Points: 3-5 concise bullets under ## Key Points
-  - Key Entities: List named people, organizations, technologies, and concepts
-  - Main Content: Restructure into logical sections with ## headings
-  - Diagrams: Convert flowcharts and block diagrams to \`\`\`mermaid\`\`\` blocks, and UML/use-case/sequence/class diagrams to \`\`\`plantuml\`\`\` blocks
-  - Images/Photos: Keep image references near the most relevant section and preserve their alt text/captions
-  - Timeline: Extract chronological events if applicable
-
-Output ONLY valid markdown. No preamble or explanation.
-
-PAGE CONTENT:
-${content}
-
-IMAGE REFERENCES:
-${imageRefs}`;
+function isQuotaExceeded(err: AIClientError): boolean {
+  return err.status === 429 || /RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(err.message);
 }
 
-function buildDeepPrompt(content: string, imageRefs: string, frame?: ContentFrame): string {
+function parseRetryDelay(err: AIClientError): number {
+  const msMatch = err.message.match(/retry.?in\s+([0-9.]+)\s*ms/i);
+  if (msMatch) {
+    const v = Math.ceil(Number(msMatch[1]));
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return 1500;
+}
+
+// ─── Content Fragmentation ─────────────────────────────────────────────────────
+
+function fragmentIntoFrames(content: string, targetChars: number): string[] {
+  if (content.length <= targetChars) return [content];
+
+  const paragraphs = content.split(/\n\n+/);
+  const frames: string[] = [];
+  let currentFrame = '';
+
+  for (const para of paragraphs) {
+    const candidate = currentFrame ? `${currentFrame}\n\n${para}` : para;
+    if (candidate.length > targetChars && currentFrame.length > 0) {
+      frames.push(currentFrame);
+      currentFrame = para;
+    } else {
+      currentFrame = candidate;
+    }
+  }
+  if (currentFrame) frames.push(currentFrame);
+
+  const finalFrames: string[] = [];
+  for (const frame of frames) {
+    if (frame.length <= targetChars) {
+      finalFrames.push(frame);
+    } else {
+      const lines = frame.split('\n');
+      let chunk = '';
+      for (const line of lines) {
+        const candidate = chunk ? `${chunk}\n${line}` : line;
+        if (candidate.length > targetChars && chunk.length > 0) {
+          finalFrames.push(chunk);
+          chunk = line;
+        } else {
+          chunk = candidate;
+        }
+      }
+      if (chunk) finalFrames.push(chunk);
+    }
+  }
+  return finalFrames.slice(0, MAX_FRAMES);
+}
+
+function reassembleFrameResponses(responses: string[]): string {
+  if (responses.length === 0) return '';
+  if (responses.length === 1) return responses[0];
+
+  const continuationParts: string[] = [];
+  for (let i = 1; i < responses.length; i++) {
+    const stripped = responses[i]
+      .replace(/^#\s+.+\n*/m, '')
+      .replace(/^##\s+(?:SUMMARY|Key Points|Key Entities|Timeline|Concepts)\s*\n[\s\S]*?(?=\n##\s|\n*$)/gim, '')
+      .trim();
+    if (stripped) continuationParts.push(stripped);
+  }
+
+  return continuationParts.length === 0
+    ? responses[0]
+    : `${responses[0]}\n\n${continuationParts.join('\n\n')}`;
+}
+
+// ─── Prompt Templates ──────────────────────────────────────────────────────────
+
+function buildCapturePrompt(content: string, imageRefs: string, frame?: ContentFrame): string {
   const frameHint = frame && frame.total > 1
-    ? `\n\n[FRAME ${frame.index + 1} of ${frame.total}] This is segment ${frame.index + 1} of a larger document. ${frame.index === 0 ? 'Include full structure: title, summary, key entities, concepts, timeline, and main content.' : 'Continue the main content sections only. Do NOT repeat title, summary, entities, concepts, or timeline — only add new content.'}\n`
+    ? frame.index === 0
+      ? `\n\n[FRAME ${frame.index + 1}/${frame.total}] Include: title, summary, key points, key entities, concepts, timeline, and main content sections.`
+      : `\n\n[FRAME ${frame.index + 1}/${frame.total}] Continue main content only. Do NOT repeat title, summary, key points, entities, concepts, or timeline.`
     : '';
-  return `You are an expert knowledge structuring assistant. Produce a comprehensive structured markdown document for a developer knowledge base.${frameHint}
 
-Requirements:
-- Title: Precise document title as the top-level # heading
-- Summary: 4-6 sentence executive summary under ## Summary
-- Key Points: 3-7 high-signal bullets under ## Key Points
-- Key Entities: Exhaustive list (people, orgs, technologies, concepts, APIs) with types
-- Timeline: Chronological events with dates
-- Concepts: Deep explanations of key technical terms
-- Main Content: Logical sections with ## and ### headings
-- Code blocks: Preserve with correct language identifiers
-- Diagrams: Convert ALL ASCII art, flowcharts, and block diagrams to \`\`\`mermaid\`\`\`; convert UML, use-case, sequence, and class diagrams to \`\`\`plantuml\`\`\`
-- Images/Photos: Place image references contextually beside the most relevant section and preserve their alt text
+  return `You are a document structuring assistant. Given the following web page content, produce a clean, well-formatted markdown document.${frameHint}
 
-Output ONLY valid markdown. No preamble or explanation.
+FORMATTING RULES:
+- Use ATX-style headings (# for title, ## for main sections, ### for subsections)
+- Keep headings short and descriptive (max 60 characters)
+- Use bullet points (-) for lists, not numbered lists unless sequence matters
+- Wrap lines at 100 characters max for readability
+- Use bold for emphasis sparingly, only on key terms first use
+- Add blank line before and after code blocks
+- Use semantic spacing: one blank line between major sections
+
+STRUCTURE (use these exact headings):
+# Document Title
+
+## Summary
+2-3 sentence overview of the document's purpose and content.
+
+## Key Points
+- First key point (start with action verbs when possible)
+- Second key point
+- Third key point
+- Add more as needed (3-7 bullets max)
+
+## Key Entities
+Named people, organizations, technologies, products, and concepts encountered.
+
+## Concepts
+Key technical terms or concepts that need explanation (term: brief definition).
+
+## Timeline (if applicable)
+Chronological events with dates or relative time markers.
+
+## Main Content
+Logical sections covering the document's substance. Use ### for subsections.
+
+## Images
+Reference images near their most relevant section with clear context.
+
+## Key Takeaways
+2-3 sentence closing summary of the most important insights.
+
+Output ONLY valid markdown. No preamble, no explanations.
 
 PAGE CONTENT:
 ${content}
@@ -127,109 +162,146 @@ ${imageRefs}`;
 }
 
 function buildRAGPrompt(query: string, chunks: string): string {
-  return `You are a precise question-answering assistant. Answer using ONLY the provided document excerpts.
+  return `You are a precise question-answering assistant. Answer the user's question using ONLY the provided document excerpts.
 
-Rules:
-- Cite each piece of information with [N] where N is the excerpt number
-- If the answer is not in the excerpts, say "I cannot find that in this document."
-- Be concise and direct
-- Do not hallucinate information not present in the excerpts
+RESPONSE FORMAT:
+- Start with direct answer (1-2 sentences)
+- Follow with supporting details if needed
+- Cite each fact with [N] where N is the excerpt number in brackets
+- Use bullet points for multiple pieces of information
+- Keep answers focused and complete
+
+RULES:
+- If the answer is not in the excerpts, state: "I cannot find that in this document."
+- Never hallucinate or infer information not present in the excerpts
+- Answer exactly what was asked - don't over-explain
+- Be direct: lead with the answer, then support
 
 DOCUMENT EXCERPTS:
 ${chunks}
 
 USER QUESTION:
-${query}`;
+${query}
+
+YOUR ANSWER:`;
 }
 
-// ─── Gemini API Caller ────────────────────────────────────────────────────────
+function buildDeepPrompt(content: string, imageRefs: string, frame?: ContentFrame): string {
+  const frameHint = frame && frame.total > 1
+    ? frame.index === 0
+      ? `\n\n[FRAME ${frame.index + 1}/${frame.total}] Include full structure: title, summary, key points, entities, concepts, timeline, and main content.`
+      : `\n\n[FRAME ${frame.index + 1}/${frame.total}] Continue main content only. Do NOT repeat title, summary, points, entities, concepts, or timeline.`
+    : '';
 
-async function callGemini(model: string, prompt: string, apiKey: string, signal: AbortSignal): Promise<string> {
-  log.info('ai-client', `Calling Gemini model: ${model}`);
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-    signal,
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    const err = new AIClientError(
-      `Gemini API error ${res.status}: ${body || res.statusText}`,
-      'API_ERROR',
-      res.status,
-    );
-    log.error('ai-client', `Gemini ${model} failed`, err);
-    throw err;
-  }
+  return `You are an expert knowledge structuring assistant. Produce a comprehensive, well-formatted markdown document.${frameHint}
 
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-  log.success('ai-client', `Gemini ${model} responded (${text.length} chars)`);
-  return text;
+FORMATTING RULES:
+- Use ATX-style headings (# ## ###) - no underline-style headings
+- Wrap long lines at 100 characters for readability
+- Use consistent bullet style: dash (-) not asterisk
+- Bold only for first occurrence of key terms
+- Use tables for structured data comparisons
+- Code blocks must have language identifiers
+- Add semantic blank lines between sections
+
+STRUCTURE (in this order):
+# Document Title (clear, specific)
+
+## Summary
+4-6 sentence executive summary covering what, why, and so what.
+
+## Key Points
+- High-signal bullet (lead with insight, not topic)
+- Second major insight
+- Additional key points (3-7 total)
+- End with actionable or surprising insight
+
+## Key Entities
+People, organizations, technologies, APIs, products, locations. Format: **Name** (type): brief description
+
+## Concepts
+Technical terms requiring explanation. Format: **Term**: clear definition
+
+## Timeline
+Chronological sequence of events. Format: Date - Event description
+
+## Main Content
+Hierarchical sections (## and ###) covering the document thoroughly. Include:
+- Problem/Context
+- Solutions/Approaches
+- Results/Outcomes
+- Implications
+
+## Code Examples (if applicable)
+Preserve with correct syntax highlighting.
+
+## Diagrams
+- Flowcharts → mermaid
+- UML → plantuml
+- Architecture → mermaid with flowchart TB/LR
+
+## Images
+Place near relevant content with descriptive caption.
+
+## Key Takeaways
+2-3 sentence synthesis: what this means for the reader.
+
+Output ONLY valid markdown. No preamble, no explanation.
+
+PAGE CONTENT:
+${content}
+
+IMAGE REFERENCES:
+${imageRefs}`;
 }
 
-async function callGeminiWithFallback(
-  models: GeminiModel[],
-  prompt: string,
+// ─── API Callers ──────────────────────────────────────────────────────────────
+
+interface LLMResponse {
+  content: string;
+  model: string;
+  cached: boolean;
+}
+
+async function callOpenAICompatible(
+  baseUrl: string,
+  model: string,
+  messages: Array<{ role: string; content: string }>,
   apiKey: string,
   signal: AbortSignal,
-): Promise<string> {
-  let lastError: AIClientError | null = null;
+): Promise<LLMResponse> {
+  // Default to Anthropic if no baseUrl provided
+  const resolvedBaseUrl = baseUrl.trim() || 'https://api.anthropic.com';
 
-  for (const model of models) {
-    for (let attempt = 1; attempt <= QUOTA_RETRY_LIMIT; attempt++) {
-      try {
-        return await callGemini(model, prompt, apiKey, signal);
-      } catch (err) {
-        if (!(err instanceof AIClientError)) throw err;
+  // Determine endpoint based on provider and model
+  let endpoint: string;
+  const isOpenCodeZen = resolvedBaseUrl.includes('opencode.ai/zen');
 
-        lastError = err;
-        const quotaHit = isQuotaExceededError(err);
-        const hasNextRetry = attempt < QUOTA_RETRY_LIMIT;
-
-        if (quotaHit && hasNextRetry) {
-          const waitMs = parseRetryDelayMs(err.message) + Math.floor(Math.random() * 350) + 200;
-          log.warn('ai-client', `Quota hit on ${model}; retrying in ${waitMs}ms (attempt ${attempt + 1}/${QUOTA_RETRY_LIMIT})`);
-          await sleep(waitMs);
-          continue;
-        }
-
-        if (quotaHit) {
-          log.warn('ai-client', `Quota still exhausted on ${model}; trying fallback model.`);
-          break;
-        }
-
-        // For non-quota API errors, fail fast instead of silently hopping models.
-        throw err;
-      }
+  if (isOpenCodeZen) {
+    // OpenCode Zen uses different endpoints based on model type
+    // Claude models use /messages, GPT models use /responses, others use /chat/completions
+    const base = resolvedBaseUrl.endsWith('/') ? resolvedBaseUrl.slice(0, -1) : resolvedBaseUrl;
+    if (model.includes('claude') || model.includes('opus') || model.includes('sonnet') || model.includes('haiku')) {
+      endpoint = `${base}/v1/messages`;
+    } else if (model.includes('gpt-') || model.includes('gemini')) {
+      endpoint = `${base}/v1/responses`;
+    } else {
+      endpoint = `${base}/v1/chat/completions`;
     }
+  } else {
+    endpoint = resolvedBaseUrl.endsWith('/') ? `${resolvedBaseUrl}v1/chat/completions` : `${resolvedBaseUrl}/v1/chat/completions`;
   }
 
-  throw lastError ?? new AIClientError('All Gemini fallback models failed.', 'API_ERROR');
-}
-
-function normalizeOllamaEndpoint(endpoint: string): string {
-  const base = endpoint.trim().replace(/\/$/, '');
-  return base.endsWith('/api/generate') ? base : `${base}/api/generate`;
-}
-
-async function callOllama(prompt: string, settings: Settings, signal: AbortSignal): Promise<string> {
-  const url = normalizeOllamaEndpoint(settings.ollamaEndpoint || 'http://localhost:11434');
-  const model = settings.ollamaModel || 'llama3';
-  log.info('ai-client', `Calling Ollama model: ${model}`);
-
-  const res = await fetch(url, {
+  const res = await fetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
     body: JSON.stringify({
-      model,
-      prompt,
-      stream: false,
-      options: {
-        num_predict: 512,
-      },
+      model: isOpenCodeZen ? `opencode/${model}` : model, // OpenCode Zen requires opencode/ prefix
+      messages,
+      temperature: 0.3,
     }),
     signal,
   });
@@ -237,25 +309,70 @@ async function callOllama(prompt: string, settings: Settings, signal: AbortSigna
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     const err = new AIClientError(
-      `Ollama API error ${res.status}: ${body || res.statusText}`,
+      `API error ${res.status}: ${body || res.statusText}`,
       'API_ERROR',
       res.status,
     );
-    log.error('ai-client', 'Ollama call failed', err);
+    log.error('ai-client', `${model} failed (${res.status})`, err);
     throw err;
   }
 
-  const data = await res.json();
-  const text = (data.response ?? '').toString();
-  if (!text) {
-    throw new AIClientError('Ollama returned an empty response.', 'API_ERROR');
+  const data = await res.json() as {
+    choices?: Array<{ message?: { content?: string; refusal?: string } }>;
+    model?: string;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; cached_tokens?: number };
+  };
+
+  const rawContent = data.choices?.[0]?.message?.content;
+  if (typeof rawContent !== 'string' || rawContent.length === 0) {
+    throw new AIClientError('Empty response from model', 'API_ERROR');
   }
 
-  log.success('ai-client', `Ollama ${model} responded (${text.length} chars)`);
-  return text;
+  return {
+    content: rawContent,
+    model: data.model ?? model,
+    cached: (data.usage?.cached_tokens ?? 0) > 0,
+  };
 }
 
-// ─── Timeout Helper ───────────────────────────────────────────────────────────
+async function callWithFallback(
+  baseUrl: string,
+  models: string[],
+  messages: Array<{ role: string; content: string }>,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<LLMResponse> {
+  let lastError: AIClientError | null = null;
+
+  for (const model of models) {
+    for (let attempt = 1; attempt <= QUOTA_RETRY_LIMIT; attempt++) {
+      try {
+        return await callOpenAICompatible(baseUrl, model, messages, apiKey, signal);
+      } catch (err) {
+        if (!(err instanceof AIClientError)) throw err;
+        lastError = err;
+
+        if (isQuotaExceeded(err) && attempt < QUOTA_RETRY_LIMIT) {
+          const waitMs = parseRetryDelay(err) + Math.floor(Math.random() * 300);
+          log.warn('ai-client', `Quota hit on ${model}; retrying in ${waitMs}ms`);
+          await sleep(waitMs);
+          continue;
+        }
+
+        if (isQuotaExceeded(err)) {
+          log.warn('ai-client', `Quota exhausted on ${model}; trying next model`);
+          break;
+        }
+
+        throw err;
+      }
+    }
+  }
+
+  throw lastError ?? new AIClientError('All models failed', 'API_ERROR');
+}
+
+// ─── Timeout ───────────────────────────────────────────────────────────────────
 
 function withTimeout(ms: number): { signal: AbortSignal; clear: () => void } {
   const controller = new AbortController();
@@ -263,7 +380,7 @@ function withTimeout(ms: number): { signal: AbortSignal; clear: () => void } {
   return { signal: controller.signal, clear: () => clearTimeout(id) };
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+// ─── Public API ────────────────────────────────────────────────────────────────
 
 export async function sendCaptureRequest(
   content: string,
@@ -274,40 +391,74 @@ export async function sendCaptureRequest(
 ): Promise<string> {
   const { signal, clear } = withTimeout(300_000);
   try {
-    const provider = settings.provider ?? 'gemini';
+    if (!settings.apiKey) {
+      throw new AIClientError('No API key configured. Add your key in Settings.', 'MISSING_KEY');
+    }
 
-    if (provider === 'ollama') {
-      const imageRefsText = imageRefs
-        .map(img => `[IMG: ${img.url} | ${img.alt} | ${img.paragraphContext}]`)
-        .join('\n');
+    if (settings.provider === 'offline') {
+      throw new AIClientError('Offline provider cannot be used for capture.', 'API_ERROR');
+    }
+
+    const imageRefsText = imageRefs
+      .map(img => `[IMG: ${img.url} | ${img.alt} | ${img.paragraphContext}]`)
+      .join('\n');
+    const cappedImageRefs = imageRefsText.length > MAX_CAPTURE_IMAGE_REFS_CHARS
+      ? imageRefsText.slice(0, MAX_CAPTURE_IMAGE_REFS_CHARS)
+      : imageRefsText;
+
+    // Build message for single or multi-frame
+    const buildMessages = (frameContent: string, frame?: ContentFrame) => {
       const prompt = mode === 'DEEP'
-        ? buildDeepPrompt(content, imageRefsText)
-        : buildFastPrompt(content, imageRefsText);
-      return await callOllama(prompt, settings, signal);
+        ? buildDeepPrompt(frameContent, cappedImageRefs, frame)
+        : buildCapturePrompt(frameContent, cappedImageRefs, frame);
+      return [{ role: 'system' as const, content: 'You are a helpful assistant.' }, { role: 'user' as const, content: prompt }];
+    };
+
+    const models = settings.modelId
+      ? [settings.modelId]
+      : ['claude-3-5-sonnet-20241022', 'openai/gpt-4o'];
+
+    if (settings.provider === 'openai-compatible') {
+      const singleContent = content.length > FRAME_TARGET_CHARS
+        ? content.slice(0, MAX_CAPTURE_CONTENT_CHARS)
+        : content;
+      const messages = buildMessages(singleContent);
+      const response = await callWithFallback(settings.baseUrl, models, messages, settings.apiKey, signal);
+      const sanitized = sanitizeAiResponse(response.content);
+      return formatMarkdown(sanitized);
     }
 
-    if (provider !== 'gemini') {
-      throw new AIClientError(`Provider ${provider} is not supported by sendCaptureRequest.`, 'API_ERROR');
+    // Multi-frame for large content
+    const frames = fragmentIntoFrames(content, FRAME_TARGET_CHARS);
+    if (frames.length === 1) {
+      const cappedContent = content.length > MAX_CAPTURE_CONTENT_CHARS
+        ? content.slice(0, MAX_CAPTURE_CONTENT_CHARS)
+        : content;
+      const messages = buildMessages(cappedContent);
+      const response = await callWithFallback(settings.baseUrl, models, messages, settings.apiKey, signal);
+      const sanitized = sanitizeAiResponse(response.content);
+      return formatMarkdown(sanitized);
     }
 
-    if (!settings.apiKeys.gemini) {
-      throw new AIClientError('No Gemini API key configured. Add your key in Settings.', 'MISSING_KEY');
+    log.info('ai-client', `Fragmenting content into ${frames.length} frames`);
+    const responses: string[] = [];
+
+    for (let i = 0; i < frames.length; i++) {
+      const frame: ContentFrame = { index: i, total: frames.length };
+      const cappedContent = frames[i].length > MAX_CAPTURE_CONTENT_CHARS
+        ? frames[i].slice(0, MAX_CAPTURE_CONTENT_CHARS)
+        : frames[i];
+
+      onProgress?.(i + 1, frames.length);
+      const messages = buildMessages(cappedContent, frame);
+      const response = await callWithFallback(settings.baseUrl, models, messages, settings.apiKey, signal);
+      responses.push(response.content);
     }
 
-    const cappedContent = trimForQuota(content, MAX_CAPTURE_CONTENT_CHARS, 'Capture content');
-    const imageRefsText = trimForQuota(
-      imageRefs.map((img) => `[IMG: ${img.url} | ${img.alt} | ${img.paragraphContext}]`).join('\n'),
-      MAX_CAPTURE_IMAGE_REFS_CHARS,
-      'Image references',
-    );
-
-    const prompt = mode === 'DEEP'
-      ? buildDeepPrompt(cappedContent, imageRefsText)
-      : buildFastPrompt(cappedContent, imageRefsText);
-
-    const effectiveMode: Exclude<GenerationMode, 'LOCAL'> = mode === 'LOCAL' ? 'BALANCED' : mode;
-    const modelChain = MODE_TO_MODEL_CHAIN[effectiveMode];
-    return await callGeminiWithFallback(modelChain, prompt, settings.apiKeys.gemini, signal);
+    const reassembled = reassembleFrameResponses(responses);
+    log.success('ai-client', `Reassembled ${frames.length} frames into ${reassembled.length} chars`);
+    const sanitized = sanitizeAiResponse(reassembled);
+    return formatMarkdown(sanitized);
   } catch (err) {
     if (err instanceof AIClientError) throw err;
     if (err instanceof Error && err.name === 'AbortError') {
@@ -324,30 +475,28 @@ export async function sendRAGRequest(
   chunks: Array<{ text: string; paragraphIndex: number; source?: 'document' | 'history' }>,
   settings: Settings,
 ): Promise<string> {
+  if (!settings.apiKey) {
+    throw new AIClientError('No API key configured.', 'MISSING_KEY');
+  }
+
   const chunksText = chunks
-    .map((c, i) => {
-      const sourceLabel = c.source === 'history' ? 'conversation history' : 'document';
-      return `[${i + 1}] (${sourceLabel}) ${c.text}`;
-    })
+    .map((c, i) => `[${i + 1}] ${c.text}`)
     .join('\n\n');
-  const prompt = buildRAGPrompt(query, chunksText);
+
+  const messages = [
+    { role: 'system' as const, content: 'You are a precise question-answering assistant.' },
+    { role: 'user' as const, content: buildRAGPrompt(query, chunksText) },
+  ];
+
+  const models = settings.modelId
+    ? [settings.modelId]
+    : ['claude-3-5-sonnet-20241022', 'openai/gpt-4o'];
 
   const { signal, clear } = withTimeout(120_000);
   try {
-    const provider = settings.provider ?? 'gemini';
-    if (provider === 'ollama') {
-      return await callOllama(prompt, settings, signal);
-    }
-
-    if (provider !== 'gemini') {
-      throw new AIClientError(`Provider ${provider} is not supported by sendRAGRequest.`, 'API_ERROR');
-    }
-
-    if (!settings.apiKeys.gemini) {
-      throw new AIClientError('No Gemini API key configured.', 'MISSING_KEY');
-    }
-
-    return await callGeminiWithFallback(RAG_MODEL_CHAIN, prompt, settings.apiKeys.gemini, signal);
+    const response = await callWithFallback(settings.baseUrl, models, messages, settings.apiKey, signal);
+    const sanitized = sanitizeAiResponse(response.content);
+    return formatChatResponse(sanitized);
   } catch (err) {
     if (err instanceof AIClientError) throw err;
     if (err instanceof Error && err.name === 'AbortError') {

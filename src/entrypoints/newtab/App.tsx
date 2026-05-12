@@ -3,7 +3,7 @@ import Fuse from 'fuse.js';
 import { browser } from 'wxt/browser';
 import { cn } from '@/lib/utils';
 import type { DocumentMeta, Folder, TagColorMap, ViewMode } from '@/lib/types';
-import { getDocIndex, getDocumentMetas, deleteDocument, updateDocumentMeta, getFolders, saveFolder, deleteFolder, getTagColors, setTagColor, getViewMode, saveViewMode, getSettings } from '@/lib/storage';
+import { getDocIndex, getDocumentMetas, deleteDocument, updateDocumentMeta, getFolders, saveFolder, deleteFolder, getTagColors, setTagColor, getViewMode, saveViewMode, getSettings, getAppearance } from '@/lib/storage';
 import { FOLDER_COLORS } from '@/lib/color-palette';
 import { importNotchPDF } from '@/lib/import';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { EmptyState } from '@/components/EmptyState';
+import { useToast } from '@/components/ui/toast';
 
 // exportFolderAsZip will be implemented in task 20; loaded lazily so missing module doesn't break build
 type ExportFolderFn = (folderId: string, format: 'markdown' | 'pdf') => Promise<Blob>;
@@ -21,7 +22,7 @@ void (import('@/lib/zip-export') as Promise<{ exportFolderAsZip: ExportFolderFn 
   .catch(() => { /* zip-export not yet implemented — will be wired in task 20 */ });
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 12;
 
 // ── Fuse config — meta fields only, no full content ──────────────────────────
 const fuseOptions = {
@@ -166,6 +167,14 @@ function LibraryHeader({
             </button>
           ))}
         </div>
+        {/* Settings */}
+        <button
+          onClick={() => browser.runtime.openOptionsPage()}
+          title="Settings"
+          className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-border text-muted hover:text-white hover:border-primary transition-colors"
+        >
+          [⚙]
+        </button>
       </div>
     </div>
   );
@@ -239,7 +248,7 @@ function Sidebar({
         {topItems.map(({ label, value }) => (
           <button
             key={value}
-            onClick={() => value === 'settings' ? browser.runtime.openOptionsPage() : onFilterChange(value as Filter)}
+            onClick={() => value === 'settings' ? window.location.href = '/settings.html': onFilterChange(value as Filter)}
             className={cn(
               'font-mono font-semibold text-[11px] uppercase tracking-wider px-4 py-2 text-left w-full transition-colors border-l-2',
               activeFilter === value && activeFolderId === null
@@ -480,7 +489,7 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
           </div>
         </div>
 
-        <div className="absolute right-4 top-0 bottom-0 flex items-center gap-3 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-l from-surface-hover via-surface-hover to-transparent pl-8">
+        <div className="absolute right-4 top-0 bottom-0 flex items-center gap-3 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity bg-linear-to-l from-surface-hover via-surface-hover to-transparent pl-8">
           <button onClick={stop(() => onArchive(meta.id, !meta.isArchived))} title={meta.isArchived ? 'Unarchive' : 'Archive'} className={cn('font-mono text-[16px] transition-colors hover:text-white leading-none', meta.isArchived ? 'text-primary' : 'text-muted')}>⊡</button>
           {folderMenu}
           <button onClick={stop(() => onDelete(meta.id))} title="Delete" className="font-mono font-semibold text-[16px] text-danger hover:text-danger/80 transition-colors leading-none">×</button>
@@ -777,6 +786,8 @@ export default function LibraryApp() {
   const [importStatus, setImportStatus] = useState<ImportStatus>('idle');
   const [tagColors, setTagColors] = useState<TagColorMap>({});
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState<number>(-1);
+  const { addToast } = useToast();
 
   // ── Boot
   useEffect(() => {
@@ -791,8 +802,7 @@ export default function LibraryApp() {
       setFolders(storedFolders);
       setTagColors(storedTagColors);
       setViewMode(storedViewMode);
-      const apiKeys = storedSettings.apiKeys ?? {};
-      setHasApiKey(Boolean(apiKeys.gemini || apiKeys.openai || apiKeys.anthropic));
+      setHasApiKey(Boolean(storedSettings.apiKey));
       if (index.length === 0) { setLoading(false); return; }
       const firstBatch = await getDocumentMetas(index.slice(0, 20));
       setMetas(firstBatch);
@@ -808,6 +818,18 @@ export default function LibraryApp() {
     boot();
   }, []);
 
+  // Apply global appearance
+  useEffect(() => {
+    getAppearance().then((a) => {
+      const resolved = a.theme === 'system'
+        ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+        : a.theme;
+      document.documentElement.dataset.theme = resolved;
+      document.body.dataset.theme = resolved;
+      document.documentElement.style.setProperty('--color-primary', a.accentColor);
+    });
+  }, []);
+
   // ── Quota warning listener
   useEffect(() => {
     function onMsg(msg: unknown) {
@@ -819,6 +841,9 @@ export default function LibraryApp() {
     browser.runtime.onMessage.addListener(onMsg);
     return () => browser.runtime.onMessage.removeListener(onMsg);
   }, []);
+
+  // ── Keyboard navigation (j/k/arrows to navigate, Enter to open, s to star, a to archive, d to delete)
+  // Note: This is placed after displayList is computed below
 
   // ── Mutations
   function handleStar(id: string, starred: boolean) {
@@ -954,6 +979,54 @@ export default function LibraryApp() {
 
   const tagFiltered = activeTag ? sorted.filter(m => m.tags.includes(activeTag)) : sorted;
   const displayList = searchResults ?? tagFiltered;
+
+  // ── Keyboard navigation (j/k/arrows to navigate, Enter to open, s to star, a to archive, d to delete)
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Ignore if typing in an input
+      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
+
+      if (displayList.length === 0) return;
+
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex(prev => Math.min(prev + 1, displayList.length - 1));
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex(prev => Math.max(prev - 1, 0));
+      } else if (e.key === 'Enter' && selectedIndex >= 0) {
+        e.preventDefault();
+        const doc = displayList[selectedIndex];
+        if (doc) browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${doc.id}`) });
+      } else if (e.key === 's' && selectedIndex >= 0) {
+        e.preventDefault();
+        const doc = displayList[selectedIndex];
+        if (doc) {
+          updateDocumentMeta(doc.id, { isStarred: !doc.isStarred });
+          setMetas(prev => prev.map(m => m.id === doc.id ? { ...m, isStarred: !m.isStarred } : m));
+          addToast(doc.isStarred ? 'Removed from favorites' : 'Added to favorites', 'info');
+        }
+      } else if (e.key === 'a' && selectedIndex >= 0) {
+        e.preventDefault();
+        const doc = displayList[selectedIndex];
+        if (doc) {
+          updateDocumentMeta(doc.id, { isArchived: !doc.isArchived });
+          setMetas(prev => prev.map(m => m.id === doc.id ? { ...m, isArchived: !m.isArchived } : m));
+          addToast(doc.isArchived ? 'Unarchived' : 'Archived', 'info');
+        }
+      } else if (e.key === 'd' && selectedIndex >= 0) {
+        e.preventDefault();
+        const doc = displayList[selectedIndex];
+        if (doc && confirm(`Delete "${doc.title}"?`)) {
+          setMetas(prev => prev.filter(m => m.id !== doc.id));
+          deleteDocument(doc.id);
+          addToast('Document deleted', 'info');
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [displayList, selectedIndex, addToast]);
 
   // ── All unique tags across all metas (for color legend)
   const allTags = useMemo(() => {

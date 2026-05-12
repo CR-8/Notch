@@ -2,7 +2,6 @@ import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 
-// See https://wxt.dev/api/config.html
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   srcDir: 'src',
@@ -12,9 +11,6 @@ export default defineConfig({
       alias: {
         '@': path.resolve(__dirname, 'src'),
       },
-    },
-    optimizeDeps: {
-      exclude: ['@huggingface/transformers'],
     },
   }),
   manifest: ({ browser }) => ({
@@ -34,15 +30,9 @@ export default defineConfig({
     permissions: browser === 'firefox'
       ? ['storage', 'tabs', 'activeTab']
       : ['storage', 'tabs', 'activeTab', 'scripting'],
-    // wasm-unsafe-eval is required by ONNX Runtime WASM backend.
-    // The ONNX .wasm + .mjs files are bundled locally in public/ort/ so no
-    // CDN fetches are needed — both Chrome and Firefox serve them as 'self'.
     ...(browser === 'firefox'
       ? {
-          // Firefox MV2 CSP
-          content_security_policy: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
-          // Make the bundled ONNX runtime files accessible to the background script
-          web_accessible_resources: ['ort/*'],
+          content_security_policy: "script-src 'self'; object-src 'self'",
           browser_specific_settings: {
             gecko: {
               id: 'notch@notch-extension',
@@ -51,11 +41,9 @@ export default defineConfig({
           },
         }
       : {
-          // Chrome MV3 CSP
           content_security_policy: {
-            extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+            extension_pages: "script-src 'self'; object-src 'self'",
           },
-          web_accessible_resources: [{ resources: ['ort/*'], matches: ['<all_urls>'] }],
         }),
   }),
 });

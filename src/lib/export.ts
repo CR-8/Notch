@@ -1,7 +1,7 @@
 import html2canvas from 'html2canvas';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { Document } from './types';
-import { getChunksByDocument, getEmbeddingsByDocument } from './idb';
+import { getChunksByDocument } from './idb';
 import { log } from './logger';
 
 export interface PDFExportOptions {
@@ -231,12 +231,12 @@ async function renderReaderSnapshotToPdf(
 
 export async function exportPDF(doc: Document, options: PDFExportOptions = {}): Promise<void> {
   log.info('storage', `Exporting RAG PDF for: ${doc.title}`);
-  
+
   try {
     const pdfDoc = await PDFDocument.create();
-    const renderedFromSnapshot = options.sourceElement
-      ? await renderReaderSnapshotToPdf(pdfDoc, options.sourceElement, options.theme ?? 'dark')
-      : false;
+    // Skip snapshot approach - always use content-based export for searchable, text-based PDF
+    // This produces better quality output that is also smaller in size
+    const renderedFromSnapshot = false; // Force content-based export
 
     if (!renderedFromSnapshot) {
     const timesRomanFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
@@ -402,42 +402,32 @@ export async function exportPDF(doc: Document, options: PDFExportOptions = {}): 
 
     flushParagraph(paragraphBuffer);
     flushCodeBlock(codeBuffer, codeLanguage);
-    } else {
-      log.info('storage', 'PDF content rendered from Reader page snapshot');
-    }
 
-
-    // 2. Fetch and Attach RAG Bundle (optional — failure does not abort the PDF)
+    // 2. Fetch and Attach Chunk Bundle (optional — failure does not abort the PDF)
     try {
       const chunks = await getChunksByDocument(doc.id);
-      const embeddings = await getEmbeddingsByDocument(doc.id);
-      
       const bundle = {
         document: doc,
-        // Only store chunk text + indices, not the raw embedding vectors —
-        // vectors are re-computed from the model at import time.
         chunks: chunks.map(c => ({ id: c.id, documentId: c.documentId, chunkIndex: c.chunkIndex, text: c.text, paragraphIndex: c.paragraphIndex })),
-        embeddings: embeddings.map(e => ({ id: e.id, vector: Array.from(e.vector) }))
       };
 
       const attachmentData = JSON.stringify(bundle);
       const attachmentBytes = new TextEncoder().encode(attachmentData);
-      
+
       await pdfDoc.attach(attachmentBytes, 'notch_data.json', {
         mimeType: 'application/json',
-        description: 'Notch RAG Context and Embeddings',
+        description: 'Notch Context Bundle',
         creationDate: new Date(),
         modificationDate: new Date(),
       });
-      log.success('storage', `RAG bundle attached (${chunks.length} chunks, ${embeddings.length} embeddings)`);
+      log.success('storage', `Chunk bundle attached (${chunks.length} chunks)`);
     } catch (attachErr) {
-      // Non-fatal: the PDF content is still useful without the RAG bundle.
-      log.warn('storage', 'Could not attach RAG bundle to PDF (PDF will still download without it)', attachErr);
+      log.warn('storage', 'Could not attach chunk bundle to PDF', attachErr);
     }
 
     // 3. Save and Download
     const pdfBytes = await pdfDoc.save();
-    const blob = new Blob([pdfBytes.buffer.slice(pdfBytes.byteOffset, pdfBytes.byteOffset + pdfBytes.byteLength) as ArrayBuffer], { type: 'application/pdf' });
+    const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const filename = doc.title.replace(/[^a-z0-9\-_. ]/gi, '_').trim() || 'document';
@@ -449,6 +439,7 @@ export async function exportPDF(doc: Document, options: PDFExportOptions = {}): 
     URL.revokeObjectURL(url);
     
     log.success('storage', `Exported RAG PDF: ${filename}.pdf`);
+    }
   } catch (err) {
     log.error('storage', 'Failed to export PDF', err);
     throw err;

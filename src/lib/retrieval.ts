@@ -1,4 +1,4 @@
-import { getEmbeddingsByDocument, getChunksByDocument } from './idb';
+import type { DocumentChunk } from './types';
 
 export interface RetrievedChunk {
   text: string;
@@ -19,32 +19,12 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
 }
 
 export async function retrieveTopK(
-  documentId: string,
-  queryEmbedding: Float32Array,
-  k: number = 5
+  _documentId: string,
+  _queryEmbedding: Float32Array,
+  _k: number = 5
 ): Promise<RetrievedChunk[]> {
-  const [embeddings, chunks] = await Promise.all([
-    getEmbeddingsByDocument(documentId),
-    getChunksByDocument(documentId),
-  ]);
-
-  const chunkMap = new Map(chunks.map((c) => [c.id, c]));
-
-  const scored = embeddings
-    .map(({ id, vector }) => {
-      const chunk = chunkMap.get(id);
-      if (!chunk) return null;
-      const source = chunk.source ?? 'document';
-      return {
-        text: chunk.text,
-        paragraphIndex: chunk.paragraphIndex,
-        score: cosineSimilarity(queryEmbedding, vector) + (source === 'document' ? 0.02 : 0),
-        source,
-      };
-    })
-    .filter((r): r is RetrievedChunk => r !== null);
-
-  scored.sort((a, b) => b.score - a.score);
-
-  return scored.slice(0, Math.min(k, scored.length));
+  // Keyword-based retrieval now handled via nlp-fallback.ts rankChunksByKeywords
+  // This function is kept for API compatibility but returns empty
+  // since we removed the transformer embeddings
+  return [];
 }

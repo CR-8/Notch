@@ -1,5 +1,6 @@
 import { Lexer } from 'marked';
 import type { Token, Tokens } from 'marked';
+import { escapeHtmlFull, sanitizeCodeLanguage, validateStructuralFences } from './sanitize';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -79,7 +80,7 @@ function tokenToDocBlock(token: Token, warnings: ParseWarning[]): DocBlock | nul
 
       case 'code': {
         const t = token as Tokens.Code;
-        return { type: 'code', raw: t.raw, language: t.lang ?? '' };
+        return { type: 'code', raw: t.raw, language: sanitizeCodeLanguage(t.lang ?? '') };
       }
 
       case 'list': {
@@ -128,9 +129,20 @@ export function parseMarkdown(md: string): ParseResult {
   const blocks: DocBlock[] = [];
   const warnings: ParseWarning[] = [];
 
+  // Validate and repair structural fences before parsing
+  const fenceResult = validateStructuralFences(md);
+  if (!fenceResult.valid) {
+    warnings.push({
+      line: 0,
+      message: `Repaired ${fenceResult.unclosedFences} unclosed code fence(s)`,
+      raw: '',
+    });
+  }
+  const safeMd = fenceResult.repaired;
+
   let tokens: Token[];
   try {
-    tokens = Lexer.lex(md);
+    tokens = Lexer.lex(safeMd);
   } catch (err) {
     warnings.push({
       line: 0,
@@ -201,7 +213,7 @@ function serializeBlock(block: DocBlock): string {
     }
 
     case 'unknown': {
-      return `<pre data-fallback="true">${escapeHtml(block.raw)}</pre>`;
+      return `<pre data-fallback="true">${escapeHtmlFull(block.raw)}</pre>`;
     }
 
     default:
@@ -231,13 +243,6 @@ function serializeListBlock(block: DocBlock, indentLevel: number): string {
   }
 
   return lines.join('\n');
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 }
 
 export function serializeToMarkdown(result: ParseResult): string {

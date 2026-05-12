@@ -1,19 +1,43 @@
-// The three supported models
-export type GeminiModel =
-  | 'gemini-3.1-flash-lite-preview'  
-  | 'gemma-3-12b-it'             
-  | 'gemma-3-4b-it'             
-  | 'gemma-3-1b-it'             
-  | 'gemma-3-27b-it';             
+// ─── Supported Providers ──────────────────────────────────────────────────────
+
+export type LLMProvider = 'anthropic' | 'openai-compatible' | 'offline';
+export type GenerationMode = 'FAST' | 'DEEP' | 'BALANCED' | 'LOCAL';
+export type ViewMode = 'compact' | 'comfortable' | 'detailed';
+
+// ─── Model Definitions ────────────────────────────────────────────────────────
 
 export interface ContentFrame {
   index: number;
   total: number;
 }
 
-export type GenerationMode = 'FAST' | 'DEEP' | 'BALANCED' | 'LOCAL';
-export type LLMProvider = 'gemini' | 'ollama' | 'offline' | 'openai' | 'anthropic';
-export type ViewMode = 'compact' | 'comfortable' | 'detailed';
+export interface AIModel {
+  id: string;
+  name: string;
+  contextWindow: number;
+}
+
+export const SUPPORTED_MODELS: AIModel[] = [
+  // Claude family
+  { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', contextWindow: 200000 },
+  { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', contextWindow: 200000 },
+  { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', contextWindow: 200000 },
+  { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', contextWindow: 200000 },
+  { id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet', contextWindow: 200000 },
+  // OpenRouter / OpenCode compatible models
+  { id: 'openai/gpt-4o', name: 'GPT-4o (OpenRouter)', contextWindow: 128000 },
+  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet (OpenRouter)', contextWindow: 200000 },
+  { id: 'google/gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (OpenRouter)', contextWindow: 1000000 },
+  { id: 'deepseek/deepseek-chat-v3', name: 'DeepSeek V3 (OpenRouter)', contextWindow: 64000 },
+  { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B (OpenRouter)', contextWindow: 32000 },
+  // MiniMax models
+  { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', contextWindow: 1000000 },
+  { id: 'MiniMax-M2', name: 'MiniMax M2', contextWindow: 1000000 },
+  // Local / custom
+  { id: 'local/custom', name: 'Custom Endpoint', contextWindow: 0 },
+];
+
+// ─── Simple Types ──────────────────────────────────────────────────────────────
 
 export interface Entity {
   name: string;
@@ -40,11 +64,6 @@ export interface ImageRef {
   paragraphContext: string;
 }
 
-/**
- * Lightweight metadata record — used by the Library page.
- * Derived from Document; never contains content, keyEntities, timeline, concepts, or images.
- * Stored separately so the library never has to deserialise full documents.
- */
 export interface Folder {
   id: string;
   name: string;
@@ -61,7 +80,7 @@ export interface DocumentMeta {
   wordCount: number;
   summary: string;
   tags: string[];
-  folder?: string; // folder id, undefined = Uncategorised
+  folder?: string;
   isStarred: boolean;
   isArchived: boolean;
   isRead: boolean;
@@ -69,7 +88,6 @@ export interface DocumentMeta {
   provider: LLMProvider;
 }
 
-/** Full document — only loaded by the Reader. */
 export interface Document {
   id: string;
   title: string;
@@ -86,7 +104,7 @@ export interface Document {
   timeline: TimelineEvent[];
   concepts: Concept[];
   tags: string[];
-  folder?: string; // folder id, undefined = Uncategorised
+  folder?: string;
   images: ImageRef[];
   isStarred: boolean;
   isArchived: boolean;
@@ -101,24 +119,26 @@ export interface DocumentChunk {
   chunkIndex: number;
   text: string;
   paragraphIndex: number;
-  embedding?: Float32Array;
   source?: 'document' | 'history';
 }
 
 export interface TagColorMap {
-  [tag: string]: string; // hex color
+  [tag: string]: string;
 }
 
 export interface Settings {
-  apiKeys: {
-    gemini?: string;
-    openai?: string;
-    anthropic?: string;
-  };
-  provider?: LLMProvider;
-  ollamaEndpoint: string;
+  apiKey: string;
+  provider: LLMProvider;
+  baseUrl: string;
+  modelId: string;
   defaultMode: GenerationMode;
-  ollamaModel: string;
+}
+
+export interface AppearanceSettings {
+  theme: 'dark' | 'light' | 'system';
+  fontFamily: 'mono' | 'serif' | 'sans';
+  fontSize: 'sm' | 'md' | 'lg';
+  accentColor: string;
 }
 
 export interface Citation {
@@ -136,6 +156,15 @@ export interface ChatMessageRecord {
   createdAt: string;
 }
 
+export interface DocumentHighlight {
+  id: string;
+  documentId: string;
+  text: string;
+  paragraphIndex: number;
+  paragraphId?: string;
+  createdAt: string;
+}
+
 export interface DOMExtraction {
   title: string;
   url: string;
@@ -150,6 +179,8 @@ export interface DOMExtraction {
   wordCount: number;
   metaDescription: string;
 }
+
+// ─── Message Types ─────────────────────────────────────────────────────────────
 
 export type NotchMessage =
   | { type: 'CAPTURE_PAGE'; payload: { tabId: number; mode: GenerationMode; tags: string[] } }

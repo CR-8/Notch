@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 type ActionWithClick = { label: string; onClick: () => void };
@@ -9,7 +10,7 @@ interface EmptyStateProps {
   className?: string;
 }
 
-export function EmptyState({ message, action, className }: EmptyStateProps): JSX.Element {
+export function EmptyState({ message, action, className }: EmptyStateProps): ReactNode {
   return (
     <div className={cn('flex flex-col items-center justify-center gap-3 p-8 text-center', className)}>
       <span className="font-mono font-semibold text-xs uppercase tracking-wider text-muted">

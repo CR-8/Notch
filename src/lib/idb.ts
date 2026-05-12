@@ -1,7 +1,7 @@
-import type { ChatMessageRecord, Document, DocumentChunk } from './types';
+import type { ChatMessageRecord, Document, DocumentChunk, DocumentHighlight } from './types';
 
 const DB_NAME = 'notch_db';
-const DB_VERSION = 3; // v3: add chatHistory store
+const DB_VERSION = 5; // v5: added highlights store
 
 let _db: IDBDatabase | null = null;
 
@@ -13,26 +13,34 @@ export function openDB(): Promise<IDBDatabase> {
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
 
+      // Chunks store (embeddings now stored inline with chunks)
       if (!db.objectStoreNames.contains('chunks')) {
         const chunksStore = db.createObjectStore('chunks', { keyPath: 'id' });
         chunksStore.createIndex('documentId', 'documentId', { unique: false });
       }
 
-      if (!db.objectStoreNames.contains('embeddings')) {
-        const embeddingsStore = db.createObjectStore('embeddings', { keyPath: 'id' });
-        embeddingsStore.createIndex('documentId', 'documentId', { unique: false });
-      }
-
-      // v2: full documents live here, not in storage.local
+      // Full documents
       if (!db.objectStoreNames.contains('documents')) {
         db.createObjectStore('documents', { keyPath: 'id' });
       }
 
-      // v3: chat history for persistent reader conversations
+      // Chat history
       if (!db.objectStoreNames.contains('chatHistory')) {
         const chatStore = db.createObjectStore('chatHistory', { keyPath: 'id' });
         chatStore.createIndex('documentId', 'documentId', { unique: false });
         chatStore.createIndex('createdAt', 'createdAt', { unique: false });
+      }
+
+      // Highlights
+      if (!db.objectStoreNames.contains('highlights')) {
+        const highlightsStore = db.createObjectStore('highlights', { keyPath: 'id' });
+        highlightsStore.createIndex('documentId', 'documentId', { unique: false });
+        highlightsStore.createIndex('createdAt', 'createdAt', { unique: false });
+      }
+
+      // Remove old stores if they exist (v4 migration)
+      if (db.objectStoreNames.contains('embeddings')) {
+        db.deleteObjectStore('embeddings');
       }
     };
 
@@ -41,7 +49,7 @@ export function openDB(): Promise<IDBDatabase> {
   });
 }
 
-// ── Full document store ───────────────────────────────────────────────────────
+// ── Documents ─────────────────────────────────────────────────────────────────
 
 export async function saveDocumentToIDB(doc: Document): Promise<void> {
   const db = await openDB();
@@ -66,30 +74,19 @@ export async function getDocumentFromIDB(id: string): Promise<Document | null> {
 export async function deleteDocumentFromIDB(documentId: string): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(['chunks', 'embeddings', 'documents', 'chatHistory'], 'readwrite');
-
+    const tx = db.transaction(['chunks', 'documents', 'chatHistory'], 'readwrite');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
 
-    // Delete full doc
     tx.objectStore('documents').delete(documentId);
 
-    // Delete chunks
     const chunksReq = tx.objectStore('chunks').index('documentId').getAllKeys(documentId);
     chunksReq.onsuccess = () => {
       for (const key of chunksReq.result) tx.objectStore('chunks').delete(key);
     };
     chunksReq.onerror = () => tx.abort();
 
-    // Delete embeddings
-    const embReq = tx.objectStore('embeddings').index('documentId').getAllKeys(documentId);
-    embReq.onsuccess = () => {
-      for (const key of embReq.result) tx.objectStore('embeddings').delete(key);
-    };
-    embReq.onerror = () => tx.abort();
-
-    // Delete chat history
     const chatReq = tx.objectStore('chatHistory').index('documentId').getAllKeys(documentId);
     chatReq.onsuccess = () => {
       for (const key of chatReq.result) tx.objectStore('chatHistory').delete(key);
@@ -98,14 +95,13 @@ export async function deleteDocumentFromIDB(documentId: string): Promise<void> {
   });
 }
 
-// ── Chunks ────────────────────────────────────────────────────────────────────
+// ── Chunks ───────────────────────────────────────────────────────────────────
 
 export async function saveChunk(chunk: DocumentChunk): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('chunks', 'readwrite');
-    const { embedding: _embedding, ...chunkWithoutEmbedding } = chunk;
-    const req = tx.objectStore('chunks').put(chunkWithoutEmbedding);
+    const req = tx.objectStore('chunks').put(chunk);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
@@ -121,28 +117,6 @@ export async function getChunksByDocument(documentId: string): Promise<DocumentC
       chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
       resolve(chunks);
     };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-// ── Embeddings ────────────────────────────────────────────────────────────────
-
-export async function saveEmbedding(id: string, documentId: string, vector: Float32Array): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('embeddings', 'readwrite');
-    const req = tx.objectStore('embeddings').put({ id, documentId, vector });
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-
-export async function getEmbeddingsByDocument(documentId: string): Promise<Array<{ id: string; vector: Float32Array }>> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('embeddings', 'readonly');
-    const req = tx.objectStore('embeddings').index('documentId').getAll(documentId);
-    req.onsuccess = () => resolve(req.result as Array<{ id: string; vector: Float32Array }>);
     req.onerror = () => reject(req.error);
   });
 }
@@ -169,6 +143,42 @@ export async function getChatMessagesByDocument(documentId: string): Promise<Cha
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       resolve(messages);
     };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// ── Highlights ─────────────────────────────────────────────────────────────────
+
+export async function saveHighlight(highlight: DocumentHighlight): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('highlights', 'readwrite');
+    const req = tx.objectStore('highlights').put(highlight);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function getHighlightsByDocument(documentId: string): Promise<DocumentHighlight[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('highlights', 'readonly');
+    const req = tx.objectStore('highlights').index('documentId').getAll(documentId);
+    req.onsuccess = () => {
+      const highlights = (req.result as DocumentHighlight[])
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      resolve(highlights);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function deleteHighlight(id: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('highlights', 'readwrite');
+    const req = tx.objectStore('highlights').delete(id);
+    req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
 }

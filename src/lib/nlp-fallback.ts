@@ -104,6 +104,8 @@ export function answerWithOfflineNLP(
   }
 
   const queryTokens = tokenize(query);
+  // Adaptive sentence limit based on query complexity
+  const maxSentences = Math.min(5, Math.max(2, Math.ceil(queryTokens.length / 4)));
 
   const sentenceCandidates: Array<{ sentence: string; score: number; citation: number }> = [];
 
@@ -130,7 +132,7 @@ export function answerWithOfflineNLP(
     if (seen.has(key)) continue;
     seen.add(key);
     selected.push({ sentence: candidate.sentence, citation: candidate.citation });
-    if (selected.length >= 3) break;
+    if (selected.length >= maxSentences) break;
   }
 
   if (selected.length === 0) {

@@ -1,19 +1,14 @@
 import { PDFDocument, PDFName, PDFDict, PDFArray, PDFStream } from 'pdf-lib';
 import type { Document, DocumentChunk } from './types';
 import { saveDocument, saveDocIndex, getDocIndex } from './storage';
-import { saveChunk, saveEmbedding } from './idb';
+import { saveChunk } from './idb';
 import { log } from './logger';
 
-export interface NotchRAGBundle {
+export interface NotchBundle {
   document: Document;
   chunks: DocumentChunk[];
-  embeddings: Array<{ id: string; vector: number[] }>;
 }
 
-/**
- * Extracts attachments from a pdf-lib PDFDocument by traversing the catalog's
- * Names → EmbeddedFiles tree. pdf-lib has no high-level getAttachments() API.
- */
 function extractAttachments(pdfDoc: PDFDocument): Array<{ name: string; data: Uint8Array }> {
   try {
     const catalog = pdfDoc.catalog;
@@ -45,30 +40,28 @@ function extractAttachments(pdfDoc: PDFDocument): Array<{ name: string; data: Ui
   }
 }
 
-/**
- * Attempts to parse a PDF file and extract hidden Notch RAG data.
- * If found, restores the document, chunks, and embeddings to local storage.
- */
 export async function importNotchPDF(file: File): Promise<string> {
-  log.info('storage', `Importing PDF: ${file.name}`);
+  const fileName = file.name;
+  log.info('storage', `Importing PDF: ${fileName}`);
   const arrayBuffer = await file.arrayBuffer();
-  
+
   try {
     const pdfDoc = await PDFDocument.load(arrayBuffer);
-    
     const attachments = extractAttachments(pdfDoc);
     const notchAttachment = attachments.find(a => a.name === 'notch_data.json');
-    
+
     if (!notchAttachment) {
-      throw new Error('This PDF does not contain Notch RAG data. Only PDFs exported from Notch can be imported.');
+      throw new Error(`[${fileName}] This PDF does not contain Notch data. Only PDFs exported from Notch can be imported.`);
     }
 
-    const jsonString = new TextDecoder().decode(notchAttachment.data);
-    const bundle = JSON.parse(jsonString) as NotchRAGBundle;
-    
-    const { document: doc, chunks, embeddings } = bundle;
-    
-    // Check if document already exists to avoid duplicates
+    let parsed: NotchBundle;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(notchAttachment.data));
+    } catch {
+      throw new Error(`[${fileName}] Invalid Notch data: attachment is not valid JSON.`);
+    }
+
+    const { document: doc, chunks } = parsed;
     const index = await getDocIndex();
     if (index.includes(doc.id)) {
       log.warn('storage', `Document ${doc.id} already exists, overwriting...`);
@@ -76,23 +69,19 @@ export async function importNotchPDF(file: File): Promise<string> {
       await saveDocIndex([doc.id, ...index]);
     }
 
-    // 1. Save full document and metadata
     await saveDocument(doc);
-
-    // 2. Save chunks
     for (const chunk of chunks) {
       await saveChunk(chunk);
-    }
-
-    // 3. Save embeddings (convert back to Float32Array)
-    for (const emb of embeddings) {
-      await saveEmbedding(emb.id, doc.id, new Float32Array(emb.vector));
     }
 
     log.success('storage', `Successfully imported "${doc.title}" from PDF`);
     return doc.id;
   } catch (err) {
-    log.error('storage', 'Failed to import PDF', err);
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.startsWith(`[${fileName}]`)) {
+      log.error('storage', `Failed to import PDF "${fileName}": ${msg}`, err);
+      throw new Error(`[${fileName}] ${msg}`);
+    }
     throw err;
   }
 }

@@ -1,33 +1,44 @@
-import type { Document, DocumentMeta, Folder, Settings, TagColorMap, ViewMode } from './types';
+import type { Document, DocumentMeta, Folder, Settings, TagColorMap, ViewMode, AppearanceSettings } from './types';
 import { deleteDocumentFromIDB, saveDocumentToIDB, getDocumentFromIDB } from './idb';
 import { browser } from 'wxt/browser';
 import { log } from './logger';
 
-// ── Storage keys (storage.local holds only settings + metas) ─────────────────
 const KEYS = {
-  settings:  'notch:settings',
-  docIndex:  'notch:doc:index',
-  folders:   'notch:folders',
+  settings: 'notch:settings',
+  docIndex: 'notch:doc:index',
+  folders: 'notch:folders',
   tagColors: 'notch:tag-colors',
-  viewMode:  'notch:view-mode',
-  meta:      (id: string) => `notch:meta:${id}`,
-  // Legacy key — kept for backward-compat migration only
+  viewMode: 'notch:view-mode',
+  appearance: 'notch:appearance',
+  meta: (id: string) => `notch:meta:${id}`,
   legacyDoc: (id: string) => `notch:doc:${id}`,
 } as const;
 
 const DEFAULT_SETTINGS: Settings = {
-  provider: 'offline',
-  ollamaEndpoint: 'http://localhost:11434',
+  apiKey: '',
+  provider: 'anthropic',
+  baseUrl: '',
+  modelId: 'claude-3-5-sonnet-20241022',
   defaultMode: 'FAST',
-  ollamaModel: 'llama3',
-  apiKeys: {},
 };
 
-// ── Warm cache (session storage → in-memory fallback) ─────────────────────────
+const FALLBACK_MODELS: Record<string, string> = {
+  anthropic: 'claude-3-5-sonnet-20241022',
+  'openai-compatible': 'openai/gpt-4o',
+  offline: 'local',
+};
+
+const DEFAULT_APPEARANCE: AppearanceSettings = {
+  theme: 'dark',
+  fontFamily: 'mono',
+  fontSize: 'md',
+  accentColor: '#e07c3a',
+};
+
+// ── Warm cache ────────────────────────────────────────────────────────────────
+
 const CACHE_KEY = 'notch:meta:cache';
 const CACHE_SIZE = 20;
-
-// In-memory fallback for browsers without storage.session (e.g. Firefox MV2)
 let _memCache: DocumentMeta[] | null = null;
 
 async function readCache(): Promise<DocumentMeta[] | null> {
@@ -59,39 +70,51 @@ async function invalidateCache(): Promise<void> {
   } catch { /* session not available */ }
 }
 
-// ── Derive meta from a full document ─────────────────────────────────────────
+// ── Derive meta from full document ─────────────────────────────────────────────
+
 export function deriveDocumentMeta(doc: Document): DocumentMeta {
   return {
-    id:         doc.id,
-    title:      doc.title,
-    url:        doc.url,
-    domain:     doc.domain,
+    id: doc.id,
+    title: doc.title,
+    url: doc.url,
+    domain: doc.domain,
     capturedAt: doc.capturedAt,
-    wordCount:  doc.wordCount,
-    summary:    doc.summary,
-    tags:       doc.tags,
-    folder:     doc.folder,
-    isStarred:  doc.isStarred,
+    wordCount: doc.wordCount,
+    summary: doc.summary,
+    tags: doc.tags,
+    folder: doc.folder,
+    isStarred: doc.isStarred,
     isArchived: doc.isArchived,
-    isRead:     doc.isRead,
-    mode:       doc.mode,
-    provider:   doc.provider,
+    isRead: doc.isRead,
+    mode: doc.mode,
+    provider: doc.provider,
   };
 }
 
-// ── Settings ──────────────────────────────────────────────────────────────────
+// ── Settings ─────────────────────────────────────────────────────────────────
 
 export async function getSettings(): Promise<Settings> {
   const result = await browser.storage.local.get(KEYS.settings);
   const saved = (result[KEYS.settings] as Partial<Settings> | undefined) ?? {};
-  return {
-    ...DEFAULT_SETTINGS,
-    ...saved,
-    apiKeys: {
-      ...DEFAULT_SETTINGS.apiKeys,
-      ...(saved.apiKeys ?? {}),
-    },
-  };
+  const settings = { ...DEFAULT_SETTINGS, ...saved };
+
+  // Apply fallback model based on provider if current model is invalid
+  if (settings.provider === 'anthropic') {
+    // Anthropic uses direct API, model should be claude-* format
+    if (!settings.modelId.startsWith('claude-') && settings.modelId !== 'custom') {
+      settings.modelId = FALLBACK_MODELS.anthropic;
+    }
+  } else if (settings.provider === 'openai-compatible') {
+    // OpenAI compatible uses provider format like "openai/gpt-4o"
+    // If model is empty or looks like anthropic direct, reset
+    if (!settings.modelId || settings.modelId.startsWith('claude-')) {
+      settings.modelId = FALLBACK_MODELS['openai-compatible'];
+    }
+  } else if (settings.provider === 'offline') {
+    settings.modelId = 'local';
+  }
+
+  return settings;
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
@@ -120,7 +143,7 @@ export async function getDocumentMeta(id: string): Promise<DocumentMeta | null> 
   const result = await browser.storage.local.get(key);
   if (result[key]) return result[key] as DocumentMeta;
 
-  // Backward-compat: derive from legacy full doc in storage.local
+  // Backward-compat: derive from legacy doc in storage.local
   const legacyKey = KEYS.legacyDoc(id);
   const legacyResult = await browser.storage.local.get(legacyKey);
   if (legacyResult[legacyKey]) {
@@ -131,7 +154,7 @@ export async function getDocumentMeta(id: string): Promise<DocumentMeta | null> 
     return meta;
   }
 
-  // Try IndexedDB (new path)
+  // Try IndexedDB
   const idbDoc = await getDocumentFromIDB(id);
   if (idbDoc) {
     const meta = deriveDocumentMeta(idbDoc);
@@ -142,25 +165,18 @@ export async function getDocumentMeta(id: string): Promise<DocumentMeta | null> 
   return null;
 }
 
-/**
- * Load all metas for the given IDs.
- * Checks warm cache first for the first CACHE_SIZE entries.
- */
 export async function getDocumentMetas(ids: string[]): Promise<DocumentMeta[]> {
   if (ids.length === 0) return [];
 
-  // Try warm cache for the first page
   const cached = await readCache();
   if (cached && cached.length > 0) {
     const cachedIds = new Set(cached.map(m => m.id));
     const allCached = ids.slice(0, CACHE_SIZE).every(id => cachedIds.has(id));
     if (allCached && ids.length <= CACHE_SIZE) {
-      log.info('storage', `Serving ${cached.length} metas from warm cache`);
       return ids.map(id => cached.find(m => m.id === id)!).filter(Boolean);
     }
   }
 
-  // Load from storage.local in one batch call
   const keys = ids.map(id => KEYS.meta(id));
   const result = await browser.storage.local.get(keys);
 
@@ -169,77 +185,57 @@ export async function getDocumentMetas(ids: string[]): Promise<DocumentMeta[]> {
 
   for (const id of ids) {
     const meta = result[KEYS.meta(id)] as DocumentMeta | undefined;
-    if (meta) {
-      metas.push(meta);
-    } else {
-      missing.push(id);
-    }
+    if (meta) metas.push(meta);
+    else missing.push(id);
   }
 
-  // Hydrate any missing metas from full docs (backward compat)
   if (missing.length > 0) {
     log.info('storage', `Hydrating ${missing.length} missing metas`);
     for (const id of missing) {
-      const meta = await getDocumentMeta(id); // handles legacy + IDB
+      const meta = await getDocumentMeta(id);
       if (meta) metas.push(meta);
     }
   }
 
-  // Sort to match original index order
   const idOrder = new Map(ids.map((id, i) => [id, i]));
   metas.sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
-
-  // Warm the cache with the first CACHE_SIZE
   await writeCache(metas.slice(0, CACHE_SIZE));
 
   return metas;
 }
 
-// ── Full documents (IndexedDB) ────────────────────────────────────────────────
+// ── Full documents ─────────────────────────────────────────────────────────────
 
 export async function getDocument(id: string): Promise<Document | null> {
-  // Try IndexedDB first (new path)
   const idbDoc = await getDocumentFromIDB(id);
   if (idbDoc) return idbDoc;
 
-  // Backward-compat: fall back to storage.local legacy key
   const legacyKey = KEYS.legacyDoc(id);
   const result = await browser.storage.local.get(legacyKey);
   return (result[legacyKey] as Document) ?? null;
 }
 
 export async function saveDocument(doc: Document): Promise<void> {
-  // Full doc → IndexedDB
   await saveDocumentToIDB(doc);
-
-  // Meta → storage.local (tiny, fast)
   const meta = deriveDocumentMeta(doc);
   await saveDocumentMeta(meta);
-
-  // Invalidate warm cache so next library open gets fresh data
   await invalidateCache();
-
   log.success('storage', `Saved doc + meta for ${doc.id}`);
 }
 
 export async function deleteDocumentFromStorage(id: string): Promise<void> {
   const index = await getDocIndex();
-  // Remove meta from storage.local
   await browser.storage.local.remove([KEYS.meta(id), KEYS.legacyDoc(id)]);
-  await saveDocIndex(index.filter((i) => i !== id));
+  await saveDocIndex(index.filter(i => i !== id));
   await invalidateCache();
 }
 
 export async function deleteDocument(id: string): Promise<void> {
   await deleteDocumentFromStorage(id);
-  await deleteDocumentFromIDB(id); // removes doc + chunks + embeddings
+  await deleteDocumentFromIDB(id);
   log.success('storage', `Deleted document ${id}`);
 }
 
-/**
- * Update only the meta fields that change on star/archive/read mutations.
- * Avoids loading the full document from IDB just to flip a boolean.
- */
 export async function updateDocumentMeta(
   id: string,
   patch: Partial<Pick<DocumentMeta, 'isStarred' | 'isArchived' | 'isRead' | 'tags' | 'folder'>>,
@@ -250,14 +246,13 @@ export async function updateDocumentMeta(
   await saveDocumentMeta(updated);
   await invalidateCache();
 
-  // Also patch the full doc in IDB so they stay in sync
   const doc = await getDocumentFromIDB(id);
   if (doc) {
     await saveDocumentToIDB({ ...doc, ...patch });
   }
 }
 
-// ── Quota monitoring (navigator.storage.estimate — works in both browsers) ───
+// ── Quota monitoring ──────────────────────────────────────────────────────────
 
 export async function checkStorageQuota(): Promise<void> {
   try {
@@ -279,7 +274,7 @@ export async function checkStorageQuota(): Promise<void> {
   }
 }
 
-// ── Folder CRUD ────────────────────────────────────────────────────────────────────────────────
+// ── Folders ───────────────────────────────────────────────────────────────────
 
 export async function getFolders(): Promise<Folder[]> {
   const result = await browser.storage.local.get(KEYS.folders);
@@ -297,7 +292,6 @@ export async function saveFolder(folder: Folder): Promise<void> {
 export async function deleteFolder(folderId: string): Promise<void> {
   const folders = await getFolders();
   await browser.storage.local.set({ [KEYS.folders]: folders.filter(f => f.id !== folderId) });
-  // Move documents from deleted folder to unorganised root (undefined)
   await moveFolderDocuments(folderId, undefined);
 }
 
@@ -309,10 +303,7 @@ export async function renameFolder(id: string, newName: string): Promise<void> {
   await browser.storage.local.set({ [KEYS.folders]: folders });
 }
 
-export async function moveFolderDocuments(
-  fromFolderId: string,
-  toFolderId: string | undefined,
-): Promise<void> {
+export async function moveFolderDocuments(fromFolderId: string, toFolderId: string | undefined): Promise<void> {
   const index = await getDocIndex();
   const keys = index.map(id => KEYS.meta(id));
   const result = await browser.storage.local.get(keys);
@@ -327,7 +318,7 @@ export async function moveFolderDocuments(
   await invalidateCache();
 }
 
-// ── Tag color map ─────────────────────────────────────────────────────────────
+// ── Tag colors ───────────────────────────────────────────────────────────────
 
 export async function getTagColors(): Promise<TagColorMap> {
   const result = await browser.storage.local.get(KEYS.tagColors);
@@ -336,23 +327,30 @@ export async function getTagColors(): Promise<TagColorMap> {
 
 export async function setTagColor(tag: string, color: string | null): Promise<void> {
   const map = await getTagColors();
-  if (color === null) {
-    delete map[tag];
-  } else {
-    map[tag] = color;
-  }
+  if (color === null) delete map[tag];
+  else map[tag] = color;
   await browser.storage.local.set({ [KEYS.tagColors]: map });
 }
 
-// ── View mode persistence ─────────────────────────────────────────────────────
-
-const DEFAULT_VIEW_MODE: ViewMode = 'comfortable';
+// ── View mode ─────────────────────────────────────────────────────────────────
 
 export async function getViewMode(): Promise<ViewMode> {
   const result = await browser.storage.local.get(KEYS.viewMode);
-  return (result[KEYS.viewMode] as ViewMode) ?? DEFAULT_VIEW_MODE;
+  return (result[KEYS.viewMode] as ViewMode) ?? 'comfortable';
 }
 
 export async function saveViewMode(mode: ViewMode): Promise<void> {
   await browser.storage.local.set({ [KEYS.viewMode]: mode });
+}
+
+// ── Appearance ─────────────────────────────────────────────────────────────────
+
+export async function getAppearance(): Promise<AppearanceSettings> {
+  const result = await browser.storage.local.get(KEYS.appearance);
+  const saved = result[KEYS.appearance] as Partial<AppearanceSettings> | undefined;
+  return { ...DEFAULT_APPEARANCE, ...saved };
+}
+
+export async function saveAppearance(settings: AppearanceSettings): Promise<void> {
+  await browser.storage.local.set({ [KEYS.appearance]: settings });
 }
