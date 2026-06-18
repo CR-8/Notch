@@ -10,7 +10,7 @@ import { sanitizeUserInput, sanitizeHtml, ReassemblyBuffer } from '@/lib/sanitiz
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Message {
-  role: 'user' | 'notch';
+  role: 'user' | 'assistant';
   text: string;
   citations?: Citation[];
   isError?: boolean;
@@ -385,16 +385,16 @@ export function ChatPanel({ doc, prefillQuery, leftPaneRef, folderColor }: ChatP
       setIsThinking(false);
 
       if (response.type === 'RAG_ERROR') {
-        setMessages((prev) => [...prev, { role: 'notch', text: '', isError: true }]);
+        setMessages((prev) => [...prev, { role: 'assistant', text: '', isError: true }]);
       } else {
         setMessages((prev) => [
           ...prev,
-          { role: 'notch', text: response.payload.answer, citations: response.payload.citations },
+          { role: 'assistant', text: response.payload.answer, citations: response.payload.citations },
         ]);
       }
     } catch {
       setIsThinking(false);
-      setMessages((prev) => [...prev, { role: 'notch', text: '', isError: true }]);
+      setMessages((prev) => [...prev, { role: 'assistant', text: '', isError: true }]);
     }
   }, [doc.id]);
 

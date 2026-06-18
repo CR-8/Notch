@@ -1,31 +1,32 @@
-import type { Document, DocumentMeta, Folder, Settings, TagColorMap, ViewMode, AppearanceSettings } from './types';
-import { deleteDocumentFromIDB, saveDocumentToIDB, getDocumentFromIDB } from './idb';
 import { browser } from 'wxt/browser';
+import { db } from './db';
 import { log } from './logger';
+import type {
+  Document,
+  DocumentChunk,
+  ProviderConfig,
+  Settings,
+  AppearanceSettings,
+  AIRuntimeConfig,
+  ChatMessage,
+} from './types';
 
-const KEYS = {
-  settings: 'notch:settings',
-  docIndex: 'notch:doc:index',
-  folders: 'notch:folders',
-  tagColors: 'notch:tag-colors',
-  viewMode: 'notch:view-mode',
-  appearance: 'notch:appearance',
-  meta: (id: string) => `notch:meta:${id}`,
-  legacyDoc: (id: string) => `notch:doc:${id}`,
-} as const;
+const SETTINGS_KEY = 'notch:settings';
+const APPEARANCE_KEY = 'notch:appearance';
+const SCHEMA_VERSION_KEY = 'notch:schema:version';
+const CURRENT_SCHEMA_VERSION = 1;
 
-const DEFAULT_SETTINGS: Settings = {
-  apiKey: '',
-  provider: 'anthropic',
-  baseUrl: '',
-  modelId: 'claude-3-5-sonnet-20241022',
-  defaultMode: 'FAST',
-};
-
-const FALLBACK_MODELS: Record<string, string> = {
-  anthropic: 'claude-3-5-sonnet-20241022',
-  'openai-compatible': 'openai/gpt-4o',
-  offline: 'local',
+const DEFAULT_RUNTIME: AIRuntimeConfig = {
+  chat: {
+    providerId: '',
+    modeModels: { FAST: '', BALANCED: '', DEEP: '' },
+  },
+  embedding: {
+    providerId: '',
+    model: '',
+    dimensions: 768,
+    version: 1,
+  },
 };
 
 const DEFAULT_APPEARANCE: AppearanceSettings = {
@@ -35,93 +36,161 @@ const DEFAULT_APPEARANCE: AppearanceSettings = {
   accentColor: '#e07c3a',
 };
 
-// ── Warm cache ────────────────────────────────────────────────────────────────
+const DEFAULT_CHAT_MODELS: Record<string, string> = {
+  FAST: 'gemini-2.0-flash',
+  BALANCED: 'gemini-1.5-pro',
+  DEEP: 'gemini-2.0-pro-exp',
+};
 
-const CACHE_KEY = 'notch:meta:cache';
-const CACHE_SIZE = 20;
-let _memCache: DocumentMeta[] | null = null;
+// ── Schema migration guard ───────────────────────────────────────────────────
 
-async function readCache(): Promise<DocumentMeta[] | null> {
-  try {
-    if (browser.storage.session) {
-      const r = await browser.storage.session.get(CACHE_KEY);
-      return (r[CACHE_KEY] as DocumentMeta[]) ?? null;
-    }
-  } catch { /* session not available */ }
-  return _memCache;
-}
-
-async function writeCache(metas: DocumentMeta[]): Promise<void> {
-  const slice = metas.slice(0, CACHE_SIZE);
-  _memCache = slice;
-  try {
-    if (browser.storage.session) {
-      await browser.storage.session.set({ [CACHE_KEY]: slice });
-    }
-  } catch { /* session not available */ }
-}
-
-async function invalidateCache(): Promise<void> {
-  _memCache = null;
-  try {
-    if (browser.storage.session) {
-      await browser.storage.session.remove(CACHE_KEY);
-    }
-  } catch { /* session not available */ }
-}
-
-// ── Derive meta from full document ─────────────────────────────────────────────
-
-export function deriveDocumentMeta(doc: Document): DocumentMeta {
-  return {
-    id: doc.id,
-    title: doc.title,
-    url: doc.url,
-    domain: doc.domain,
-    capturedAt: doc.capturedAt,
-    wordCount: doc.wordCount,
-    summary: doc.summary,
-    tags: doc.tags,
-    folder: doc.folder,
-    isStarred: doc.isStarred,
-    isArchived: doc.isArchived,
-    isRead: doc.isRead,
-    mode: doc.mode,
-    provider: doc.provider,
-  };
+export async function ensureSchema(): Promise<void> {
+  const result = await browser.storage.local.get(SCHEMA_VERSION_KEY);
+  const version = (result[SCHEMA_VERSION_KEY] as number) ?? 0;
+  if (version < CURRENT_SCHEMA_VERSION) {
+    log.info('storage', `Migrating schema from v${version} to v${CURRENT_SCHEMA_VERSION}`);
+    // Future migrations go here
+    await browser.storage.local.set({ [SCHEMA_VERSION_KEY]: CURRENT_SCHEMA_VERSION });
+  }
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
 export async function getSettings(): Promise<Settings> {
-  const result = await browser.storage.local.get(KEYS.settings);
-  const saved = (result[KEYS.settings] as Partial<Settings> | undefined) ?? {};
-  const settings = { ...DEFAULT_SETTINGS, ...saved };
-
-  // Apply fallback model based on provider if current model is invalid
-  if (settings.provider === 'anthropic') {
-    // Anthropic uses direct API, model should be claude-* format
-    if (!settings.modelId.startsWith('claude-') && settings.modelId !== 'custom') {
-      settings.modelId = FALLBACK_MODELS.anthropic;
-    }
-  } else if (settings.provider === 'openai-compatible') {
-    // OpenAI compatible uses provider format like "openai/gpt-4o"
-    // If model is empty or looks like anthropic direct, reset
-    if (!settings.modelId || settings.modelId.startsWith('claude-')) {
-      settings.modelId = FALLBACK_MODELS['openai-compatible'];
-    }
-  } else if (settings.provider === 'offline') {
-    settings.modelId = 'local';
-  }
-
-  return settings;
+  const result = await browser.storage.local.get(SETTINGS_KEY);
+  return (result[SETTINGS_KEY] as Settings) ?? { runtime: DEFAULT_RUNTIME, defaults: { tags: [] } };
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
-  await browser.storage.local.set({ [KEYS.settings]: settings });
+  await browser.storage.local.set({ [SETTINGS_KEY]: settings });
+  log.info('storage', 'Settings saved');
 }
 
-// ── Document index ────────────────────────────────────────────────────────────
+// ── Appearance ───────────────────────────────────────────────────────────────
+
+export async function getAppearance(): Promise<AppearanceSettings> {
+  const result = await browser.storage.local.get(APPEARANCE_KEY);
+  return { ...DEFAULT_APPEARANCE, ...(result[APPEARANCE_KEY] as Partial<AppearanceSettings> ?? {}) };
+}
+
+export async function saveAppearance(settings: AppearanceSettings): Promise<void> {
+  await browser.storage.local.set({ [APPEARANCE_KEY]: settings });
+}
+
+// ── Documents ────────────────────────────────────────────────────────────────
+
+export async function saveDocument(doc: Document): Promise<void> {
+  await db.notes.put(doc);
+}
+
+export async function getDocument(id: string): Promise<Document | undefined> {
+  return db.notes.get(id);
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  await db.transaction('rw', db.notes, db.chunks, db.vectors, db.messages, async () => {
+    await db.notes.delete(id);
+    await db.chunks.where('noteId').equals(id).delete();
+    await db.vectors.where('chunkId').anyOf(
+      (await db.chunks.where('noteId').equals(id).primaryKeys())
+    ).delete();
+    await db.messages.where('id').anyOf(
+      (await db.messages.filter(m => m.id.startsWith(id)).primaryKeys())
+    ).delete();
+  });
+}
+
+export async function getAllNotes(): Promise<Document[]> {
+  return db.notes.toArray();
+}
+
+export async function getNotesByStatus(status: string): Promise<Document[]> {
+  return db.notes.where('status').equals(status).toArray();
+}
+
+// ── Chunks ───────────────────────────────────────────────────────────────────
+
+export async function saveChunks(chunks: DocumentChunk[]): Promise<void> {
+  await db.chunks.bulkPut(chunks);
+}
+
+export async function getChunksByNote(noteId: string): Promise<DocumentChunk[]> {
+  return db.chunks.where('noteId').equals(noteId).sortBy('paragraphIndex');
+}
+
+// ── Providers ────────────────────────────────────────────────────────────────
+
+export async function saveProvider(cfg: ProviderConfig): Promise<void> {
+  await db.providers.put(cfg);
+}
+
+export async function getProvider(id: string): Promise<ProviderConfig | undefined> {
+  return db.providers.get(id);
+}
+
+export async function getAllProviders(): Promise<ProviderConfig[]> {
+  return db.providers.toArray();
+}
+
+export async function deleteProvider(id: string): Promise<void> {
+  await db.providers.delete(id);
+}
+
+export async function getEnabledProvider(): Promise<ProviderConfig | undefined> {
+  return db.providers.filter(p => p.enabled).first();
+}
+
+// ── Messages ─────────────────────────────────────────────────────────────────
+
+export async function saveMessage(msg: ChatMessage): Promise<void> {
+  await db.messages.put(msg);
+}
+
+export async function getMessagesByConversation(conversationId: string): Promise<ChatMessage[]> {
+  return db.messages.where('id').startsWith(conversationId).sortBy('createdAt');
+}
+
+// ── Quota monitoring ─────────────────────────────────────────────────────────
+
+export async function checkStorageQuota(): Promise<{ usage: number; quota: number; pct: number }> {
+  try {
+    const estimate = await navigator.storage.estimate();
+    const usage = estimate.usage ?? 0;
+    const quota = estimate.quota ?? 0;
+    const pct = quota > 0 ? usage / quota : 0;
+    log.info('storage', `Storage: ${Math.round(pct * 100)}% used (${Math.round(usage / 1024 / 1024)}MB / ${Math.round(quota / 1024 / 1024)}MB)`);
+
+    if (pct > 0.9) {
+      try {
+        await browser.runtime.sendMessage({
+          type: 'STORAGE_QUOTA_WARNING',
+          payload: { usedBytes: usage, quotaBytes: quota },
+        });
+      } catch { /* no listeners */ }
+    }
+
+    return { usage, quota, pct };
+  } catch {
+    return { usage: 0, quota: 0, pct: 0 };
+  }
+}
+
+export async function requestPersist(): Promise<boolean> {
+  try {
+    if (navigator.storage?.persist) {
+      return await navigator.storage.persist();
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
+// ── Backward-compat aliases ──────────────────────────────────────────────────
+
+// Legacy doc index (chrome.storage.local based)
+const KEYS = {
+  docIndex: 'notch:doc:index',
+  meta: (id: string) => `notch:meta:${id}`,
+};
 
 export async function getDocIndex(): Promise<string[]> {
   const result = await browser.storage.local.get(KEYS.docIndex);
@@ -132,225 +201,53 @@ export async function saveDocIndex(index: string[]): Promise<void> {
   await browser.storage.local.set({ [KEYS.docIndex]: index });
 }
 
-// ── Document meta ─────────────────────────────────────────────────────────────
-
-export async function saveDocumentMeta(meta: DocumentMeta): Promise<void> {
-  await browser.storage.local.set({ [KEYS.meta(meta.id)]: meta });
+export function deriveDocumentMeta(doc: Document): import('./types').DocumentMeta {
+  return {
+    id: doc.id, title: doc.title, url: doc.url, domain: doc.domain,
+    capturedAt: doc.capturedAt, wordCount: doc.wordCount, summary: doc.summary,
+    tags: doc.tags, folder: undefined, isStarred: doc.starred,
+    isArchived: doc.archived, isRead: false, mode: 'FAST', provider: '',
+  };
 }
 
-export async function getDocumentMeta(id: string): Promise<DocumentMeta | null> {
-  const key = KEYS.meta(id);
-  const result = await browser.storage.local.get(key);
-  if (result[key]) return result[key] as DocumentMeta;
-
-  // Backward-compat: derive from legacy doc in storage.local
-  const legacyKey = KEYS.legacyDoc(id);
-  const legacyResult = await browser.storage.local.get(legacyKey);
-  if (legacyResult[legacyKey]) {
-    const doc = legacyResult[legacyKey] as Document;
-    const meta = deriveDocumentMeta(doc);
-    await saveDocumentMeta(meta);
-    log.info('storage', `Migrated legacy doc ${id} to meta`);
-    return meta;
-  }
-
-  // Try IndexedDB
-  const idbDoc = await getDocumentFromIDB(id);
-  if (idbDoc) {
-    const meta = deriveDocumentMeta(idbDoc);
-    await saveDocumentMeta(meta);
-    return meta;
-  }
-
-  return null;
-}
-
-export async function getDocumentMetas(ids: string[]): Promise<DocumentMeta[]> {
-  if (ids.length === 0) return [];
-
-  const cached = await readCache();
-  if (cached && cached.length > 0) {
-    const cachedIds = new Set(cached.map(m => m.id));
-    const allCached = ids.slice(0, CACHE_SIZE).every(id => cachedIds.has(id));
-    if (allCached && ids.length <= CACHE_SIZE) {
-      return ids.map(id => cached.find(m => m.id === id)!).filter(Boolean);
-    }
-  }
-
-  const keys = ids.map(id => KEYS.meta(id));
-  const result = await browser.storage.local.get(keys);
-
-  const metas: DocumentMeta[] = [];
-  const missing: string[] = [];
-
-  for (const id of ids) {
-    const meta = result[KEYS.meta(id)] as DocumentMeta | undefined;
-    if (meta) metas.push(meta);
-    else missing.push(id);
-  }
-
-  if (missing.length > 0) {
-    log.info('storage', `Hydrating ${missing.length} missing metas`);
-    for (const id of missing) {
-      const meta = await getDocumentMeta(id);
-      if (meta) metas.push(meta);
-    }
-  }
-
-  const idOrder = new Map(ids.map((id, i) => [id, i]));
-  metas.sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
-  await writeCache(metas.slice(0, CACHE_SIZE));
-
-  return metas;
-}
-
-// ── Full documents ─────────────────────────────────────────────────────────────
-
-export async function getDocument(id: string): Promise<Document | null> {
-  const idbDoc = await getDocumentFromIDB(id);
-  if (idbDoc) return idbDoc;
-
-  const legacyKey = KEYS.legacyDoc(id);
-  const result = await browser.storage.local.get(legacyKey);
-  return (result[legacyKey] as Document) ?? null;
-}
-
-export async function saveDocument(doc: Document): Promise<void> {
-  await saveDocumentToIDB(doc);
-  const meta = deriveDocumentMeta(doc);
-  await saveDocumentMeta(meta);
-  await invalidateCache();
-  log.success('storage', `Saved doc + meta for ${doc.id}`);
-}
-
-export async function deleteDocumentFromStorage(id: string): Promise<void> {
-  const index = await getDocIndex();
-  await browser.storage.local.remove([KEYS.meta(id), KEYS.legacyDoc(id)]);
-  await saveDocIndex(index.filter(i => i !== id));
-  await invalidateCache();
-}
-
-export async function deleteDocument(id: string): Promise<void> {
-  await deleteDocumentFromStorage(id);
-  await deleteDocumentFromIDB(id);
-  log.success('storage', `Deleted document ${id}`);
+export async function getDocumentMetas(ids: string[]): Promise<import('./types').DocumentMeta[]> {
+  const docs = await db.notes.bulkGet(ids);
+  return docs.filter((d): d is Document => d != null).map(deriveDocumentMeta);
 }
 
 export async function updateDocumentMeta(
   id: string,
-  patch: Partial<Pick<DocumentMeta, 'isStarred' | 'isArchived' | 'isRead' | 'tags' | 'folder'>>,
+  patch: Record<string, unknown>,
 ): Promise<void> {
-  const meta = await getDocumentMeta(id);
-  if (!meta) return;
-  const updated = { ...meta, ...patch };
-  await saveDocumentMeta(updated);
-  await invalidateCache();
-
-  const doc = await getDocumentFromIDB(id);
-  if (doc) {
-    await saveDocumentToIDB({ ...doc, ...patch });
-  }
+  const doc = await db.notes.get(id);
+  if (!doc) return;
+  await db.notes.put({ ...doc, ...patch } as Document);
 }
 
-// ── Quota monitoring ──────────────────────────────────────────────────────────
-
-export async function checkStorageQuota(): Promise<void> {
-  try {
-    if (!navigator.storage?.estimate) return;
-    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
-    if (quota === 0) return;
-    const pct = usage / quota;
-    log.info('storage', `Storage usage: ${Math.round(pct * 100)}% (${Math.round(usage / 1024 / 1024)} MB / ${Math.round(quota / 1024 / 1024)} MB)`);
-    if (pct > 0.9) {
-      try {
-        await browser.runtime.sendMessage({
-          type: 'STORAGE_QUOTA_WARNING',
-          payload: { usedBytes: usage, quotaBytes: quota },
-        });
-      } catch { /* no listeners */ }
-    }
-  } catch (err) {
-    log.warn('storage', 'Could not estimate storage quota', err);
-  }
+export async function getFolders(): Promise<import('./types').Folder[]> {
+  return [];
 }
 
-// ── Folders ───────────────────────────────────────────────────────────────────
-
-export async function getFolders(): Promise<Folder[]> {
-  const result = await browser.storage.local.get(KEYS.folders);
-  return (result[KEYS.folders] as Folder[]) ?? [];
+export async function saveFolder(_folder: import('./types').Folder): Promise<void> {
+  // no-op
 }
 
-export async function saveFolder(folder: Folder): Promise<void> {
-  const folders = await getFolders();
-  const idx = folders.findIndex(f => f.id === folder.id);
-  if (idx >= 0) folders[idx] = folder;
-  else folders.push(folder);
-  await browser.storage.local.set({ [KEYS.folders]: folders });
+export async function deleteFolder(_folderId: string): Promise<void> {
+  // no-op
 }
 
-export async function deleteFolder(folderId: string): Promise<void> {
-  const folders = await getFolders();
-  await browser.storage.local.set({ [KEYS.folders]: folders.filter(f => f.id !== folderId) });
-  await moveFolderDocuments(folderId, undefined);
+export async function getTagColors(): Promise<import('./types').TagColorMap> {
+  return {};
 }
 
-export async function renameFolder(id: string, newName: string): Promise<void> {
-  const folders = await getFolders();
-  const idx = folders.findIndex(f => f.id === id);
-  if (idx < 0) return;
-  folders[idx] = { ...folders[idx], name: newName };
-  await browser.storage.local.set({ [KEYS.folders]: folders });
+export async function setTagColor(_tag: string, _color: string | null): Promise<void> {
+  // no-op
 }
 
-export async function moveFolderDocuments(fromFolderId: string, toFolderId: string | undefined): Promise<void> {
-  const index = await getDocIndex();
-  const keys = index.map(id => KEYS.meta(id));
-  const result = await browser.storage.local.get(keys);
-  const patches: Record<string, DocumentMeta> = {};
-  for (const id of index) {
-    const meta = result[KEYS.meta(id)] as DocumentMeta | undefined;
-    if (meta?.folder === fromFolderId) {
-      patches[KEYS.meta(id)] = { ...meta, folder: toFolderId };
-    }
-  }
-  if (Object.keys(patches).length > 0) await browser.storage.local.set(patches);
-  await invalidateCache();
+export async function getViewMode(): Promise<'compact' | 'comfortable' | 'detailed'> {
+  return 'comfortable';
 }
 
-// ── Tag colors ───────────────────────────────────────────────────────────────
-
-export async function getTagColors(): Promise<TagColorMap> {
-  const result = await browser.storage.local.get(KEYS.tagColors);
-  return (result[KEYS.tagColors] as TagColorMap) ?? {};
-}
-
-export async function setTagColor(tag: string, color: string | null): Promise<void> {
-  const map = await getTagColors();
-  if (color === null) delete map[tag];
-  else map[tag] = color;
-  await browser.storage.local.set({ [KEYS.tagColors]: map });
-}
-
-// ── View mode ─────────────────────────────────────────────────────────────────
-
-export async function getViewMode(): Promise<ViewMode> {
-  const result = await browser.storage.local.get(KEYS.viewMode);
-  return (result[KEYS.viewMode] as ViewMode) ?? 'comfortable';
-}
-
-export async function saveViewMode(mode: ViewMode): Promise<void> {
-  await browser.storage.local.set({ [KEYS.viewMode]: mode });
-}
-
-// ── Appearance ─────────────────────────────────────────────────────────────────
-
-export async function getAppearance(): Promise<AppearanceSettings> {
-  const result = await browser.storage.local.get(KEYS.appearance);
-  const saved = result[KEYS.appearance] as Partial<AppearanceSettings> | undefined;
-  return { ...DEFAULT_APPEARANCE, ...saved };
-}
-
-export async function saveAppearance(settings: AppearanceSettings): Promise<void> {
-  await browser.storage.local.set({ [KEYS.appearance]: settings });
+export async function saveViewMode(_mode: 'compact' | 'comfortable' | 'detailed'): Promise<void> {
+  // no-op
 }

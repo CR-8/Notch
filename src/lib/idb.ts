@@ -1,4 +1,4 @@
-import type { ChatMessageRecord, Document, DocumentChunk, DocumentHighlight } from './types';
+import type { ChatMessage, Document, DocumentChunk, DocumentHighlight } from './types';
 
 const DB_NAME = 'notch_db';
 const DB_VERSION = 5; // v5: added highlights store
@@ -114,7 +114,7 @@ export async function getChunksByDocument(documentId: string): Promise<DocumentC
     const req = tx.objectStore('chunks').index('documentId').getAll(documentId);
     req.onsuccess = () => {
       const chunks = req.result as DocumentChunk[];
-      chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+      chunks.sort((a, b) => a.paragraphIndex - b.paragraphIndex);
       resolve(chunks);
     };
     req.onerror = () => reject(req.error);
@@ -123,7 +123,7 @@ export async function getChunksByDocument(documentId: string): Promise<DocumentC
 
 // ── Chat history ─────────────────────────────────────────────────────────────
 
-export async function saveChatMessage(message: ChatMessageRecord): Promise<void> {
+export async function saveChatMessage(message: ChatMessage): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('chatHistory', 'readwrite');
@@ -133,13 +133,13 @@ export async function saveChatMessage(message: ChatMessageRecord): Promise<void>
   });
 }
 
-export async function getChatMessagesByDocument(documentId: string): Promise<ChatMessageRecord[]> {
+export async function getChatMessagesByDocument(documentId: string): Promise<ChatMessage[]> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('chatHistory', 'readonly');
     const req = tx.objectStore('chatHistory').index('documentId').getAll(documentId);
     req.onsuccess = () => {
-      const messages = (req.result as ChatMessageRecord[])
+      const messages = (req.result as ChatMessage[])
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       resolve(messages);
     };

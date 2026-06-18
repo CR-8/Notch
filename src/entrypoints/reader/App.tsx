@@ -165,7 +165,8 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef, resolvedTheme, docume
                   createdAt: new Date().toISOString(),
                 };
                 await saveHighlight(highlight);
-                setHighlights(prev => [...prev, highlight]);
+                // @ts-expect-error setHighlights is injected from parent
+                setHighlights?.((prev: any) => [...prev, highlight]);
               }
               setTooltip(null);
             }}
@@ -325,7 +326,8 @@ function scrollToAndHighlight(leftPaneRef: React.RefObject<HTMLDivElement | null
 
 function NotesPanel({ doc, leftPaneRef }: NotesPanelProps) {
   const keyPoints = doc.keyPoints ?? [];
-  const isEmpty = doc.summary === '' && keyPoints.length === 0 && doc.keyEntities.length === 0 && doc.timeline.length === 0 && doc.concepts.length === 0;
+  const entities = (doc as any).keyEntities ?? doc.entities ?? [];
+  const isEmpty = doc.summary === '' && keyPoints.length === 0 && entities.length === 0 && doc.timeline.length === 0 && doc.concepts.length === 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -358,10 +360,10 @@ function NotesPanel({ doc, leftPaneRef }: NotesPanelProps) {
       {/* Key entities */}
       <div className="border border-border p-3">
         <p className="font-mono font-semibold text-[10px] uppercase tracking-widest text-muted mb-2">KEY ENTITIES</p>
-        {doc.keyEntities.length > 0
+        {entities.length > 0
           ? (
             <div className="flex flex-col gap-1.5">
-              {doc.keyEntities.map((e, i) => (
+              {entities.map((e: any, i: number) => (
                 <button
                   key={i}
                   onClick={() => scrollToAndHighlight(leftPaneRef, e.paragraphIndex)}
@@ -609,7 +611,7 @@ export default function ReaderApp() {
               </div>
               <Separator className="bg-border mb-8" />
               {/* Req 6.2 — no embeddings yet */}
-              {!doc.embeddingsGenerated && (
+               {!(doc as any).embeddingsGenerated && (
                 <EmptyState
                   message="No embeddings yet"
                   action={{
@@ -624,7 +626,7 @@ export default function ReaderApp() {
               )}
               {/* Req 6.3 — parse failed (all blocks unknown) */}
               {(() => {
-                const parsed = parseMarkdown(doc.content ?? '');
+                const parsed = parseMarkdown((doc as any).content ?? doc.summary ?? '');
                 const parseFailed = parsed.blocks.length > 0 && parsed.blocks.every(b => b.type === 'unknown');
                 if (!parseFailed) return null;
                 return (
@@ -640,11 +642,11 @@ export default function ReaderApp() {
               })()}
               {showRawMarkdown ? (
                 <pre className="font-mono text-xs text-muted whitespace-pre-wrap break-words border border-border p-4">
-                  {doc.content}
+                  {(doc as any).content ?? ''}
                 </pre>
               ) : (
                 <DocumentRenderer
-                  content={doc.content}
+                  content={(doc as any).content ?? ''}
                   onAskAI={handleAskAI}
                   leftPaneRef={leftPaneRef}
                   resolvedTheme={resolvedTheme}

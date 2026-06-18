@@ -31,7 +31,7 @@ export default defineContentScript({
           url: window.location.href,
           domain: window.location.hostname,
           textContent: article?.textContent ?? readableText,
-          structuredHTML: article?.content ?? readableHtml,
+          cleanedHtml: article?.content ?? readableHtml,
           images,
           wordCount: (article?.textContent ?? readableText)
             .split(/\s+/).filter(Boolean).length,

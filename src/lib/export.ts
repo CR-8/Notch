@@ -337,7 +337,7 @@ export async function exportPDF(doc: Document, options: PDFExportOptions = {}): 
     page.drawText('DOC CONTENT', { x: margin, y: cursorY, size: 10, font: boldFont, color: rgb(0, 0, 0) });
     cursorY -= 14;
 
-    const markdownLines = doc.content.split(/\r?\n/);
+    const markdownLines = ((doc.content ?? doc.summary) || '').split(/\r?\n/);
     const paragraphBuffer: string[] = [];
     const codeBuffer: string[] = [];
     let inCodeBlock = false;
@@ -408,7 +408,7 @@ export async function exportPDF(doc: Document, options: PDFExportOptions = {}): 
       const chunks = await getChunksByDocument(doc.id);
       const bundle = {
         document: doc,
-        chunks: chunks.map(c => ({ id: c.id, documentId: c.documentId, chunkIndex: c.chunkIndex, text: c.text, paragraphIndex: c.paragraphIndex })),
+        chunks: chunks.map(c => ({ id: c.id, noteId: c.noteId, text: c.text, paragraphIndex: c.paragraphIndex })),
       };
 
       const attachmentData = JSON.stringify(bundle);

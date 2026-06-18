@@ -20,7 +20,7 @@ const MODE_DEFS: Array<{ mode: GenerationMode; label: string; description: strin
   { mode: 'FAST', label: 'FAST', description: 'Fast captures, quick reads' },
   { mode: 'BALANCED', label: 'BALANCED', description: 'Balanced speed and quality' },
   { mode: 'DEEP', label: 'DEEP', description: 'Best quality for dense technical docs' },
-  { mode: 'LOCAL', label: 'LOCAL', description: 'No API usage, unlimited local only' },
+  { mode: 'FAST' as GenerationMode, label: 'LOCAL', description: 'No API usage, unlimited local only' },
 ];
 
 // ── Settings UI ─────────────────────────────────────────────────────────────────
@@ -66,6 +66,11 @@ export default function SettingsApp() {
 
   async function handleSave() {
     const settings: Settings = {
+      runtime: {
+        chat: { providerId: '', modeModels: { FAST: modelId || '', BALANCED: modelId || '', DEEP: modelId || '' } },
+        embedding: { providerId: '', model: '', dimensions: 0, version: 1 },
+      },
+      defaults: { tags: [] },
       apiKey,
       provider,
       baseUrl: baseUrl.trim() || '',

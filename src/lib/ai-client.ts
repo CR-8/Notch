@@ -423,7 +423,7 @@ export async function sendCaptureRequest(
         ? content.slice(0, MAX_CAPTURE_CONTENT_CHARS)
         : content;
       const messages = buildMessages(singleContent);
-      const response = await callWithFallback(settings.baseUrl, models, messages, settings.apiKey, signal);
+      const response = await callWithFallback(settings.baseUrl!, models, messages, settings.apiKey!, signal);
       const sanitized = sanitizeAiResponse(response.content);
       return formatMarkdown(sanitized);
     }
@@ -435,7 +435,7 @@ export async function sendCaptureRequest(
         ? content.slice(0, MAX_CAPTURE_CONTENT_CHARS)
         : content;
       const messages = buildMessages(cappedContent);
-      const response = await callWithFallback(settings.baseUrl, models, messages, settings.apiKey, signal);
+      const response = await callWithFallback(settings.baseUrl!, models, messages, settings.apiKey!, signal);
       const sanitized = sanitizeAiResponse(response.content);
       return formatMarkdown(sanitized);
     }
@@ -451,7 +451,7 @@ export async function sendCaptureRequest(
 
       onProgress?.(i + 1, frames.length);
       const messages = buildMessages(cappedContent, frame);
-      const response = await callWithFallback(settings.baseUrl, models, messages, settings.apiKey, signal);
+      const response = await callWithFallback(settings.baseUrl!, models, messages, settings.apiKey!, signal);
       responses.push(response.content);
     }
 
@@ -489,12 +489,12 @@ export async function sendRAGRequest(
   ];
 
   const models = settings.modelId
-    ? [settings.modelId]
+    ? [settings.modelId!]
     : ['claude-3-5-sonnet-20241022', 'openai/gpt-4o'];
 
   const { signal, clear } = withTimeout(120_000);
   try {
-    const response = await callWithFallback(settings.baseUrl, models, messages, settings.apiKey, signal);
+    const response = await callWithFallback(settings.baseUrl!, models, messages, settings.apiKey!, signal);
     const sanitized = sanitizeAiResponse(response.content);
     return formatChatResponse(sanitized);
   } catch (err) {

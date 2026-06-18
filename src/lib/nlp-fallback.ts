@@ -68,7 +68,7 @@ function scoreTokens(
 
 export function rankChunksByKeywords(
   query: string,
-  chunks: Array<Pick<DocumentChunk, 'text' | 'paragraphIndex' | 'source'>>,
+  chunks: Array<{ text: string; paragraphIndex: number; source?: 'document' | 'history' }>,
   k = 5,
 ): Array<{ text: string; paragraphIndex: number; score: number; source: 'document' | 'history' }> {
   const queryTokens = tokenize(query);
