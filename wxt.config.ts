@@ -30,20 +30,14 @@ export default defineConfig({
     permissions: browser === 'firefox'
       ? ['storage', 'tabs', 'activeTab']
       : ['storage', 'tabs', 'activeTab', 'scripting'],
-    ...(browser === 'firefox'
-      ? {
-          content_security_policy: "script-src 'self'; object-src 'self'",
-          browser_specific_settings: {
-            gecko: {
-              id: 'notch@notch-extension',
-              strict_min_version: '109.0',
-            },
-          },
-        }
-      : {
-          content_security_policy: {
-            extension_pages: "script-src 'self'; object-src 'self'",
-          },
-        }),
+    content_security_policy: {
+      extension_pages: "script-src 'self'; object-src 'self'",
+    },
+    browser_specific_settings: {
+      gecko: {
+        id: 'notch@notch-extension',
+        strict_min_version: '109.0',
+      },
+    },
   }),
 });

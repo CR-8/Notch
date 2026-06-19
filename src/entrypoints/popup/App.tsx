@@ -1,26 +1,29 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { browser } from 'wxt/browser';
-import { getSettings, saveSettings, getAppearance, getAllProviders } from '../../lib/storage';
-import { PRESETS } from '../../lib/providers/registry';
-import type { GenerationMode, RuntimeMessage, ProviderConfig } from '../../lib/types';
+import { getSettings, getAllProviders, getAppearance } from '../../lib/storage';
+import type { GenerationMode, RuntimeMessage } from '../../lib/types';
+import { privacyLabel, shouldRunOffline } from '../../lib/privacy';
+import { applyAppearance, watchAppearance } from '../../lib/theme';
 import { cn } from '@/lib/utils';
 
 type CaptureState = 'idle' | 'loading' | 'success' | 'error';
 
-const MODES: { mode: GenerationMode; label: string; sub: string }[] = [
-  { mode: 'FAST',     label: 'FAST',     sub: 'Quick capture' },
-  { mode: 'BALANCED', label: 'BALANCED', sub: 'Quality + speed' },
-  { mode: 'DEEP',     label: 'DEEP',     sub: 'Best quality' },
+const MODES: { mode: GenerationMode; label: string; description: string }[] = [
+  { mode: 'FAST',     label: 'Fast',     description: 'Quick capture' },
+  { mode: 'BALANCED', label: 'Balanced', description: 'Quality + speed' },
+  { mode: 'DEEP',     label: 'Deep',     description: 'Best quality' },
 ];
 
 function StatusBar({ providerLabel, hasKey }: { providerLabel: string; hasKey: boolean }) {
   return (
-    <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background">
-      <span className="font-mono font-semibold text-xs uppercase tracking-widest text-white">NOTCH</span>
+    <div className="flex items-center justify-between px-4 py-2.5">
+      <span className="text-[15px] font-semibold tracking-tight text-[var(--color-ink)]">Notch</span>
       <div className="flex items-center gap-1.5">
-        <span className={cn('inline-block w-2 h-2', hasKey ? 'bg-primary' : 'bg-danger')} />
-        <span className={cn('font-mono text-[9px] uppercase tracking-wider', hasKey ? 'text-primary' : 'text-danger')}>
-          {hasKey ? providerLabel : 'NO KEY'}
+        <span
+          className={cn('inline-block w-2 h-2 rounded-full', hasKey ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-destructive)]')}
+        />
+        <span className={cn('text-[11px] font-medium', hasKey ? 'text-[var(--color-primary)]' : 'text-[var(--color-destructive)]')}>
+          {hasKey ? providerLabel : 'No key'}
         </span>
       </div>
     </div>
@@ -45,16 +48,16 @@ function PageContextZone() {
   }, []);
 
   return (
-    <div className="px-3 py-2.5 border-b border-border">
+    <div className="px-4 py-3 border-b border-[var(--color-hairline)]">
       {loading ? (
         <div className="space-y-1.5">
-          <div className="h-3 w-[70%] bg-surface animate-pulse rounded" />
-          <div className="h-2.5 w-[45%] bg-surface animate-pulse rounded" />
+          <div className="h-3 w-[70%] bg-[var(--color-hairline)] rounded-sm animate-pulse" />
+          <div className="h-2.5 w-[45%] bg-[var(--color-hairline)] rounded-sm animate-pulse" />
         </div>
       ) : (
         <>
-          <p className="font-mono text-[13px] text-white truncate">{title}</p>
-          <p className="font-mono text-[11px] text-muted uppercase mt-0.5">{domain}</p>
+          <p className="text-[14px] font-medium text-[var(--color-ink)] leading-snug truncate">{title}</p>
+          <p className="text-[12px] text-[var(--color-ink-muted)] mt-0.5 truncate">{domain}</p>
         </>
       )}
     </div>
@@ -63,20 +66,20 @@ function PageContextZone() {
 
 function ModeSelector({ mode, onModeChange }: { mode: GenerationMode; onModeChange: (m: GenerationMode) => void }) {
   return (
-    <div className="flex gap-1.5 px-3 py-2.5 border-b border-border">
+    <div className="flex gap-1.5 px-4 py-3 border-b border-[var(--color-hairline)]">
       {MODES.map((m) => (
         <button
           key={m.mode}
           onClick={() => onModeChange(m.mode)}
           className={cn(
-            'flex-1 flex flex-col items-center font-mono font-semibold text-[10px] uppercase tracking-wider py-1.5 px-1 transition-colors',
+            'flex-1 flex flex-col items-center rounded-md py-1.5 px-2 text-[11px] transition-all',
             m.mode === mode
-              ? 'border-2 border-primary text-primary'
-              : 'border border-border text-white hover:bg-surface-hover'
+              ? 'bg-[var(--color-primary)] text-white'
+              : 'bg-[var(--color-surface)] text-[var(--color-ink-muted)] border border-[var(--color-hairline)] hover:border-[var(--color-primary)]'
           )}
         >
-          <span>{m.label}</span>
-          <span className="font-mono font-normal text-[8px] text-muted mt-0.5 normal-case tracking-normal">{m.sub}</span>
+          <span className="font-semibold">{m.label}</span>
+          <span className="text-[9px] opacity-70 mt-0.5">{m.description}</span>
         </button>
       ))}
     </div>
@@ -95,20 +98,20 @@ function TagInput({ tags, onTagsChange }: { tags: string[]; onTagsChange: (t: st
   }
 
   return (
-    <div className="px-3 py-2 border-b border-border">
+    <div className="px-4 py-2.5 border-b border-[var(--color-hairline)]">
       <input
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="ADD TAG..."
-        className="w-full font-mono text-[11px] bg-surface border border-border text-white placeholder:text-muted h-7 px-2 outline-none"
+        placeholder="Add a tag..."
+        className="notion-input text-[13px]"
       />
       {tags.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-1.5">
           {tags.map((tag) => (
-            <span key={tag} className="font-mono text-[10px] uppercase border border-border text-white px-1.5 py-0 flex items-center gap-1">
+            <span key={tag} className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--color-primary)] bg-[var(--color-primary)]/5 rounded-full px-2 py-0.5">
               {tag}
-              <button onClick={() => onTagsChange(tags.filter((t) => t !== tag))} className="text-muted hover:text-white leading-none">×</button>
+              <button onClick={() => onTagsChange(tags.filter((t) => t !== tag))} className="text-[var(--color-primary)] hover:text-[var(--color-primary-active)] leading-none">&times;</button>
             </span>
           ))}
         </div>
@@ -118,36 +121,42 @@ function TagInput({ tags, onTagsChange }: { tags: string[]; onTagsChange: (t: st
 }
 
 export default function PopupApp() {
-  const [mode] = useState<GenerationMode>('FAST');
+  const [mode, setMode] = useState<GenerationMode>('FAST');
   const [tags, setTags] = useState<string[]>([]);
   const [captureState, setCaptureState] = useState<CaptureState>('idle');
   const [documentId, setDocumentId] = useState<string | undefined>();
   const [errorMsg, setErrorMsg] = useState<string | undefined>();
   const [captureProgress, setCaptureProgress] = useState<string>('');
-  const [providerLabel, setProviderLabel] = useState('ANTHROPIC');
+  const [providerLabel, setProviderLabel] = useState('Anthropic');
   const [hasKey, setHasKey] = useState(false);
+  const [privacy, setPrivacy] = useState('');
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     getSettings().then((s) => {
+      const offline = shouldRunOffline(s);
+      setIsOffline(offline);
       const chatProviderId = s.runtime.chat.providerId;
       if (chatProviderId) {
         getAllProviders().then((providers) => {
           const p = providers.find(p => p.id === chatProviderId);
           if (p) {
-            setProviderLabel(p.label.toUpperCase());
+            setProviderLabel(p.label);
             setHasKey(Boolean(p.apiKey));
+            setPrivacy(privacyLabel(s, p.label));
           }
         });
+      } else if (s.apiKey) {
+        const label = s.provider === 'anthropic' ? 'Anthropic' : s.provider === 'openai-compatible' ? 'OpenRouter / Custom' : 'Offline';
+        setProviderLabel(label);
+        setHasKey(true);
+        setPrivacy(privacyLabel(s, label));
+      } else {
+        setPrivacy(privacyLabel(s));
       }
     });
-    getAppearance().then((a) => {
-      const resolved = a.theme === 'system'
-        ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
-        : a.theme;
-      document.documentElement.dataset.theme = resolved;
-      document.body.dataset.theme = resolved;
-      document.documentElement.style.setProperty('--color-primary', a.accentColor);
-    });
+    getAppearance().then(applyAppearance);
+    return watchAppearance(applyAppearance);
   }, []);
 
   async function handleCaptureClick() {
@@ -169,7 +178,7 @@ export default function PopupApp() {
 
       const response = await browser.runtime.sendMessage({
         type: 'CAPTURE_PAGE',
-        payload: { mode, tags },
+        payload: { mode, tags, tabId: tab.id, url: tab.url },
       }) as RuntimeMessage;
 
       browser.runtime.onMessage.removeListener(progressListener);
@@ -201,48 +210,54 @@ export default function PopupApp() {
   }
 
   return (
-    <div className="w-[320px] bg-background text-white flex flex-col overflow-hidden">
+    <div className="w-[320px] bg-[var(--color-canvas-soft)] text-[var(--color-ink)] flex flex-col overflow-hidden">
       <StatusBar providerLabel={providerLabel} hasKey={hasKey} />
+      {privacy && (
+        <div className="flex items-center gap-1.5 px-4 pb-2">
+          <span className={cn('inline-block w-1.5 h-1.5 rounded-full', isOffline ? 'bg-[var(--color-accent-green)]' : 'bg-[var(--color-ink-faint)]')} />
+          <span className="text-[11px] text-[var(--color-ink-muted)]">{privacy}</span>
+        </div>
+      )}
       <PageContextZone />
-      <ModeSelector mode={mode} onModeChange={() => {}} />
+      <ModeSelector mode={mode} onModeChange={setMode} />
       <TagInput tags={tags} onTagsChange={setTags} />
 
-      <div className="px-3 pb-3 pt-2 flex flex-col gap-2">
+      <div className="px-4 pb-4 pt-3 flex flex-col gap-2">
         {captureState === 'success' ? (
           <button
             onClick={handleOpenReader}
-            className="w-full py-3 font-mono font-semibold text-xs uppercase tracking-wider border-2 border-primary text-primary hover:bg-primary/10 transition-colors"
+            className="notion-btn-primary w-full text-[14px] py-2.5"
           >
-            [OPEN IN READER →]
+            Open in Reader
           </button>
         ) : (
           <button
             disabled={captureState === 'loading'}
             onClick={handleCaptureClick}
             className={cn(
-              'w-full py-3 font-mono font-semibold text-xs uppercase tracking-wider transition-colors',
-              captureState === 'idle'    && 'border-2 border-primary text-primary hover:bg-primary/10',
-              captureState === 'loading' && 'border-2 border-primary text-primary cursor-not-allowed',
-              captureState === 'error'   && 'border-2 border-danger text-danger hover:bg-danger/10',
+              'w-full text-[14px] font-medium py-2.5 rounded-full transition-all',
+              captureState === 'idle' && 'notion-btn-primary',
+              captureState === 'loading' && 'bg-[var(--color-primary)] text-white opacity-70 cursor-not-allowed',
+              captureState === 'error' && 'border-2 border-[var(--color-destructive)] text-[var(--color-destructive)] bg-white hover:bg-[var(--color-destructive)]/5',
             )}
           >
-            {captureState === 'loading' ? '[PROCESSING...]' : captureState === 'error' ? '[RETRY]' : '[CAPTURE PAGE]'}
+            {captureState === 'loading' ? 'Processing...' : captureState === 'error' ? 'Retry' : 'Capture this page'}
           </button>
         )}
 
         {captureState === 'loading' && captureProgress && (
-          <p className="font-mono text-[9px] text-primary uppercase leading-tight px-0.5 animate-pulse">{captureProgress}</p>
+          <p className="text-[11px] text-[var(--color-primary)] animate-pulse">{captureProgress}</p>
         )}
 
         {captureState === 'error' && errorMsg && (
-          <p className="font-mono text-[9px] text-danger uppercase leading-tight px-0.5">{errorMsg.slice(0, 120)}</p>
+          <p className="text-[11px] text-[var(--color-destructive)]">{errorMsg.slice(0, 120)}</p>
         )}
 
         <button
           onClick={handleOpenSettings}
-          className="w-full py-3 font-mono font-semibold text-xs uppercase tracking-wider border border-border text-white hover:bg-surface-hover transition-colors"
+          className="w-full text-[13px] font-medium py-2 rounded-full border border-[var(--color-hairline)] bg-white text-[var(--color-ink-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all"
         >
-          [SETTINGS]
+          Settings
         </button>
       </div>
     </div>

@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import type { DocumentMeta, Folder, TagColorMap, ViewMode } from '@/lib/types';
 import { getDocIndex, getDocumentMetas, deleteDocument, updateDocumentMeta, getFolders, saveFolder, deleteFolder, getTagColors, setTagColor, getViewMode, saveViewMode, getSettings, getAppearance } from '@/lib/storage';
 import { FOLDER_COLORS } from '@/lib/color-palette';
+import { applyAppearance, watchAppearance } from '@/lib/theme';
 import { importNotchPDF } from '@/lib/import';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -14,17 +15,14 @@ import { Separator } from '@/components/ui/separator';
 import { EmptyState } from '@/components/EmptyState';
 import { useToast } from '@/components/ui/toast';
 
-// exportFolderAsZip will be implemented in task 20; loaded lazily so missing module doesn't break build
 type ExportFolderFn = (folderId: string, format: 'markdown' | 'pdf') => Promise<Blob>;
 let _exportFolderAsZip: ExportFolderFn | undefined;
 void (import('@/lib/zip-export') as Promise<{ exportFolderAsZip: ExportFolderFn }>)
   .then(m => { _exportFolderAsZip = m.exportFolderAsZip; })
-  .catch(() => { /* zip-export not yet implemented — will be wired in task 20 */ });
+  .catch(() => {});
 
-// ── Constants ─────────────────────────────────────────────────────────────────
 const PAGE_SIZE = 12;
 
-// ── Fuse config — meta fields only, no full content ──────────────────────────
 const fuseOptions = {
   keys: [
     { name: 'title',   weight: 0.5 },
@@ -38,13 +36,27 @@ const fuseOptions = {
   ignoreLocation: true,
 };
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 type Filter = 'all' | 'favorites' | 'archive';
 type SortOrder = 'newest' | 'oldest' | 'title-az';
 type ImportStatus = 'idle' | 'importing' | 'done' | 'error';
 
+function NavItem({ label, active, onClick, icon }: { label: string; active: boolean; onClick: () => void; icon?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'w-full text-left px-4 py-1.5 text-[14px] font-medium rounded-md transition-all flex items-center gap-2',
+        active
+          ? 'bg-[var(--color-primary)]/5 text-[var(--color-primary)]'
+          : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-surface-hover)]'
+      )}
+    >
+      {icon && <span className="text-[16px] w-5 text-center">{icon}</span>}
+      {label}
+    </button>
+  );
+}
 
-// ── Search input ──────────────────────────────────────────────────────────────
 function SearchInput({
   metas,
   onSearchResults,
@@ -60,7 +72,7 @@ function SearchInput({
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const q = e.target.value;
-    onQueryChange(); // reset page
+    onQueryChange();
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       onSearchResults(q.trim().length < 2 ? null : fuse.search(q).map(r => r.item));
@@ -81,14 +93,13 @@ function SearchInput({
   return (
     <Input
       ref={inputRef}
-      placeholder="SEARCH... (/)"
+      placeholder="Search documents... (/)"
       onChange={handleChange}
-      className="font-mono text-[11px] bg-surface border-border text-white placeholder:text-muted w-60 h-7"
+      className="w-56 text-[13px]"
     />
   );
 }
 
-// ── Library header ────────────────────────────────────────────────────────────
 function LibraryHeader({
   sortOrder,
   onSortChange,
@@ -98,6 +109,7 @@ function LibraryHeader({
   folders,
   activeFolderId,
   onFolderSelect,
+  documentCount,
 }: {
   sortOrder: SortOrder;
   onSortChange: (s: SortOrder) => void;
@@ -107,80 +119,78 @@ function LibraryHeader({
   folders: Folder[];
   activeFolderId: string | null;
   onFolderSelect: (id: string | null) => void;
+  documentCount: number;
 }) {
   const sorts: { label: string; value: SortOrder }[] = [
-    { label: 'NEWEST', value: 'newest' },
-    { label: 'OLDEST', value: 'oldest' },
+    { label: 'Newest', value: 'newest' },
+    { label: 'Oldest', value: 'oldest' },
     { label: 'A–Z',    value: 'title-az' },
   ];
-  const views: { label: string; value: ViewMode; icon: string }[] = [
-    { label: 'COMPACT',     value: 'compact',     icon: '⣿' },
-    { label: 'COMFORTABLE', value: 'comfortable', icon: '▤' },
-    { label: 'DETAILED',    value: 'detailed',    icon: '▬' },
-  ];
+
   return (
-    <div className="flex items-center justify-between px-6 py-3 border-b border-border">
-      <span className="font-mono font-bold text-2xl text-white">LIBRARY</span>
+    <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--color-hairline)] bg-white">
+      <div className="flex items-center gap-4">
+        <h1 className="text-[22px] font-bold tracking-tight text-[var(--color-ink)]">Library</h1>
+        <span className="text-[13px] text-[var(--color-ink-muted)]">{documentCount} document{documentCount !== 1 ? 's' : ''}</span>
+      </div>
       <div className="flex items-center gap-3">
         {searchSlot}
-        {/* Folder filter */}
         {folders.length > 0 && (
           <select
             value={activeFolderId ?? ''}
             onChange={e => onFolderSelect(e.target.value || null)}
-            className="font-mono text-[10px] uppercase tracking-wider bg-surface border border-border text-muted hover:text-white px-2 py-1 h-7 focus:outline-none focus:border-primary cursor-pointer"
+            className="text-[12px] font-medium bg-white border border-[var(--color-hairline)] text-[var(--color-ink-muted)] rounded-md px-2 py-1.5 focus:border-[var(--color-primary)] focus:outline-none cursor-pointer"
           >
-            <option value="">ALL FOLDERS</option>
+            <option value="">All folders</option>
             {folders.map(f => (
-              <option key={f.id} value={f.id}>{f.name.toUpperCase()}</option>
+              <option key={f.id} value={f.id}>{f.name}</option>
             ))}
           </select>
         )}
-        {/* Sort */}
-        <div className="flex gap-1">
+        <div className="flex gap-0.5 border border-[var(--color-hairline)] rounded-md overflow-hidden">
           {sorts.map(({ label, value }) => (
             <button
               key={value}
               onClick={() => onSortChange(value)}
               className={cn(
-                'font-mono font-semibold text-[10px] uppercase tracking-wider px-2 py-1 transition-colors',
-                sortOrder === value ? 'text-primary' : 'text-muted hover:text-white'
+                'px-2.5 py-1.5 text-[11px] font-medium transition-colors',
+                sortOrder === value
+                  ? 'bg-[var(--color-primary)] text-white'
+                  : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] bg-white'
               )}
             >
               {label}
             </button>
           ))}
         </div>
-        {/* View mode */}
-        <div className="flex gap-0.5 border border-border">
-          {views.map(({ value, icon, label }) => (
+        <div className="flex gap-0.5 border border-[var(--color-hairline)] rounded-md overflow-hidden">
+          {(['compact', 'comfortable', 'detailed'] as ViewMode[]).map((v) => (
             <button
-              key={value}
-              onClick={() => onViewModeChange(value)}
-              title={label}
+              key={v}
+              onClick={() => onViewModeChange(v)}
               className={cn(
-                'px-2 py-1 font-mono text-[13px] transition-colors',
-                viewMode === value ? 'bg-surface text-primary' : 'text-muted hover:text-white'
+                'px-2 py-1.5 text-[11px] font-medium transition-colors',
+                viewMode === v
+                  ? 'bg-[var(--color-primary)] text-white'
+                  : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] bg-white'
               )}
             >
-              {icon}
+              {v === 'compact' ? 'Compact' : v === 'comfortable' ? 'Comfort' : 'Detailed'}
             </button>
           ))}
         </div>
-        {/* Settings */}
         <button
           onClick={() => browser.runtime.openOptionsPage()}
           title="Settings"
-          className="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-border text-muted hover:text-white hover:border-primary transition-colors"
+          className="text-[13px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors px-2 py-1"
         >
-          [⚙]
+          Settings
         </button>
       </div>
     </div>
   );
 }
 
-// ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({
   activeFilter,
   onFilterChange,
@@ -196,6 +206,7 @@ function Sidebar({
   tagColors,
   onSetTagColor,
   allTags,
+  documentCount,
 }: {
   activeFilter: Filter;
   onFilterChange: (f: Filter) => void;
@@ -211,17 +222,17 @@ function Sidebar({
   tagColors: TagColorMap;
   onSetTagColor: (tag: string, color: string | null) => void;
   allTags: string[];
+  documentCount: number;
 }) {
   const [newFolderName, setNewFolderName] = useState('');
   const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLORS[0]);
   const [showFolderInput, setShowFolderInput] = useState(false);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
 
-  const topItems: { label: string; value: Filter | 'settings' }[] = [
-    { label: 'ALL DOCUMENTS', value: 'all' },
-    { label: 'FAVORITES',     value: 'favorites' },
-    { label: 'ARCHIVE',       value: 'archive' },
-    { label: 'SETTINGS',      value: 'settings' },
+    const topItems: { label: string; value: Filter | 'settings'; icon: string }[] = [
+    { label: 'All documents', value: 'all', icon: '\u{1F4C4}' },
+    { label: 'Favorites',     value: 'favorites', icon: '\u2605' },
+    { label: 'Archive',       value: 'archive', icon: '\u{1F4E6}' },
   ];
 
   function submitFolder() {
@@ -233,40 +244,37 @@ function Sidebar({
     setShowFolderInput(false);
   }
 
-  const importLabel = importStatus === 'importing' ? '[ IMPORTING... ]'
-    : importStatus === 'done' ? '[ IMPORTED ✓ ]'
-    : importStatus === 'error' ? '[ FAILED — RETRY ]'
-    : '+ IMPORT PDF';
+  const importLabel = importStatus === 'importing' ? 'Importing...'
+    : importStatus === 'done' ? 'Imported'
+    : importStatus === 'error' ? 'Failed — retry'
+    : 'Import PDF';
 
   return (
-    <div className="w-52 h-screen bg-background border-r border-border shrink-0 flex flex-col py-6">
-      <div className="font-mono font-semibold text-sm uppercase tracking-widest px-4 pb-6 text-white">
-        NOTCH
+    <div className="w-56 h-screen bg-white border-r border-[var(--color-hairline)] shrink-0 flex flex-col py-4">
+      <div className="px-4 pb-4 flex items-center gap-2">
+        <span className="text-[18px] font-bold tracking-tight text-[var(--color-ink)]">Notch</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        {topItems.map(({ label, value }) => (
-          <button
-            key={value}
-            onClick={() => value === 'settings' ? window.location.href = '/settings.html': onFilterChange(value as Filter)}
-            className={cn(
-              'font-mono font-semibold text-[11px] uppercase tracking-wider px-4 py-2 text-left w-full transition-colors border-l-2',
-              activeFilter === value && activeFolderId === null
-                ? 'text-white border-primary'
-                : 'text-muted border-transparent hover:text-white'
-            )}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="flex-1 overflow-y-auto px-2">
+        <div className="space-y-0.5 mb-4">
+          {topItems.map(({ label, value, icon }) => (
+            <NavItem
+              key={value}
+              label={label}
+              icon={icon}
+              active={activeFilter === value && activeFolderId === null}
+              onClick={() => value === 'settings' ? window.location.href = '/settings.html' : onFilterChange(value as Filter)}
+            />
+          ))}
+        </div>
 
-        {/* Folders section */}
-        <Separator className="bg-border my-3" />
+        <Separator className="bg-[var(--color-hairline)] my-3" />
+
         <div className="flex items-center justify-between px-4 mb-1">
-          <span className="font-mono text-[9px] uppercase tracking-widest text-muted">FOLDERS</span>
+          <span className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide">Folders</span>
           <button
             onClick={() => setShowFolderInput(v => !v)}
-            className="font-mono text-[10px] text-muted hover:text-primary transition-colors leading-none"
+            className="text-[14px] text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors leading-none"
             title="New folder"
           >
             +
@@ -281,26 +289,24 @@ function Sidebar({
               onChange={e => setNewFolderName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') submitFolder(); if (e.key === 'Escape') setShowFolderInput(false); }}
               placeholder="Folder name"
-              className="w-full bg-surface border border-border text-white font-mono text-[10px] px-2 py-1 focus:border-primary outline-none"
+              className="notion-input text-[12px]"
             />
-            {/* Color picker */}
             <div className="flex gap-1 flex-wrap">
               {FOLDER_COLORS.map(c => (
                 <button
                   key={c}
                   onClick={() => setNewFolderColor(c)}
-                  className="w-4 h-4 transition-transform hover:scale-110"
+                  className="w-3.5 h-3.5 rounded-sm transition-transform hover:scale-110"
                   style={{
                     backgroundColor: c,
                     outline: newFolderColor === c ? `2px solid ${c}` : 'none',
-                    outlineOffset: '2px',
+                    outlineOffset: '1px',
                   }}
-                  title={c}
                 />
               ))}
             </div>
-            <button onClick={submitFolder} className="font-mono text-[9px] uppercase tracking-wider text-primary text-left">
-              ✓ CREATE
+            <button onClick={submitFolder} className="text-[11px] font-medium text-[var(--color-primary)] text-left">
+              Create
             </button>
           </div>
         )}
@@ -309,8 +315,8 @@ function Sidebar({
           <div
             key={folder.id}
             className={cn(
-              'group flex items-center transition-colors',
-              dragOverFolderId === folder.id && 'bg-surface-hover'
+              'group flex items-center rounded-md mx-2',
+              dragOverFolderId === folder.id && 'bg-[var(--color-surface-hover)]'
             )}
             onDragOver={e => { e.preventDefault(); setDragOverFolderId(folder.id); }}
             onDragLeave={() => setDragOverFolderId(null)}
@@ -324,34 +330,28 @@ function Sidebar({
             <button
               onClick={() => { onFolderSelect(folder.id); onFilterChange('all'); }}
               className={cn(
-                'font-mono text-[11px] uppercase tracking-wider px-4 py-1.5 text-left flex-1 transition-colors border-l-2 truncate flex items-center gap-2',
+                'flex items-center gap-2 flex-1 text-left px-2 py-1 text-[13px] font-medium rounded-md transition-all',
                 activeFolderId === folder.id
-                  ? 'text-white'
-                  : 'text-muted border-transparent hover:text-white'
+                  ? 'bg-[var(--color-primary)]/5 text-[var(--color-primary)]'
+                  : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-surface-hover)]'
               )}
-              style={{
-                borderLeftColor: activeFolderId === folder.id ? folder.color : 'transparent',
-              }}
             >
-              <span
-                className="inline-block w-2 h-2 shrink-0"
-                style={{ backgroundColor: folder.color }}
-              />
+              <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: folder.color }} />
               <span className="truncate">{folder.name}</span>
             </button>
             <button
               onClick={() => onExportFolder(folder.id)}
-              className="text-muted hover:text-primary text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
-              title="Export folder as zip"
+              className="text-[var(--color-ink-faint)] hover:text-[var(--color-primary)] text-[11px] opacity-0 group-hover:opacity-100 transition-opacity px-1"
+              title="Export folder"
             >
               ↓
             </button>
             <button
               onClick={() => onFolderDelete(folder.id)}
-              className="pr-3 text-muted hover:text-danger text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+              className="text-[var(--color-ink-faint)] hover:text-[var(--color-destructive)] text-[11px] opacity-0 group-hover:opacity-100 transition-opacity px-1"
               title="Delete folder"
             >
-              ×
+              &times;
             </button>
           </div>
         ))}
@@ -362,11 +362,11 @@ function Sidebar({
           onClick={onImport}
           disabled={importStatus === 'importing'}
           className={cn(
-            'w-full font-mono font-semibold text-[10px] uppercase tracking-wider py-2 border border-dashed transition-all',
-            importStatus === 'importing' ? 'border-primary text-primary opacity-60 cursor-not-allowed'
-              : importStatus === 'done' ? 'border-primary text-primary'
-              : importStatus === 'error' ? 'border-danger text-danger'
-              : 'border-border text-muted hover:text-primary hover:border-primary'
+            'w-full text-[12px] font-medium py-2 rounded-full border border-dashed transition-all',
+            importStatus === 'importing' ? 'border-[var(--color-primary)] text-[var(--color-primary)] opacity-60 cursor-not-allowed'
+              : importStatus === 'done' ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+              : importStatus === 'error' ? 'border-[var(--color-destructive)] text-[var(--color-destructive)]'
+              : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
           )}
         >
           {importLabel}
@@ -380,12 +380,9 @@ function Sidebar({
         allTags={allTags}
       />
     </div>
-
   );
 }
 
-// ── Document card (uses DocumentMeta) ─────────────────────────────────────────
-// ── Document card (uses DocumentMeta) ─────────────────────────────────────────
 interface DocumentCardProps {
   meta: DocumentMeta;
   folders: Folder[];
@@ -411,32 +408,32 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
   const currentFolder = folders.find(f => f.id === meta.folder);
 
   const folderMenu = (
-    <div className="relative" onClick={e => e.stopPropagation()}>
+      <div className="relative" onClick={e => e.stopPropagation()}>
       <button
         onClick={() => setShowFolderMenu(v => !v)}
         title="Move to folder"
-        className="font-mono text-[14px] text-muted hover:text-primary transition-colors leading-none"
+        className="text-[13px] text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors px-2.5 py-1.5 min-w-[48px] flex items-center justify-center"
       >
-        📁
+        Move
       </button>
       {showFolderMenu && (
-        <div className="absolute right-0 bottom-full mb-1 z-50 bg-surface border border-border min-w-[140px] shadow-lg max-h-48 overflow-y-auto">
+        <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-[var(--color-hairline)] rounded-lg min-w-[140px] shadow-level-1 max-h-48 overflow-y-auto">
           <button
             onClick={() => { onMoveToFolder(meta.id, undefined); setShowFolderMenu(false); }}
-            className="w-full text-left font-mono text-[10px] uppercase tracking-wider px-3 py-2 text-muted hover:text-white hover:bg-surface-hover transition-colors"
+            className="w-full text-left text-[12px] px-3 py-2 text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-hover)] rounded-t-lg transition-colors"
           >
-            — No folder
+            No folder
           </button>
           {folders.map(f => (
             <button
               key={f.id}
               onClick={() => { onMoveToFolder(meta.id, f.id); setShowFolderMenu(false); }}
               className={cn(
-                'w-full flex items-center gap-2 text-left font-mono text-[10px] uppercase tracking-wider px-3 py-2 transition-colors hover:bg-surface-hover',
-                meta.folder === f.id ? 'text-primary' : 'text-muted hover:text-white'
+                'w-full flex items-center gap-2 text-left text-[12px] px-3 py-2 transition-colors hover:bg-[var(--color-surface-hover)]',
+                meta.folder === f.id ? 'text-[var(--color-primary)] font-medium' : 'text-[var(--color-ink-muted)]'
               )}
             >
-              <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: f.color }} />
+              <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: f.color }} />
               <span className="truncate">{f.name}</span>
             </button>
           ))}
@@ -453,52 +450,48 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
         onDragEnd={() => setIsDragging(false)}
         onClick={() => browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${meta.id}`) })}
         className={cn(
-          'group card px-4 py-2 cursor-pointer flex items-center hover:bg-surface-hover transition-colors relative h-12',
+          'flex items-center gap-3 px-4 py-2.5 cursor-pointer rounded-lg border border-[var(--color-hairline)] bg-white hover:border-[var(--color-primary)] hover:shadow-level-1 transition-all',
           isDragging && 'opacity-50'
         )}
       >
-        <div className="flex-1 flex items-center gap-4 min-w-0 pr-24">
-          <button
-            onClick={stop(() => onStar(meta.id, !meta.isStarred))}
-            title={meta.isStarred ? 'Unstar' : 'Star'}
-            className={cn('font-mono text-[16px] transition-colors shrink-0 leading-none', meta.isStarred ? 'text-primary' : 'text-muted hover:text-white')}
-          >
-            {meta.isStarred ? '★' : '☆'}
-          </button>
-          <p className="font-mono font-bold text-[13px] text-white truncate max-w-[40%] shrink-0">{meta.title}</p>
-          <span className="font-mono text-[10px] text-muted uppercase shrink-0 truncate max-w-[15%]">{meta.domain}</span>
-          
+        <button
+          onClick={stop(() => onStar(meta.id, !meta.isStarred))}
+          title={meta.isStarred ? 'Unstar' : 'Star'}
+          className={cn('text-[18px] transition-colors shrink-0 leading-none flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--color-surface-hover)]', meta.isStarred ? 'text-[var(--color-primary)]' : 'text-[var(--color-ink-faint)] hover:text-[var(--color-ink)]')}
+        >
+          {meta.isStarred ? '\u2605' : '\u2606'}
+        </button>
+        <div className="flex-1 flex items-center gap-3 min-w-0">
+          <p className="text-[13px] font-semibold text-[var(--color-ink)] truncate max-w-[35%] shrink-0">{meta.title}</p>
+          <span className="text-[11px] text-[var(--color-ink-muted)] truncate max-w-[15%] shrink-0">{meta.domain}</span>
           {currentFolder && (
-            <div className="flex items-center gap-1.5 shrink-0 max-w-[15%]">
-              <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: currentFolder.color }} />
-              <span className="font-mono text-[9px] uppercase truncate" style={{ color: currentFolder.color }}>{currentFolder.name}</span>
+            <div className="flex items-center gap-1 shrink-0">
+              <span className="inline-block w-1.5 h-1.5 rounded-sm shrink-0" style={{ backgroundColor: currentFolder.color }} />
+              <span className="text-[10px] font-medium truncate" style={{ color: currentFolder.color }}>{currentFolder.name}</span>
             </div>
           )}
-
-          <div className="flex gap-1.5 overflow-hidden opacity-60">
-            {meta.tags.slice(0, 3).map(tag => (
+          <div className="flex gap-1 overflow-hidden">
+            {meta.tags.slice(0, 2).map(tag => (
               <span
                 key={tag}
-                className="font-mono text-[9px] uppercase px-1 border truncate leading-tight py-0.5"
+                className="text-[10px] font-medium px-1.5 py-0.5 rounded-full border truncate"
                 style={tagColors[tag]
-                  ? { borderColor: tagColors[tag], color: tagColors[tag] }
-                  : { borderColor: 'var(--color-border)', color: 'var(--color-muted)' }
+                  ? { borderColor: tagColors[tag], color: tagColors[tag], background: `${tagColors[tag]}10` }
+                  : { borderColor: 'var(--color-hairline)', color: 'var(--color-ink-muted)' }
                 }
               >{tag}</span>
             ))}
           </div>
         </div>
-
-        <div className="absolute right-4 top-0 bottom-0 flex items-center gap-3 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity bg-linear-to-l from-surface-hover via-surface-hover to-transparent pl-8">
-          <button onClick={stop(() => onArchive(meta.id, !meta.isArchived))} title={meta.isArchived ? 'Unarchive' : 'Archive'} className={cn('font-mono text-[16px] transition-colors hover:text-white leading-none', meta.isArchived ? 'text-primary' : 'text-muted')}>⊡</button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={stop(() => onArchive(meta.id, !meta.isArchived))} title={meta.isArchived ? 'Unarchive' : 'Archive'} className={cn('text-[16px] transition-colors flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--color-surface-hover)] leading-none', meta.isArchived ? 'text-[var(--color-primary)]' : 'text-[var(--color-ink-faint)] hover:text-[var(--color-ink)]')}>&#x22A1;</button>
           {folderMenu}
-          <button onClick={stop(() => onDelete(meta.id))} title="Delete" className="font-mono font-semibold text-[16px] text-danger hover:text-danger/80 transition-colors leading-none">×</button>
+          <button onClick={stop(() => onDelete(meta.id))} title="Delete" className="text-[16px] flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--color-surface-hover)] text-[var(--color-ink-faint)] hover:text-[var(--color-destructive)] transition-colors leading-none">&times;</button>
         </div>
       </div>
     );
   }
 
-  // Comfortable (default) & Detailed
   return (
     <div
       draggable
@@ -506,42 +499,42 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
       onDragEnd={() => setIsDragging(false)}
       onClick={() => browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${meta.id}`) })}
       className={cn(
-        'card cursor-pointer flex flex-col gap-2 hover:bg-surface-hover transition-colors relative',
-        viewMode === 'detailed' ? 'p-4' : 'p-3',
+        'flex flex-col gap-2.5 cursor-pointer rounded-xl border border-[var(--color-hairline)] bg-white hover:border-[var(--color-primary)] hover:shadow-level-1 transition-all',
+        viewMode === 'detailed' ? 'p-5' : 'p-4',
         isDragging && 'opacity-50'
       )}
     >
       <div className="flex gap-3 justify-between items-start">
-        <p className={cn("font-mono font-bold text-white leading-tight", viewMode === 'detailed' ? 'text-base' : 'text-sm')}>{meta.title}</p>
+        <p className={cn("font-semibold text-[var(--color-ink)] leading-snug", viewMode === 'detailed' ? 'text-[17px]' : 'text-[15px]')}>{meta.title}</p>
         <button
           onClick={stop(() => onStar(meta.id, !meta.isStarred))}
           title={meta.isStarred ? 'Unstar' : 'Star'}
-          className={cn('font-mono transition-colors shrink-0 leading-none', viewMode === 'detailed' ? 'text-[20px]' : 'text-[18px]', meta.isStarred ? 'text-primary' : 'text-muted hover:text-white')}
+          className={cn('text-[18px] flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors shrink-0 leading-none', meta.isStarred ? 'text-[var(--color-primary)]' : 'text-[var(--color-ink-faint)] hover:text-[var(--color-ink)]')}
         >
-          {meta.isStarred ? '★' : '☆'}
+          {meta.isStarred ? '\u2605' : '\u2606'}
         </button>
       </div>
 
-      <div className="flex gap-3 items-center flex-wrap">
-        <span className="font-mono text-[10px] text-muted uppercase">{meta.domain}</span>
-        <span className="font-mono text-[10px] text-muted">{meta.wordCount}w</span>
-        <span className="font-mono text-[10px] text-muted">{meta.capturedAt.slice(0, 10)}</span>
+      <div className="flex gap-3 items-center flex-wrap text-[12px] text-[var(--color-ink-muted)]">
+        <span>{meta.domain}</span>
+        <span>{meta.wordCount}w</span>
+        <span>{meta.capturedAt.slice(0, 10)}</span>
         {currentFolder && (
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: currentFolder.color }} />
-            <span className="font-mono text-[9px] uppercase truncate" style={{ color: currentFolder.color }}>{currentFolder.name}</span>
+          <div className="flex items-center gap-1">
+            <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: currentFolder.color }} />
+            <span className="text-[11px] font-medium" style={{ color: currentFolder.color }}>{currentFolder.name}</span>
           </div>
         )}
       </div>
 
       {viewMode === 'detailed' && meta.summary && (
-        <p className="font-mono text-[11px] text-muted leading-relaxed line-clamp-3 my-1 border-l-2 border-border pl-3">
+        <p className="text-[13px] text-[var(--color-ink-muted)] leading-relaxed line-clamp-3 border-l-2 border-[var(--color-hairline)] pl-3">
           {meta.summary}
         </p>
       )}
 
       {meta.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-1">
+        <div className="flex flex-wrap gap-1">
           {meta.tags.map((tag) => {
             const tagColor = tagColors[tag];
             return (
@@ -550,10 +543,10 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
                 variant="outline"
                 onClick={stop(() => onTagClick(tag))}
                 className={cn(
-                  'font-mono text-[9px] uppercase px-1.5 py-0.5 cursor-pointer transition-colors',
+                  'text-[10px] font-medium px-2 py-0.5 cursor-pointer transition-colors rounded-full',
                   activeTag === tag
-                    ? 'border-primary text-primary'
-                    : 'border-border text-muted hover:border-white hover:text-white'
+                    ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+                    : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
                 )}
                 style={tagColor && activeTag !== tag
                   ? { borderColor: tagColor, color: tagColor }
@@ -567,78 +560,75 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
         </div>
       )}
 
-      <div className="flex gap-3 mt-1 items-center">
+      <div className="flex gap-1 items-center text-[14px]">
         <button
           onClick={stop(() => onArchive(meta.id, !meta.isArchived))}
           title={meta.isArchived ? 'Unarchive' : 'Archive'}
-          className={cn('font-mono text-[18px] transition-colors leading-none', meta.isArchived ? 'text-primary' : 'text-muted hover:text-white')}
+          className={cn('flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors leading-none', meta.isArchived ? 'text-[var(--color-primary)]' : 'text-[var(--color-ink-faint)] hover:text-[var(--color-ink)]')}
         >
-          ⊡
+          &#x22A1;
         </button>
         {folderMenu}
         <button
           onClick={stop(() => onDelete(meta.id))}
           title="Delete"
-          className="font-mono font-semibold text-[18px] text-danger hover:text-danger/80 ml-auto transition-colors leading-none"
+          className="flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--color-surface-hover)] text-[var(--color-ink-faint)] hover:text-[var(--color-destructive)] ml-auto transition-colors leading-none"
         >
-          ×
+          &times;
         </button>
       </div>
     </div>
   );
 }
 
-// ── Color legend ──────────────────────────────────────────────────────────────
-interface ColorLegendProps {
+function ColorLegend({ folders, tagColors, onSetTagColor, allTags }: {
   folders: Folder[];
   tagColors: TagColorMap;
   onSetTagColor: (tag: string, color: string | null) => void;
   allTags: string[];
-}
-
-function ColorLegend({ folders, tagColors, onSetTagColor, allTags }: ColorLegendProps) {
+}) {
   const coloredFolders = folders.filter(f => f.color);
   const coloredTags = Object.entries(tagColors);
 
   if (coloredFolders.length === 0 && coloredTags.length === 0 && allTags.length === 0) return null;
 
   return (
-    <div className="px-4 mt-4 border-t border-border pt-3">
-      <span className="font-mono text-[9px] uppercase tracking-widest text-muted block mb-2">COLOR LEGEND</span>
+    <div className="px-4 mt-4 border-t border-[var(--color-hairline)] pt-3">
+      <span className="text-[10px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-2">Legend</span>
 
       {coloredFolders.map(f => (
         <div key={f.id} className="flex items-center gap-2 mb-1">
-          <span className="inline-block w-2.5 h-2.5 shrink-0" style={{ backgroundColor: f.color }} />
-          <span className="font-mono text-[9px] uppercase truncate" style={{ color: f.color }}>{f.name}</span>
+          <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: f.color }} />
+          <span className="text-[11px] font-medium truncate" style={{ color: f.color }}>{f.name}</span>
         </div>
       ))}
 
       {coloredTags.map(([tag, color]) => (
         <div key={tag} className="flex items-center gap-2 mb-1">
-          <span className="inline-block w-2.5 h-2.5 shrink-0 rounded-sm" style={{ backgroundColor: color }} />
-          <span className="font-mono text-[9px] uppercase truncate" style={{ color }}>{tag}</span>
+          <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+          <span className="text-[11px] font-medium truncate" style={{ color }}>{tag}</span>
           <button
             onClick={() => onSetTagColor(tag, null)}
-            className="font-mono text-[9px] text-muted hover:text-danger transition-colors ml-auto shrink-0"
+            className="text-[10px] text-[var(--color-ink-faint)] hover:text-[var(--color-destructive)] ml-auto shrink-0 transition-colors"
             title="Remove color"
           >
-            ×
+            &times;
           </button>
         </div>
       ))}
 
       {allTags.filter(t => !tagColors[t]).length > 0 && (
         <>
-          <span className="font-mono text-[8px] uppercase tracking-widest text-muted block mt-2 mb-1">UNCOLORED TAGS</span>
+          <span className="text-[9px] font-semibold text-[var(--color-ink-faint)] uppercase tracking-wide block mt-2 mb-1">Uncolored tags</span>
           {allTags.filter(t => !tagColors[t]).map(tag => (
             <div key={tag} className="flex items-center gap-1 mb-1 flex-wrap">
-              <span className="font-mono text-[9px] uppercase text-muted truncate max-w-[80px]">{tag}</span>
+              <span className="text-[10px] font-medium text-[var(--color-ink-muted)] truncate max-w-[80px]">{tag}</span>
               <div className="flex gap-0.5 flex-wrap">
                 {FOLDER_COLORS.map(c => (
                   <button
                     key={c}
                     onClick={() => onSetTagColor(tag, c)}
-                    className="w-3 h-3 transition-transform hover:scale-125"
+                    className="w-2.5 h-2.5 rounded-sm transition-transform hover:scale-125"
                     style={{ backgroundColor: c }}
                     title={`Set ${tag} to ${c}`}
                   />
@@ -652,51 +642,72 @@ function ColorLegend({ folders, tagColors, onSetTagColor, allTags }: ColorLegend
   );
 }
 
-// ── Storage quota warning ─────────────────────────────────────────────────────
 function StorageQuotaWarning({ usedBytes, quotaBytes, onDismiss }: { usedBytes: number; quotaBytes: number; onDismiss: () => void }) {
   const pct = Math.round((usedBytes / quotaBytes) * 100);
   return (
-    <div className="mx-6 mt-3 px-3 py-2 border border-danger bg-surface flex items-center justify-between gap-3">
-      <span className="font-mono font-semibold text-[11px] uppercase tracking-wider text-danger">
-        STORAGE WARNING: {pct}% USED — ARCHIVE OR DELETE DOCUMENTS TO FREE SPACE
+    <div className="mx-6 mt-3 px-4 py-2.5 border border-[var(--color-destructive)] rounded-lg bg-[var(--color-destructive)]/5 flex items-center justify-between gap-3">
+      <span className="text-[12px] font-medium text-[var(--color-destructive)]">
+        Storage warning: {pct}% used — archive or delete documents to free space
       </span>
-      <button onClick={onDismiss} className="font-mono font-semibold text-sm text-danger hover:text-danger/80 shrink-0">×</button>
+      <button onClick={onDismiss} className="text-[16px] text-[var(--color-destructive)] hover:opacity-70 shrink-0 leading-none">&times;</button>
     </div>
   );
 }
 
-// ── Pagination controls ───────────────────────────────────────────────────────
 function Pagination({ page, totalPages, onPrev, onNext }: { page: number; totalPages: number; onPrev: () => void; onNext: () => void }) {
   if (totalPages <= 1) return null;
   return (
-    <div className="flex items-center justify-center gap-4 py-4 border-t border-border">
+    <div className="flex items-center justify-center gap-4 py-4 border-t border-[var(--color-hairline)] bg-white">
       <button
         onClick={onPrev}
         disabled={page === 1}
-        className="font-mono text-[11px] uppercase tracking-wider text-muted hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="text-[13px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
       >
-        ← PREV
+        &larr; Previous
       </button>
-      <span className="font-mono text-[11px] text-muted uppercase tracking-wider">
+      <span className="text-[13px] text-[var(--color-ink-muted)]">
         {page} / {totalPages}
       </span>
       <button
         onClick={onNext}
         disabled={page === totalPages}
-        className="font-mono text-[11px] uppercase tracking-wider text-muted hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="text-[13px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
       >
-        NEXT →
+        Next &rarr;
       </button>
     </div>
   );
 }
 
-// ── Document grid ─────────────────────────────────────────────────────────────
-function DocumentGrid({ metas, folders, viewMode, loading, onStar, onArchive, onDelete, onTagClick, onMoveToFolder, activeTag, onDragStart, tagColors, activeFolderId, hasApiKey, onAddDocument }: {
+function EmptyLibrary({ icon, title, description, action }: {
+  icon: string;
+  title: string;
+  description: string;
+  action?: { label: string; onClick: () => void };
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center flex-1 p-12 text-center">
+      <span className="text-[40px] mb-4 leading-none">{icon}</span>
+      <h3 className="text-[17px] font-semibold text-[var(--color-ink)] mb-2">{title}</h3>
+      <p className="text-[13px] text-[var(--color-ink-muted)] max-w-[320px] leading-relaxed mb-6">{description}</p>
+      {action && (
+        <button
+          onClick={action.onClick}
+          className="notion-btn-primary text-[13px] px-5 py-2"
+        >
+          {action.label}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function DocumentGrid({ metas, folders, viewMode, loading, error, onStar, onArchive, onDelete, onTagClick, onMoveToFolder, activeTag, onDragStart, tagColors, activeFolderId, hasApiKey, onAddDocument }: {
   metas: DocumentMeta[];
   folders: Folder[];
   viewMode: ViewMode;
   loading: boolean;
+  error: string | null;
   onStar: (id: string, v: boolean) => void;
   onArchive: (id: string, v: boolean) => void;
   onDelete: (id: string) => void;
@@ -709,46 +720,55 @@ function DocumentGrid({ metas, folders, viewMode, loading, onStar, onArchive, on
   hasApiKey: boolean;
   onAddDocument: () => void;
 }) {
+  if (error) {
+    return (
+      <EmptyLibrary
+        icon={'\u26A0\uFE0F'}
+        title="Something went wrong"
+        description={error}
+        action={{ label: 'Try Again', onClick: () => window.location.reload() }}
+      />
+    );
+  }
   if (loading) {
     return (
-      <div className={cn("grid gap-3 p-6", viewMode === 'compact' ? 'grid-cols-1' : viewMode === 'detailed' ? 'grid-cols-3' : 'grid-cols-4')}>
-        {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className={viewMode === 'compact' ? "h-12" : viewMode === 'detailed' ? "h-56" : "h-40"} />)}
+      <div className={cn("grid gap-3 p-6", viewMode === 'compact' ? 'grid-cols-1' : viewMode === 'detailed' ? 'grid-cols-2' : 'grid-cols-3')}>
+        {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className={viewMode === 'compact' ? "h-10 rounded-lg" : viewMode === 'detailed' ? "h-52 rounded-xl" : "h-36 rounded-xl"} />)}
       </div>
     );
   }
   if (metas.length === 0) {
-    // Req 6.4 — empty folder filter
     if (activeFolderId) {
       return (
-        <div className="flex items-center justify-center flex-1 p-6">
-          <EmptyState
-            message="This folder is empty"
-            action={{ label: '+ Add Document', onClick: onAddDocument }}
-          />
-        </div>
+        <EmptyLibrary
+          icon={'\u{1F4C2}'}
+          title="This folder is empty"
+          description="Capture pages to this folder, or drag existing documents here."
+          action={{ label: 'Add Document', onClick: onAddDocument }}
+        />
       );
     }
-    // Req 6.1 — no docs and no API key
     if (!hasApiKey) {
       return (
-        <div className="flex items-center justify-center flex-1 p-6">
-          <EmptyState
-            message="No API key set"
-            action={{ label: 'Open Settings', onClick: () => browser.runtime.openOptionsPage() }}
-          />
-        </div>
+        <EmptyLibrary
+          icon={'\u{1F511}'}
+          title="No API key set"
+          description="Configure an AI provider in Settings to start capturing and structuring documents."
+          action={{ label: 'Open Settings', onClick: () => browser.runtime.openOptionsPage() }}
+        />
       );
     }
     return (
-      <div className="flex items-center justify-center flex-1 p-6">
-        <span className="font-mono font-semibold text-xs uppercase tracking-wider text-muted">
-          NO DOCUMENTS FOUND. CAPTURE SOMETHING.
-        </span>
-      </div>
+      <EmptyLibrary
+        icon={'\u{1F4CB}'}
+        title="No documents yet"
+        description="Open any web page, open the Notch extension, and click 'Capture this page' to save your first document."
+        action={{ label: 'Learn More', onClick: () => browser.tabs.create({ url: 'https://notch.ai' }) }}
+      />
     );
   }
   return (
-    <div className={cn("grid gap-3 p-6", viewMode === 'compact' ? 'grid-cols-1' : viewMode === 'detailed' ? 'grid-cols-3' : 'grid-cols-4')}>
+    <div className={cn("grid gap-3 p-6", viewMode === 'compact' ? 'grid-cols-1' : viewMode === 'detailed' ? 'grid-cols-2' : 'grid-cols-3')}>
       {metas.map((meta) => (
         <DocumentCard
           key={meta.id}
@@ -769,7 +789,6 @@ function DocumentGrid({ metas, folders, viewMode, loading, onStar, onArchive, on
   );
 }
 
-// ── Root ──────────────────────────────────────────────────────────────────────
 export default function LibraryApp() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeFilter, setActiveFilter] = useState<Filter>('all');
@@ -777,6 +796,7 @@ export default function LibraryApp() {
   const [viewMode, setViewMode] = useState<ViewMode>('comfortable');
   const [metas, setMetas] = useState<DocumentMeta[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<DocumentMeta[] | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -789,48 +809,44 @@ export default function LibraryApp() {
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
   const { addToast } = useToast();
 
-  // ── Boot
   useEffect(() => {
     async function boot() {
-      const [index, storedFolders, storedTagColors, storedViewMode, storedSettings] = await Promise.all([
-        getDocIndex(),
-        getFolders(),
-        getTagColors(),
-        getViewMode(),
-        getSettings(),
-      ]);
-      setFolders(storedFolders);
-      setTagColors(storedTagColors);
-      setViewMode(storedViewMode);
-      setHasApiKey(Boolean(storedSettings.apiKey));
-      if (index.length === 0) { setLoading(false); return; }
-      const firstBatch = await getDocumentMetas(index.slice(0, 20));
-      setMetas(firstBatch);
-      setLoading(false);
-      if (index.length > 20) {
-        const rest = await getDocumentMetas(index.slice(20));
-        setMetas(prev => {
-          const seen = new Set(prev.map(m => m.id));
-          return [...prev, ...rest.filter(m => !seen.has(m.id))];
-        });
+      try {
+        const [index, storedFolders, storedTagColors, storedViewMode, storedSettings] = await Promise.all([
+          getDocIndex(),
+          getFolders(),
+          getTagColors(),
+          getViewMode(),
+          getSettings(),
+        ]);
+        setFolders(storedFolders);
+        setTagColors(storedTagColors);
+        setViewMode(storedViewMode);
+        setHasApiKey(Boolean(storedSettings.apiKey));
+        if (index.length === 0) { setLoading(false); return; }
+        const firstBatch = await getDocumentMetas(index.slice(0, 20));
+        setMetas(firstBatch);
+        setLoading(false);
+        if (index.length > 20) {
+          const rest = await getDocumentMetas(index.slice(20));
+          setMetas(prev => {
+            const seen = new Set(prev.map(m => m.id));
+            return [...prev, ...rest.filter(m => !seen.has(m.id))];
+          });
+        }
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : 'Failed to load documents');
+        setLoading(false);
       }
     }
     boot();
   }, []);
 
-  // Apply global appearance
   useEffect(() => {
-    getAppearance().then((a) => {
-      const resolved = a.theme === 'system'
-        ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
-        : a.theme;
-      document.documentElement.dataset.theme = resolved;
-      document.body.dataset.theme = resolved;
-      document.documentElement.style.setProperty('--color-primary', a.accentColor);
-    });
+    getAppearance().then(applyAppearance);
+    return watchAppearance(applyAppearance);
   }, []);
 
-  // ── Quota warning listener
   useEffect(() => {
     function onMsg(msg: unknown) {
       if (msg && typeof msg === 'object' && (msg as { type?: string }).type === 'STORAGE_QUOTA_WARNING') {
@@ -842,10 +858,6 @@ export default function LibraryApp() {
     return () => browser.runtime.onMessage.removeListener(onMsg);
   }, []);
 
-  // ── Keyboard navigation (j/k/arrows to navigate, Enter to open, s to star, a to archive, d to delete)
-  // Note: This is placed after displayList is computed below
-
-  // ── Mutations
   function handleStar(id: string, starred: boolean) {
     setMetas(prev => prev.map(m => m.id === id ? { ...m, isStarred: starred } : m));
     updateDocumentMeta(id, { isStarred: starred });
@@ -859,7 +871,6 @@ export default function LibraryApp() {
     deleteDocument(id);
   }
 
-  // ── Folder mutations
   async function handleFolderCreate(name: string, color: string) {
     const folder: Folder = { id: crypto.randomUUID(), name, color, createdAt: new Date().toISOString() };
     await saveFolder(folder);
@@ -876,7 +887,6 @@ export default function LibraryApp() {
     updateDocumentMeta(docId, { folder: folderId });
   }
 
-  // ── Tag color mutations
   async function handleSetTagColor(tag: string, color: string | null) {
     await setTagColor(tag, color);
     setTagColors(prev => {
@@ -887,21 +897,24 @@ export default function LibraryApp() {
     });
   }
 
-  // ── Drag-and-drop: set docId on dataTransfer so folder drop targets can read it
   function handleDragStart(e: React.DragEvent, docId: string) {
     e.dataTransfer.setData('text/plain', docId);
     e.dataTransfer.effectAllowed = 'move';
   }
 
-  // ── Drop document onto folder (called from Sidebar)
   function handleDropDocumentOnFolder(docId: string, folderId: string) {
     handleMoveToFolder(docId, folderId);
   }
 
-  // ── Export folder as zip
   async function handleExportFolder(folderId: string) {
     if (!_exportFolderAsZip) {
-      alert('Export is not yet available (will be implemented in task 20).');
+      addToast('Export not yet available', 'info');
+      return;
+    }
+    const folder = folders.find(f => f.id === folderId);
+    const count = metas.filter(m => m.folder === folderId).length;
+    if (count === 0) {
+      addToast('No documents in this folder', 'info');
       return;
     }
     try {
@@ -909,17 +922,18 @@ export default function LibraryApp() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const folder = folders.find(f => f.id === folderId);
       a.download = `${folder?.name ?? 'folder'}.zip`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      addToast(`Exported ${count} document${count !== 1 ? 's' : ''}`, 'info');
     } catch (err) {
       console.error('Export failed:', err);
-      alert('Export failed. Please try again.');
+      addToast('Export failed. Please try again.', 'info');
     }
   }
 
-  // ── PDF import — try Notch bundle first, fall back to general PDF parse
   async function handleImportClick() { fileInputRef.current?.click(); }
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -929,10 +943,8 @@ export default function LibraryApp() {
     try {
       let docId: string;
       try {
-        // Try Notch-exported PDF (has embedded notch_data.json)
         docId = await importNotchPDF(file);
       } catch {
-        // Fallback: send raw bytes to the background IMPORT_PDF pipeline
         const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
         const response = await browser.runtime.sendMessage({
           type: 'IMPORT_PDF',
@@ -946,7 +958,6 @@ export default function LibraryApp() {
       setMetas(updatedMetas);
       setImportStatus('done');
       setTimeout(() => setImportStatus('idle'), 2500);
-      // Open the newly imported doc
       browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${docId}`) });
     } catch (err) {
       setImportStatus('error');
@@ -957,13 +968,11 @@ export default function LibraryApp() {
     }
   }
 
-  // ── Reset page on filter/sort/search/tag change
   function handleFilterChange(f: Filter) { setActiveFilter(f); setActiveFolderId(null); setPage(1); }
   function handleSortChange(s: SortOrder) { setSortOrder(s); setPage(1); }
   function handleTagClick(tag: string) { setActiveTag(prev => prev === tag ? null : tag); setPage(1); }
   function handleSearchReset() { setPage(1); }
 
-  // ── Derived display list
   const filtered = metas.filter(m => {
     if (activeFolderId) return m.folder === activeFolderId;
     if (activeFilter === 'favorites') return m.isStarred;
@@ -980,12 +989,9 @@ export default function LibraryApp() {
   const tagFiltered = activeTag ? sorted.filter(m => m.tags.includes(activeTag)) : sorted;
   const displayList = searchResults ?? tagFiltered;
 
-  // ── Keyboard navigation (j/k/arrows to navigate, Enter to open, s to star, a to archive, d to delete)
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Ignore if typing in an input
       if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
-
       if (displayList.length === 0) return;
 
       if (e.key === 'j' || e.key === 'ArrowDown') {
@@ -1028,20 +1034,18 @@ export default function LibraryApp() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [displayList, selectedIndex, addToast]);
 
-  // ── All unique tags across all metas (for color legend)
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
     metas.forEach(m => m.tags.forEach(t => tagSet.add(t)));
     return Array.from(tagSet).sort();
   }, [metas]);
 
-  // ── Pagination
   const totalPages = Math.max(1, Math.ceil(displayList.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const pageSlice = displayList.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
-    <div className="flex h-screen bg-background text-white">
+    <div className="flex h-screen bg-[var(--color-canvas-soft)] text-[var(--color-ink)]">
       <input
         type="file"
         ref={fileInputRef}
@@ -1064,6 +1068,7 @@ export default function LibraryApp() {
         tagColors={tagColors}
         onSetTagColor={handleSetTagColor}
         allTags={allTags}
+        documentCount={displayList.length}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -1075,6 +1080,7 @@ export default function LibraryApp() {
           folders={folders}
           activeFolderId={activeFolderId}
           onFolderSelect={id => { setActiveFolderId(id); setPage(1); }}
+          documentCount={displayList.length}
           searchSlot={
             <SearchInput
               metas={filtered}
@@ -1086,10 +1092,10 @@ export default function LibraryApp() {
 
         {activeTag && (
           <div className="flex items-center gap-2 px-6 pt-3">
-            <span className="font-mono text-[10px] text-muted uppercase">FILTERING BY:</span>
-            <Badge variant="outline" className="font-mono text-[10px] uppercase border-primary text-primary gap-1.5">
+            <span className="text-[11px] text-[var(--color-ink-muted)]">Filtering by:</span>
+            <Badge variant="outline" className="text-[11px] font-medium rounded-full border-[var(--color-primary)] text-[var(--color-primary)] gap-1.5">
               {activeTag}
-              <button onClick={() => { setActiveTag(null); setPage(1); }} className="hover:text-white leading-none">×</button>
+              <button onClick={() => { setActiveTag(null); setPage(1); }} className="hover:text-[var(--color-primary-active)] leading-none">&times;</button>
             </Badge>
           </div>
         )}
@@ -1108,6 +1114,7 @@ export default function LibraryApp() {
             folders={folders}
             viewMode={viewMode}
             loading={loading}
+            error={loadError}
             onStar={handleStar}
             onArchive={handleArchive}
             onDelete={handleDelete}

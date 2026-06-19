@@ -1,11 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(Get-ChildItem -Path \"D:\\\\Pratyush Tiwari\\\\Primary\\\\notch\\\\public\\\\vendor\" -ErrorAction SilentlyContinue)",
-      "Bash(Get-ChildItem -Path \"D:\\\\Pratyush Tiwari\\\\Primary\\\\notch\\\\.output\" -Directory -ErrorAction SilentlyContinue)",
-      "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(npx tsc *)",
-      "Bash(npm run *)"
+      "Bash(npx vitest *)",
+      "Bash(npx wxt *)"
     ]
   }
 }

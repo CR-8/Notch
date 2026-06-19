@@ -30,15 +30,25 @@ export async function retrieveTopK(
   queryEmbedding: Float32Array,
   embeddingVersion: number,
   k: number = 6,
+  noteId?: string,
 ): Promise<RetrievedChunk[]> {
   const vectors = await db.vectors
     .where('embeddingVersion')
     .equals(embeddingVersion)
     .toArray();
 
+  // When a note is given, restrict scoring to that document's chunks so a query
+  // in the reader only retrieves from the document currently open.
+  let allowedChunkIds: Set<string> | null = null;
+  if (noteId) {
+    const docChunkIds = await db.chunks.where('noteId').equals(noteId).primaryKeys();
+    allowedChunkIds = new Set(docChunkIds as string[]);
+  }
+
   const scored: Array<{ chunkId: string; score: number }> = [];
 
   for (const v of vectors) {
+    if (allowedChunkIds && !allowedChunkIds.has(v.chunkId)) continue;
     const vec = v.embedding instanceof Float32Array
       ? v.embedding
       : new Float32Array(Object.values(v.embedding));
@@ -63,13 +73,16 @@ export function buildRAGPrompt(
   query: string,
   chunks: RetrievedChunk[],
   history: Array<{ role: string; content: string }> = [],
+  styleInstruction?: string,
 ): string {
   const chunksText = chunks
     .map((c, i) => `[${i + 1}] ${c.text}${c.heading ? ` (from section: ${c.heading})` : ''}`)
     .join('\n\n---\n\n');
 
   let prompt = `You are a precise question-answering assistant. Answer using ONLY the provided note excerpts.\n\n`;
-  prompt += `RULES:\n- Lead with a direct answer (1-2 sentences)\n- Support with details and cite each fact as [N]\n- If the answer is not in the excerpts, say so\n- Never hallucinate or infer outside the excerpts\n\n`;
+  prompt += `RULES:\n- Lead with a direct answer (1-2 sentences)\n- Support with details and cite each fact as [N]\n- If the answer is not in the excerpts, say so\n- Never hallucinate or infer outside the excerpts\n`;
+  if (styleInstruction) prompt += `- ${styleInstruction}\n`;
+  prompt += `\n`;
 
   if (history.length > 0) {
     prompt += `CONVERSATION HISTORY:\n${history.map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n')}\n\n`;

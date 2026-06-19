@@ -1,12 +1,14 @@
 import type { ProviderAdapter, ProviderConfig, ChatProvider, EmbeddingProvider, ChatRequest, ChatChunk, TestResult } from '../types';
-import { AIClientError } from './errors';
+import { AIClientError, describeHttpError } from './errors';
 
 const GeminiChatProvider = (cfg: ProviderConfig): ChatProvider => ({
   id: cfg.id,
   capabilities: { streaming: true, maxContextTokens: 1000000 },
   async *generate(req: ChatRequest) {
     const baseUrl = cfg.baseUrl.replace(/\/+$/, '');
-    const url = `${baseUrl}/models/${req.model}:streamGenerateContent?key=${cfg.apiKey}`;
+    // alt=sse makes Gemini stream Server-Sent Events ("data: {…}") instead of a
+    // single JSON array; the parser below relies on that line framing.
+    const url = `${baseUrl}/models/${req.model}:streamGenerateContent?alt=sse&key=${cfg.apiKey}`;
 
     const contents = req.messages.map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
@@ -22,7 +24,7 @@ const GeminiChatProvider = (cfg: ProviderConfig): ChatProvider => ({
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new AIClientError(`Gemini API error ${res.status}: ${text}`, 'API_ERROR', res.status);
+      throw new AIClientError(describeHttpError('Gemini', res.status, text), 'API_ERROR', res.status);
     }
 
     const reader = res.body?.getReader();
@@ -71,7 +73,7 @@ const GeminiEmbeddingProvider = (cfg: ProviderConfig): EmbeddingProvider => ({
 
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
-        throw new AIClientError(`Gemini embed error ${res.status}: ${errText}`, 'API_ERROR', res.status);
+        throw new AIClientError(describeHttpError('Gemini', res.status, errText), 'API_ERROR', res.status);
       }
 
       const data = await res.json() as { embedding?: { values?: number[] } };
@@ -102,7 +104,7 @@ export function createGeminiAdapter(): ProviderAdapter {
 
         if (!res.ok) {
           const text = await res.text().catch(() => '');
-          return { success: false, latencyMs: Date.now() - t0, error: `${res.status}: ${text}` };
+          return { success: false, latencyMs: Date.now() - t0, error: describeHttpError('Gemini', res.status, text) };
         }
 
         // Also test embedding endpoint if configured

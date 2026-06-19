@@ -229,6 +229,85 @@ async function renderReaderSnapshotToPdf(
   }
 }
 
+/**
+ * BUG-005/006/007/008 — High-fidelity PDF via the browser's own print engine.
+ *
+ * The hand-rolled pdf-lib drawer (below) cannot render Mermaid/UML diagrams (they
+ * leak out as raw fenced code) and its manual cursor math causes overlap. Instead
+ * we clone the *already rendered* reader DOM — which contains the Mermaid/UML SVGs,
+ * laid-out tables and images — into an isolated iframe, copy the page stylesheets,
+ * add print rules (page margins, avoid breaking inside diagrams/code/tables, repeat
+ * table headers across pages) and let the browser paginate. Output is selectable,
+ * searchable text with real diagrams. Returns false if it can't run (caller falls
+ * back to pdf-lib).
+ */
+export async function exportViaPrint(doc: Document, sourceElement?: HTMLElement | null): Promise<boolean> {
+  if (typeof document === 'undefined' || !sourceElement) return false;
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+    document.body.appendChild(iframe);
+
+    const idoc = iframe.contentDocument;
+    const iwin = iframe.contentWindow;
+    if (!idoc || !iwin) { iframe.remove(); return false; }
+
+    // Reuse the page's compiled styles (Tailwind tokens, prose styles).
+    const headStyles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+      .map((n) => n.outerHTML)
+      .join('\n');
+
+    const printCss = `
+      @page { size: A4; margin: 16mm; }
+      :root { color-scheme: light; }
+      html, body { background: #fff !important; }
+      body { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .notch-print-root { max-width: 100%; color: #1a1a1a; }
+      .notch-print-root img, .notch-print-root svg { max-width: 100% !important; height: auto !important; }
+      /* Don't split atomic blocks across pages (BUG-005). */
+      pre, figure, table, blockquote, [data-diagram-kind], .notion-prose pre {
+        break-inside: avoid; page-break-inside: avoid;
+      }
+      h1, h2, h3, h4 { break-after: avoid; page-break-after: avoid; }
+      /* Tables: full width, real borders, repeat the header on every page (BUG-008). */
+      table { width: 100%; border-collapse: collapse; }
+      thead { display: table-header-group; }
+      tr { break-inside: avoid; page-break-inside: avoid; }
+      th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+    `;
+
+    const title = (doc.title || 'document').replace(/[<>&]/g, '');
+    idoc.open();
+    idoc.write(
+      `<!doctype html><html data-theme="light"><head><meta charset="utf-8"><title>${title}</title>` +
+      `${headStyles}<style>${printCss}</style></head>` +
+      `<body><div class="notch-print-root notion-prose">${sourceElement.innerHTML}</div></body></html>`,
+    );
+    idoc.close();
+
+    // Wait for fonts and images so nothing prints half-loaded.
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      iframe.addEventListener('load', () => setTimeout(finish, 150), { once: true });
+      // Fallback if 'load' already fired or never fires.
+      setTimeout(finish, MEDIA_WAIT_TIMEOUT_MS);
+    });
+    try { await idoc.fonts?.ready; } catch { /* fonts API optional */ }
+
+    iwin.focus();
+    iwin.print();
+
+    // Give the print dialog time to grab the document before teardown.
+    setTimeout(() => iframe.remove(), 1000);
+    return true;
+  } catch (err) {
+    log.warn('storage', 'Print-to-PDF failed; falling back to pdf-lib', err);
+    return false;
+  }
+}
+
 export async function exportPDF(doc: Document, options: PDFExportOptions = {}): Promise<void> {
   log.info('storage', `Exporting RAG PDF for: ${doc.title}`);
 

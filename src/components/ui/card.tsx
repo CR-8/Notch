@@ -9,7 +9,8 @@ const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "rounded-lg border bg-card text-card-foreground shadow-sm",
+      // Notion feature-card: white surface, 12px radius, flat hairline (no hard shadow).
+      "rounded-lg border border-[var(--color-hairline)] bg-card text-card-foreground",
       className
     )}
     {...props}

@@ -1,5 +1,6 @@
 export type GenerationMode = 'FAST' | 'BALANCED' | 'DEEP';
 export type ViewMode = 'compact' | 'comfortable' | 'detailed';
+export type ReadingLevel = 'simple' | 'technical';
 export type ProviderProtocol = 'openai' | 'anthropic' | 'gemini';
 export type CaptureStatus = 'captured' | 'structuring' | 'chunked' | 'embedding' | 'ready' | 'failed';
 
@@ -54,6 +55,16 @@ export interface Document {
   keyEntities?: Entity[];
   folder?: string;
   embeddingsGenerated?: boolean;
+  // Content Intelligence Engine fields
+  enrichedContent?: string;
+  semanticAnalysis?: string; // JSON string of SemanticAnalysis
+  qualityScore?: number;
+  diagramCount?: number;
+  imageCount?: number;
+  calloutCount?: number;
+  hasToc?: boolean;
+  hasNumbering?: boolean;
+  pageBreakPrefs?: string;
 }
 
 export interface DocumentChunk {
@@ -84,6 +95,7 @@ export interface Conversation {
 
 export interface ChatMessage {
   id: string;
+  documentId?: string;
   role: 'user' | 'assistant';
   text: string;
   citations?: Citation[];
@@ -136,6 +148,8 @@ export interface AIRuntimeConfig {
 export interface Settings {
   runtime: AIRuntimeConfig;
   defaults: { tags: string[] };
+  // PRIV-3: when true, all work stays on-device — no network calls ever.
+  localOnly?: boolean;
   // Backward-compat fields
   apiKey?: string;
   provider?: string;
@@ -207,6 +221,7 @@ export const SUPPORTED_MODELS: AIModel[] = [
   { id: 'openai/gpt-4o', name: 'GPT-4o (OpenRouter)', contextWindow: 128000 },
   { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet (OpenRouter)', contextWindow: 200000 },
   { id: 'google/gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (OpenRouter)', contextWindow: 1000000 },
+  { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash Free (OpenRouter)', contextWindow: 1000000 },
   { id: 'deepseek/deepseek-chat-v3', name: 'DeepSeek V3 (OpenRouter)', contextWindow: 64000 },
   { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B (OpenRouter)', contextWindow: 32000 },
   { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', contextWindow: 1000000 },
@@ -225,17 +240,30 @@ export type DocumentHighlight = {
 };
 
 export type RuntimeMessage =
-  | { type: 'CAPTURE_PAGE'; payload: { mode: GenerationMode; tags: string[] } }
+  | { type: 'CAPTURE_PAGE'; payload: { mode: GenerationMode; tags: string[]; tabId?: number; url?: string } }
   | { type: 'CAPTURE_PROGRESS'; payload: { step: string; pct: number } }
   | { type: 'CAPTURE_COMPLETE'; payload: { documentId: string } }
   | { type: 'CAPTURE_ERROR'; payload: { error: string } }
-  | { type: 'RAG_QUERY'; payload: { query: string } }
+  | { type: 'RAG_QUERY'; payload: { documentId: string; query: string; readingLevel?: ReadingLevel } }
   | { type: 'RAG_RESPONSE'; payload: { answer: string; citations: Citation[] } }
   | { type: 'RAG_ERROR'; payload: { error: string } }
+  | { type: 'GENERATE_EMBEDDINGS'; payload: { documentId: string } }
+  | { type: 'IMPORT_PDF'; payload: { fileName: string; bytes: number[]; tags: string[] } }
+  | { type: 'TRANSLATE'; payload: { text: string; targetLanguage: string } }
+  | { type: 'TRANSLATE_RESULT'; payload: { translated: string } }
+  | { type: 'TRANSLATE_ERROR'; payload: { error: string } }
   | { type: 'EXTRACT_DOM'; payload: Record<string, never> }
   | { type: 'DOM_PAYLOAD'; payload: DOMExtraction }
   | { type: 'STORAGE_QUOTA_WARNING'; payload: { usedBytes: number; quotaBytes: number } }
   | { type: 'TEST_CONNECTION'; payload: { providerId: string } }
   | { type: 'TEST_CONNECTION_RESULT'; payload: { providerId: string; result: TestResult } }
   | { type: 'RE_EMBED_ALL'; payload: { providerId: string; model: string } }
-  | { type: 'RE_EMBED_PROGRESS'; payload: { done: number; total: number } };
+  | { type: 'RE_EMBED_PROGRESS'; payload: { done: number; total: number } }
+  // Content Intelligence Engine message types
+  | { type: 'ENRICH_DOCUMENT'; payload: { documentId: string; mode: 'FAST' | 'BALANCED' | 'DEEP' } }
+  | { type: 'ENRICH_COMPLETE'; payload: { documentId: string; enriched: boolean; diagramCount: number; calloutCount: number } }
+  | { type: 'ENRICH_ERROR'; payload: { error: string } }
+  | { type: 'EXPORT_ENHANCED_PDF'; payload: { documentId: string; options: { title: string; includeToc: boolean; includePageNumbers: boolean } } }
+  | { type: 'EXPORT_ENHANCED_PROGRESS'; payload: { step: string; pct: number } }
+  | { type: 'EXPORT_ENHANCED_COMPLETE'; payload: { pdfBytes: number[] } }
+  | { type: 'EXPORT_ENHANCED_ERROR'; payload: { error: string } };

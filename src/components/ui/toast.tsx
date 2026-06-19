@@ -60,10 +60,12 @@ function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove: (id: 
 }
 
 function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: (id: string) => void }) {
-  const bgColor = {
-    success: 'bg-green-900/90 border-green-500',
-    error: 'bg-red-900/90 border-red-500',
-    info: 'bg-surface border-border',
+  // Notion ex-toast: white feature-card surface + medium shadow. Status is carried
+  // by the sticker palette (affirmative green) rather than a coloured fill.
+  const accent = {
+    success: 'var(--color-accent-green)',
+    error: 'var(--color-destructive)',
+    info: 'var(--color-primary)',
   }[toast.type];
 
   const icon = {
@@ -74,22 +76,14 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: (id: string) =
 
   return (
     <div
-      className={cn(
-        'flex items-center gap-3 px-4 py-3 border-l-4 shadow-lg cursor-pointer transition-all hover:scale-105',
-        bgColor
-      )}
+      className="flex items-center gap-3 px-4 py-3 rounded-lg border border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-level-2 cursor-pointer"
       onClick={() => onRemove(toast.id)}
     >
-      <span className={cn(
-        'font-mono text-sm',
-        toast.type === 'success' && 'text-green-400',
-        toast.type === 'error' && 'text-red-400',
-        toast.type === 'info' && 'text-primary'
-      )}>
+      <span className="text-[14px] leading-none shrink-0" style={{ color: accent }}>
         {icon}
       </span>
-      <p className="font-mono text-xs text-white flex-1">{toast.message}</p>
-      <button className="text-muted hover:text-white text-lg leading-none">×</button>
+      <p className="text-[14px] leading-snug text-[var(--color-ink)] flex-1">{toast.message}</p>
+      <button className="text-[16px] leading-none text-[var(--color-ink-faint)] hover:text-[var(--color-ink)] shrink-0">×</button>
     </div>
   );
 }

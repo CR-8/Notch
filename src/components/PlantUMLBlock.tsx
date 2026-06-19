@@ -42,9 +42,10 @@ export function PlantUMLBlock({ code }: PlantUMLBlockProps) {
   }, [code]);
 
   return (
-    // Parchment card — PlantUML server renders with dark strokes, needs light bg
+    // Warm-paper well with a hairline edge — PlantUML renders dark strokes, so a
+    // light surface keeps contrast high while staying in the Notion document rhythm.
     <div
-      className="my-4 border border-border bg-[#f5ead3] p-4 overflow-x-auto"
+      className="my-4 rounded-lg border border-[var(--color-hairline)] bg-[var(--color-canvas-soft)] p-4 overflow-x-auto"
       data-diagram-kind="plantuml"
       data-diagram-status={status}
     >
@@ -56,8 +57,8 @@ export function PlantUMLBlock({ code }: PlantUMLBlockProps) {
 
       {!loading && error && (
         <>
-          <span className="font-mono text-xs text-danger">[DIAGRAM UNAVAILABLE]</span>
-          <pre className="font-mono text-xs text-muted mt-2 whitespace-pre-wrap break-all">{code}</pre>
+          <span className="text-[12px] font-medium text-[var(--color-destructive)]">Diagram unavailable</span>
+          <pre className="font-mono text-[12px] text-[var(--color-ink-muted)] mt-2 whitespace-pre-wrap break-all">{code}</pre>
         </>
       )}
     </div>

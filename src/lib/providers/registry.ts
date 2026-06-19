@@ -3,7 +3,6 @@ import { log } from '../logger';
 import { createOpenAIAdapter } from './openai';
 import { createAnthropicAdapter } from './anthropic';
 import { createGeminiAdapter } from './gemini';
-import { createMockAdapter } from './mock';
 
 const _adapters = new Map<string, ProviderAdapter>();
 
@@ -15,7 +14,6 @@ function register(adapter: ProviderAdapter): void {
 register(createOpenAIAdapter());
 register(createAnthropicAdapter());
 register(createGeminiAdapter());
-register(createMockAdapter());
 
 export function getAdapter(protocol: string): ProviderAdapter {
   const a = _adapters.get(protocol);
@@ -64,10 +62,10 @@ export const PRESETS: Array<{
     embeddingDimensions: 1536,
   },
   {
-    label: 'OpenRouter',
+    label: 'OpenRouter (Free)',
     protocol: 'openai',
     baseUrl: 'https://openrouter.ai/api/v1',
-    chatModel: 'anthropic/claude-3.5-sonnet',
+    chatModel: 'google/gemini-2.0-flash-exp:free',
     embeddingModel: '',
     embeddingDimensions: 0,
   },
@@ -84,6 +82,22 @@ export const PRESETS: Array<{
     protocol: 'anthropic',
     baseUrl: 'https://api.anthropic.com/v1',
     chatModel: 'claude-sonnet-4-20250514',
+    embeddingModel: '',
+    embeddingDimensions: 0,
+  },
+  {
+    label: 'MiniMax',
+    protocol: 'openai',
+    baseUrl: 'https://api.minimax.chat/v1',
+    chatModel: 'minimax/abab6.5s-chat',
+    embeddingModel: '',
+    embeddingDimensions: 0,
+  },
+  {
+    label: 'Together AI',
+    protocol: 'openai',
+    baseUrl: 'https://api.together.xyz/v1',
+    chatModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
     embeddingModel: '',
     embeddingDimensions: 0,
   },

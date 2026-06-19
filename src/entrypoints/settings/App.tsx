@@ -5,6 +5,7 @@ import {
   getAllProviders, saveProvider, deleteProvider, getProvider,
 } from '../../lib/storage';
 import { PRESETS, testProviderConnection } from '../../lib/providers/registry';
+import { applyAppearance, watchAppearance } from '../../lib/theme';
 import type {
   Settings, ProviderConfig, ProviderProtocol,
   AppearanceSettings, GenerationMode, TestResult,
@@ -42,23 +43,23 @@ function ProviderForm({
   testing: boolean;
 }) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div>
-        <label className="font-mono text-[10px] uppercase tracking-widest text-muted block mb-1">Label</label>
+        <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">Label</label>
         <input
           value={cfg.label}
           onChange={(e) => onChange({ ...cfg, label: e.target.value })}
-          className="w-full font-mono text-xs bg-surface border border-border text-white p-2 outline-none focus:shadow-[0_0_0_1px_var(--color-primary),0_0_0_4px_rgb(199_161_90_/_16%)]"
+          className="notion-input"
           placeholder="My API Key"
         />
       </div>
 
       <div>
-        <label className="font-mono text-[10px] uppercase tracking-widest text-muted block mb-1">Protocol</label>
+        <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">Protocol</label>
         <select
           value={cfg.protocol}
           onChange={(e) => onChange({ ...cfg, protocol: e.target.value as ProviderProtocol })}
-          className="w-full font-mono text-xs bg-surface border border-border text-white p-2 outline-none"
+          className="notion-input cursor-pointer"
         >
           <option value="openai">OpenAI-compatible</option>
           <option value="anthropic">Anthropic (native)</option>
@@ -67,42 +68,42 @@ function ProviderForm({
       </div>
 
       <div>
-        <label className="font-mono text-[10px] uppercase tracking-widest text-muted block mb-1">Base URL</label>
+        <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">Base URL</label>
         <input
           value={cfg.baseUrl}
           onChange={(e) => onChange({ ...cfg, baseUrl: e.target.value })}
-          className="w-full font-mono text-xs bg-surface border border-border text-white p-2 outline-none"
+          className="notion-input"
           placeholder="https://api.openai.com/v1"
         />
       </div>
 
       <div>
-        <label className="font-mono text-[10px] uppercase tracking-widest text-muted block mb-1">API Key</label>
+        <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">API Key</label>
         <input
           type="password"
           value={cfg.apiKey}
           onChange={(e) => onChange({ ...cfg, apiKey: e.target.value })}
-          className="w-full font-mono text-xs bg-surface border border-border text-white p-2 outline-none"
+          className="notion-input"
           placeholder="sk-..."
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="font-mono text-[10px] uppercase tracking-widest text-muted block mb-1">Chat Model</label>
+          <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">Chat Model</label>
           <input
             value={cfg.chatModel}
             onChange={(e) => onChange({ ...cfg, chatModel: e.target.value })}
-            className="w-full font-mono text-xs bg-surface border border-border text-white p-2 outline-none"
+            className="notion-input"
             placeholder="gpt-4o-mini"
           />
         </div>
         <div>
-          <label className="font-mono text-[10px] uppercase tracking-widest text-muted block mb-1">Embedding Model</label>
+          <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">Embedding Model</label>
           <input
             value={cfg.embeddingModel}
             onChange={(e) => onChange({ ...cfg, embeddingModel: e.target.value })}
-            className="w-full font-mono text-xs bg-surface border border-border text-white p-2 outline-none"
+            className="notion-input"
             placeholder="text-embedding-3-small"
           />
         </div>
@@ -112,18 +113,18 @@ function ProviderForm({
         onClick={onTest}
         disabled={testing}
         className={cn(
-          'w-full py-2 font-mono text-xs uppercase tracking-wider border transition-colors',
-          testing ? 'border-primary text-primary' : 'border-border text-white hover:bg-surface-hover',
+          'w-full py-2.5 text-[13px] font-medium rounded-full border transition-all',
+          testing ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5' : 'notion-btn-utility w-full justify-center'
         )}
       >
-        {testing ? '[TESTING...]' : '[TEST CONNECTION]'}
+        {testing ? 'Testing...' : 'Test Connection'}
       </button>
 
       {testResult && (
-        <div className={cn('font-mono text-[10px] p-2 border', testResult.success ? 'border-primary text-primary' : 'border-danger text-danger')}>
+        <div className={cn('text-[12px] p-3 rounded-lg border', testResult.success ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5' : 'border-[var(--color-destructive)] text-[var(--color-destructive)] bg-[var(--color-destructive)]/5')}>
           {testResult.success
-            ? `✓ Connected (${testResult.latencyMs}ms)${testResult.model ? ` — ${testResult.model}` : ''}${testResult.dimensions ? `, ${testResult.dimensions}d embedding` : ''}`
-            : `✗ ${testResult.error ?? 'Connection failed'}`}
+            ? `Connected (${testResult.latencyMs}ms)${testResult.model ? ` — ${testResult.model}` : ''}${testResult.dimensions ? `, ${testResult.dimensions}d embedding` : ''}`
+            : `${testResult.error ?? 'Connection failed'}`}
         </div>
       )}
     </div>
@@ -132,14 +133,14 @@ function ProviderForm({
 
 function PresetSelector({ onSelect }: { onSelect: (preset: typeof PRESETS[number]) => void }) {
   return (
-    <div className="space-y-1">
-      <p className="font-mono text-[10px] uppercase tracking-widest text-muted mb-2">Quick Add Provider</p>
-      <div className="grid grid-cols-2 gap-1.5">
+    <div>
+      <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-2">Quick Add Provider</p>
+      <div className="grid grid-cols-2 gap-2">
         {PRESETS.map((p) => (
           <button
             key={p.label}
             onClick={() => onSelect(p)}
-            className="text-left font-mono text-[10px] uppercase tracking-wider border border-border p-2 text-white hover:bg-surface-hover transition-colors"
+            className="text-left text-[12px] font-medium border border-[var(--color-hairline)] rounded-lg px-3 py-2.5 text-[var(--color-ink)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 transition-all"
           >
             {p.label}
           </button>
@@ -159,20 +160,20 @@ function ProviderCard({
   onDelete: () => void;
 }) {
   return (
-    <div className={cn('border p-3 space-y-1', active ? 'border-primary' : 'border-border')}>
+    <div className={cn('rounded-xl border p-4 space-y-2 bg-white transition-all', active ? 'border-[var(--color-primary)] ring-1 ring-[var(--color-primary)]' : 'border-[var(--color-hairline)] hover:border-[var(--color-primary)]')}>
       <div className="flex items-center justify-between">
-        <span className="font-mono text-xs uppercase tracking-wider text-white">{provider.label || 'Unnamed'}</span>
-        <span className="font-mono text-[9px] uppercase text-muted">{provider.protocol}</span>
+        <span className="text-[14px] font-semibold text-[var(--color-ink)]">{provider.label || 'Unnamed'}</span>
+        <span className="text-[11px] font-medium text-[var(--color-ink-muted)] bg-[var(--color-canvas-soft)] px-2 py-0.5 rounded-full">{provider.protocol}</span>
       </div>
-      <p className="font-mono text-[9px] text-muted truncate">{provider.baseUrl}</p>
-      <p className="font-mono text-[9px] text-muted truncate">Chat: {provider.chatModel || '—'} / Embed: {provider.embeddingModel || '—'}</p>
-      <div className="flex gap-1.5 mt-1.5">
+      <p className="text-[12px] text-[var(--color-ink-muted)] truncate">{provider.baseUrl}</p>
+      <p className="text-[11px] text-[var(--color-ink-faint)] truncate">Chat: {provider.chatModel || '\u2014'} / Embed: {provider.embeddingModel || '\u2014'}</p>
+      <div className="flex gap-2 mt-2">
         {!active && (
-          <button onClick={onActivate} className="font-mono text-[9px] uppercase tracking-wider border border-primary text-primary px-2 py-1 hover:bg-primary/10 transition-colors">[ACTIVATE]</button>
+          <button onClick={onActivate} className="notion-btn-primary text-[12px] py-1.5 px-4">Activate</button>
         )}
-        {active && <span className="font-mono text-[9px] uppercase text-primary px-2 py-1 border border-primary">ACTIVE</span>}
-        <button onClick={onEdit} className="font-mono text-[9px] uppercase tracking-wider border border-border text-white px-2 py-1 hover:bg-surface-hover transition-colors">[EDIT]</button>
-        <button onClick={onDelete} className="font-mono text-[9px] uppercase tracking-wider border border-danger text-danger px-2 py-1 hover:bg-danger/10 transition-colors">[DELETE]</button>
+        {active && <span className="text-[12px] font-medium text-[var(--color-primary)] px-3 py-1.5 rounded-full bg-[var(--color-primary)]/5">Active</span>}
+        <button onClick={onEdit} className="notion-btn-utility text-[12px]">Edit</button>
+        <button onClick={onDelete} className="notion-btn-utility text-[12px] text-[var(--color-destructive)] border-[var(--color-destructive)] hover:bg-[var(--color-destructive)]/5">Delete</button>
       </div>
     </div>
   );
@@ -187,15 +188,26 @@ export default function SettingsApp() {
   const [settings, setSettingsState] = useState<Settings | null>(null);
   const [saved, setSaved] = useState(false);
 
-  // Appearance state
   const [theme, setTheme] = useState<AppearanceSettings['theme']>('dark');
   const [fontFamily, setFontFamily] = useState<AppearanceSettings['fontFamily']>('mono');
   const [fontSize, setFontSize] = useState<AppearanceSettings['fontSize']>('md');
-  const [accentColor, setAccentColor] = useState('#e07c3a');
+  const [accentColor, setAccentColor] = useState('#0075de');
 
   useEffect(() => {
     loadAll();
+    return watchAppearance(a => {
+      setTheme(a.theme);
+      setFontFamily(a.fontFamily);
+      setFontSize(a.fontSize);
+      setAccentColor(a.accentColor);
+      applyAppearance(a);
+    });
   }, []);
+
+  // Live preview the theme/accent as the user edits, before saving.
+  useEffect(() => {
+    applyAppearance({ theme, fontFamily, fontSize, accentColor });
+  }, [theme, accentColor, fontFamily, fontSize]);
 
   async function loadAll() {
     const [provs, s, a] = await Promise.all([
@@ -209,6 +221,7 @@ export default function SettingsApp() {
     setFontFamily(a.fontFamily);
     setFontSize(a.fontSize);
     setAccentColor(a.accentColor);
+    applyAppearance(a);
   }
 
   async function handleSaveAppearance() {
@@ -264,7 +277,6 @@ export default function SettingsApp() {
     const p = await getProvider(providerId);
     if (!p) return;
 
-    // Disable all others, enable this one
     for (const prov of providers) {
       await saveProvider({ ...prov, enabled: prov.id === providerId });
     }
@@ -313,49 +325,52 @@ export default function SettingsApp() {
   const activeProvider = providers.find(p => p.enabled);
 
   return (
-    <div className="min-h-screen bg-background text-white p-6 max-w-2xl mx-auto">
-      <h1 className="font-mono text-xl font-bold uppercase tracking-widest mb-6">NOTCH SETTINGS</h1>
+    <div className="min-h-screen bg-[var(--color-canvas-soft)] text-[var(--color-ink)] p-8 max-w-3xl mx-auto">
+      <h1 className="text-[26px] font-bold tracking-tight mb-8">Notch Settings</h1>
 
-      {/* Tab bar */}
-      <div className="flex gap-1 mb-6">
+      <div className="flex gap-1 mb-8 bg-white rounded-lg border border-[var(--color-hairline)] p-1">
         <button
           onClick={() => setTab('providers')}
-          className={cn('font-mono text-xs uppercase tracking-wider px-4 py-2 border transition-colors', tab === 'providers' ? 'border-primary text-primary' : 'border-border text-white hover:bg-surface-hover')}
+          className={cn(
+            'flex-1 py-2 text-[13px] font-medium rounded-md transition-all',
+            tab === 'providers' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+          )}
         >
-          [PROVIDERS]
+          Providers
         </button>
         <button
           onClick={() => setTab('appearance')}
-          className={cn('font-mono text-xs uppercase tracking-wider px-4 py-2 border transition-colors', tab === 'appearance' ? 'border-primary text-primary' : 'border-border text-white hover:bg-surface-hover')}
+          className={cn(
+            'flex-1 py-2 text-[13px] font-medium rounded-md transition-all',
+            tab === 'appearance' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+          )}
         >
-          [APPEARANCE]
+          Appearance
         </button>
       </div>
 
       {tab === 'providers' && (
         <div className="space-y-6">
-          {/* Active provider */}
           {activeProvider && (
-            <div className="border border-primary p-3">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-primary mb-1">Active Provider</p>
-              <p className="font-mono text-xs text-white">{activeProvider.label}</p>
-              <p className="font-mono text-[9px] text-muted">{activeProvider.baseUrl} — chat: {activeProvider.chatModel}</p>
+            <div className="rounded-xl border border-[var(--color-primary)] bg-white p-5">
+              <p className="text-[11px] font-semibold text-[var(--color-primary)] uppercase tracking-wide mb-1">Active Provider</p>
+              <p className="text-[16px] font-semibold text-[var(--color-ink)]">{activeProvider.label}</p>
+              <p className="text-[12px] text-[var(--color-ink-muted)]">{activeProvider.baseUrl} &mdash; chat: {activeProvider.chatModel}</p>
             </div>
           )}
 
           {!activeProvider && (
-            <div className="border border-danger p-3">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-danger">No active provider configured. Add one below.</p>
+            <div className="rounded-xl border border-[var(--color-destructive)] bg-white p-5">
+              <p className="text-[13px] font-medium text-[var(--color-destructive)]">No active provider configured. Add one below.</p>
             </div>
           )}
 
-          {/* Provider list */}
-          <div className="space-y-2">
-            <p className="font-mono text-xs uppercase tracking-widest text-white">Configured Providers</p>
+          <div>
+            <h2 className="text-[15px] font-semibold mb-3">Configured Providers</h2>
             {providers.length === 0 && (
-              <p className="font-mono text-[10px] text-muted">No providers configured yet.</p>
+              <p className="text-[13px] text-[var(--color-ink-muted)]">No providers configured yet.</p>
             )}
-            <div className="space-y-2">
+            <div className="space-y-3">
               {providers.map((p) => (
                 <ProviderCard
                   key={p.id}
@@ -369,12 +384,11 @@ export default function SettingsApp() {
             </div>
           </div>
 
-          {/* Editing form */}
           {editing && (
-            <div className="border border-border p-4 space-y-4">
-              <p className="font-mono text-xs uppercase tracking-widest text-white">
-                {providers.find(p => p.id === editing.id) ? 'EDIT PROVIDER' : 'NEW PROVIDER'}
-              </p>
+            <div className="rounded-xl border border-[var(--color-hairline)] bg-white p-6 space-y-5">
+              <h2 className="text-[15px] font-semibold">
+                {providers.find(p => p.id === editing.id) ? 'Edit Provider' : 'New Provider'}
+              </h2>
               <ProviderForm
                 cfg={editing}
                 onChange={setEditing}
@@ -382,94 +396,121 @@ export default function SettingsApp() {
                 testResult={testResult}
                 testing={testing}
               />
-              <div className="flex gap-2">
+              <div className="flex gap-3 pt-2">
                 <button
                   onClick={handleSaveProvider}
-                  className="flex-1 py-2 font-mono text-xs uppercase tracking-wider border border-primary text-primary hover:bg-primary/10 transition-colors"
+                  className="notion-btn-primary flex-1 text-[14px]"
                 >
-                  [SAVE]
+                  Save
                 </button>
                 <button
                   onClick={() => setEditing(null)}
-                  className="flex-1 py-2 font-mono text-xs uppercase tracking-wider border border-border text-white hover:bg-surface-hover transition-colors"
+                  className="notion-btn-utility flex-1 justify-center text-[14px]"
                 >
-                  [CANCEL]
+                  Cancel
                 </button>
               </div>
             </div>
           )}
 
-          {/* Presets */}
           {!editing && (
             <PresetSelector onSelect={handlePresetSelect} />
           )}
 
-          {/* Add new button */}
           {!editing && (
             <button
               onClick={handleNewProvider}
-              className="w-full py-3 font-mono text-xs uppercase tracking-wider border-2 border-dashed border-border text-muted hover:text-white hover:border-primary transition-colors"
+              className="w-full py-3 text-[13px] font-medium rounded-xl border-2 border-dashed border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-all"
             >
-              [+ ADD CUSTOM PROVIDER]
+              + Add Custom Provider
             </button>
           )}
         </div>
       )}
 
       {tab === 'appearance' && (
-        <div className="space-y-4">
+        <div className="bg-white rounded-xl border border-[var(--color-hairline)] p-6 space-y-5">
           <div>
-            <label className="font-mono text-[10px] uppercase tracking-widest text-muted block mb-1">Theme</label>
-            <div className="flex gap-1.5">
+            <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-2">Theme</label>
+            <div className="flex gap-2">
               {(['dark', 'light', 'system'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTheme(t)}
-                  className={cn('flex-1 py-2 font-mono text-xs uppercase tracking-wider border transition-colors', theme === t ? 'border-primary text-primary' : 'border-border text-white hover:bg-surface-hover')}
+                  className={cn(
+                    'flex-1 py-2 text-[13px] font-medium rounded-md border transition-all',
+                    theme === t ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 text-[var(--color-primary)]' : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+                  )}
                 >
-                  {t}
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
                 </button>
               ))}
             </div>
           </div>
 
           <div>
-            <label className="font-mono text-[10px] uppercase tracking-widest text-muted block mb-1">Font</label>
-            <div className="flex gap-1.5">
+            <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-2">Font</label>
+            <div className="flex gap-2">
               {(['mono', 'serif', 'sans'] as const).map((f) => (
                 <button
                   key={f}
                   onClick={() => setFontFamily(f)}
-                  className={cn('flex-1 py-2 font-mono text-xs uppercase tracking-wider border transition-colors', fontFamily === f ? 'border-primary text-primary' : 'border-border text-white hover:bg-surface-hover')}
+                  className={cn(
+                    'flex-1 py-2 text-[13px] font-medium rounded-md border transition-all',
+                    fontFamily === f ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 text-[var(--color-primary)]' : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+                  )}
                 >
-                  {f}
+                  {f.charAt(0).toUpperCase() + f.slice(1)}
                 </button>
               ))}
             </div>
           </div>
 
           <div>
-            <label className="font-mono text-[10px] uppercase tracking-widest text-muted block mb-1">Accent Color</label>
+            <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-2">Font Size</label>
             <div className="flex gap-2">
+              {(['sm', 'md', 'lg'] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setFontSize(s)}
+                  className={cn(
+                    'flex-1 py-2 font-medium rounded-md border transition-all',
+                    fontSize === s ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 text-[var(--color-primary)]' : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]',
+                    s === 'sm' && 'text-[12px]', s === 'md' && 'text-[14px]', s === 'lg' && 'text-[16px]'
+                  )}
+                >
+                  {s === 'sm' ? 'Small' : s === 'md' ? 'Medium' : 'Large'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-2">Accent Color</label>
+            <div className="flex gap-3 items-center">
               <input
                 type="color"
                 value={accentColor}
                 onChange={(e) => setAccentColor(e.target.value)}
-                className="w-10 h-10 p-0 border border-border bg-transparent cursor-pointer"
+                className="w-10 h-10 p-0.5 border border-[var(--color-hairline)] rounded-md cursor-pointer bg-transparent"
               />
               <input
                 value={accentColor}
                 onChange={(e) => setAccentColor(e.target.value)}
-                className="flex-1 font-mono text-xs bg-surface border border-border text-white p-2 outline-none"
+                className="notion-input w-28"
+              />
+              <span
+                className="w-8 h-8 rounded-md border border-[var(--color-hairline)]"
+                style={{ backgroundColor: accentColor }}
               />
             </div>
           </div>
 
           <button
             onClick={handleSaveAppearance}
-            className="w-full py-3 font-mono text-xs uppercase tracking-wider border border-primary text-primary hover:bg-primary/10 transition-colors"
+            className="notion-btn-primary w-full text-[14px] mt-2"
           >
-            {saved ? '[SAVED]' : '[SAVE APPEARANCE]'}
+            {saved ? 'Saved' : 'Save Appearance'}
           </button>
         </div>
       )}

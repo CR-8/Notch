@@ -9,12 +9,16 @@ import type {
   AppearanceSettings,
   AIRuntimeConfig,
   ChatMessage,
+  Folder,
+  TagColorMap,
+  ViewMode,
+  DocumentMeta,
 } from './types';
 
 const SETTINGS_KEY = 'notch:settings';
 const APPEARANCE_KEY = 'notch:appearance';
 const SCHEMA_VERSION_KEY = 'notch:schema:version';
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 const DEFAULT_RUNTIME: AIRuntimeConfig = {
   chat: {
@@ -29,11 +33,13 @@ const DEFAULT_RUNTIME: AIRuntimeConfig = {
   },
 };
 
+// Dark by default; light is the toggleable alternate. Inter (sans) + Notion blue
+// accent per DESIGN.md.
 const DEFAULT_APPEARANCE: AppearanceSettings = {
   theme: 'dark',
-  fontFamily: 'mono',
+  fontFamily: 'sans',
   fontSize: 'md',
-  accentColor: '#e07c3a',
+  accentColor: '#0075de',
 };
 
 const DEFAULT_CHAT_MODELS: Record<string, string> = {
@@ -49,7 +55,32 @@ export async function ensureSchema(): Promise<void> {
   const version = (result[SCHEMA_VERSION_KEY] as number) ?? 0;
   if (version < CURRENT_SCHEMA_VERSION) {
     log.info('storage', `Migrating schema from v${version} to v${CURRENT_SCHEMA_VERSION}`);
-    // Future migrations go here
+
+    if (version < 2) {
+      // v2: Content Intelligence Engine — update existing documents with default values
+      try {
+        const allNotes = await db.notes.toArray();
+        for (const note of allNotes) {
+          const enrichedContent = note.content;
+          const diagramCount = (enrichedContent?.match(/```(?:mermaid|plantuml|flowchart|sequenceDiagram|classDiagram|erDiagram|stateDiagram|mindmap|timeline|gantt|pie|journey|gitGraph)\b/g) ?? []).length;
+          const calloutCount = (enrichedContent?.match(/\[!(?:NOTE|WARNING|TIP|DANGER|INFO)\]/g) ?? []).length;
+
+          await db.notes.put({
+            ...note,
+            enrichedContent: enrichedContent ?? note.textContent,
+            diagramCount,
+            calloutCount: calloutCount,
+            hasToc: (enrichedContent ?? '').includes('## Table of Contents'),
+            hasNumbering: true,
+            qualityScore: Math.min(100, 60 + diagramCount * 5 + calloutCount * 3),
+          });
+        }
+        log.success('storage', `Migrated ${allNotes.length} documents to v2 schema`);
+      } catch (err) {
+        log.warn('storage', 'Schema v2 migration error (non-fatal)', err);
+      }
+    }
+
     await browser.storage.local.set({ [SCHEMA_VERSION_KEY]: CURRENT_SCHEMA_VERSION });
   }
 }
@@ -88,15 +119,13 @@ export async function getDocument(id: string): Promise<Document | undefined> {
 }
 
 export async function deleteDocument(id: string): Promise<void> {
-  await db.transaction('rw', db.notes, db.chunks, db.vectors, db.messages, async () => {
+  await db.transaction('rw', db.notes, db.chunks, db.vectors, db.messages, db.highlights, async () => {
+    const chunkIds = await db.chunks.where('noteId').equals(id).primaryKeys();
     await db.notes.delete(id);
     await db.chunks.where('noteId').equals(id).delete();
-    await db.vectors.where('chunkId').anyOf(
-      (await db.chunks.where('noteId').equals(id).primaryKeys())
-    ).delete();
-    await db.messages.where('id').anyOf(
-      (await db.messages.filter(m => m.id.startsWith(id)).primaryKeys())
-    ).delete();
+    await db.vectors.where('chunkId').anyOf(chunkIds).delete();
+    await db.messages.where('documentId').equals(id).delete();
+    await db.highlights.where('documentId').equals(id).delete();
   });
 }
 
@@ -192,25 +221,28 @@ const KEYS = {
   meta: (id: string) => `notch:meta:${id}`,
 };
 
+// The library reads its document list via this index. Documents live in Dexie
+// (db.notes), so derive the index from there — newest first — rather than a
+// separate browser.storage list that capture never updated.
 export async function getDocIndex(): Promise<string[]> {
-  const result = await browser.storage.local.get(KEYS.docIndex);
-  return (result[KEYS.docIndex] as string[]) ?? [];
+  const notes = await db.notes.orderBy('createdAt').reverse().toArray();
+  return notes.map(d => d.id);
 }
 
 export async function saveDocIndex(index: string[]): Promise<void> {
   await browser.storage.local.set({ [KEYS.docIndex]: index });
 }
 
-export function deriveDocumentMeta(doc: Document): import('./types').DocumentMeta {
+export function deriveDocumentMeta(doc: Document): DocumentMeta {
   return {
     id: doc.id, title: doc.title, url: doc.url, domain: doc.domain,
     capturedAt: doc.capturedAt, wordCount: doc.wordCount, summary: doc.summary,
-    tags: doc.tags, folder: undefined, isStarred: doc.starred,
+    tags: doc.tags, folder: doc.folder, isStarred: doc.starred,
     isArchived: doc.archived, isRead: false, mode: 'FAST', provider: '',
   };
 }
 
-export async function getDocumentMetas(ids: string[]): Promise<import('./types').DocumentMeta[]> {
+export async function getDocumentMetas(ids: string[]): Promise<DocumentMeta[]> {
   const docs = await db.notes.bulkGet(ids);
   return docs.filter((d): d is Document => d != null).map(deriveDocumentMeta);
 }
@@ -224,30 +256,45 @@ export async function updateDocumentMeta(
   await db.notes.put({ ...doc, ...patch } as Document);
 }
 
-export async function getFolders(): Promise<import('./types').Folder[]> {
-  return [];
+const FOLDERS_KEY = 'notch:folders';
+const TAG_COLORS_KEY = 'notch:tagColors';
+const VIEW_MODE_KEY = 'notch:viewMode';
+
+export async function getFolders(): Promise<Folder[]> {
+  const result = await browser.storage.local.get(FOLDERS_KEY);
+  return (result[FOLDERS_KEY] as Folder[]) ?? [];
 }
 
-export async function saveFolder(_folder: import('./types').Folder): Promise<void> {
-  // no-op
+export async function saveFolder(folder: Folder): Promise<void> {
+  const folders = await getFolders();
+  const idx = folders.findIndex(f => f.id === folder.id);
+  if (idx >= 0) folders[idx] = folder;
+  else folders.push(folder);
+  await browser.storage.local.set({ [FOLDERS_KEY]: folders });
 }
 
-export async function deleteFolder(_folderId: string): Promise<void> {
-  // no-op
+export async function deleteFolder(folderId: string): Promise<void> {
+  const folders = (await getFolders()).filter(f => f.id !== folderId);
+  await browser.storage.local.set({ [FOLDERS_KEY]: folders });
 }
 
-export async function getTagColors(): Promise<import('./types').TagColorMap> {
-  return {};
+export async function getTagColors(): Promise<TagColorMap> {
+  const result = await browser.storage.local.get(TAG_COLORS_KEY);
+  return (result[TAG_COLORS_KEY] as TagColorMap) ?? {};
 }
 
-export async function setTagColor(_tag: string, _color: string | null): Promise<void> {
-  // no-op
+export async function setTagColor(tag: string, color: string | null): Promise<void> {
+  const colors = await getTagColors();
+  if (color === null) delete colors[tag];
+  else colors[tag] = color;
+  await browser.storage.local.set({ [TAG_COLORS_KEY]: colors });
 }
 
-export async function getViewMode(): Promise<'compact' | 'comfortable' | 'detailed'> {
-  return 'comfortable';
+export async function getViewMode(): Promise<ViewMode> {
+  const result = await browser.storage.local.get(VIEW_MODE_KEY);
+  return (result[VIEW_MODE_KEY] as ViewMode) ?? 'comfortable';
 }
 
-export async function saveViewMode(_mode: 'compact' | 'comfortable' | 'detailed'): Promise<void> {
-  // no-op
+export async function saveViewMode(mode: ViewMode): Promise<void> {
+  await browser.storage.local.set({ [VIEW_MODE_KEY]: mode });
 }

@@ -1,5 +1,5 @@
 import type { ProviderAdapter, ProviderConfig, ChatProvider, EmbeddingProvider, ChatRequest, ChatChunk, TestResult } from '../types';
-import { AIClientError } from './errors';
+import { AIClientError, describeHttpError } from './errors';
 
 function buildChatEndpoint(baseUrl: string): string {
   const url = baseUrl.replace(/\/+$/, '');
@@ -81,7 +81,7 @@ const OpenAICompatibleChatProvider = (cfg: ProviderConfig): ChatProvider => ({
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new AIClientError(`OpenAI API error ${res.status}: ${text}`, 'API_ERROR', res.status);
+      throw new AIClientError(describeHttpError('OpenAI-compatible', res.status, text), 'API_ERROR', res.status);
     }
 
     const reader = res.body?.getReader();
@@ -136,7 +136,7 @@ const OpenAICompatibleEmbeddingProvider = (cfg: ProviderConfig): EmbeddingProvid
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new AIClientError(`Embedding API error ${res.status}: ${text}`, 'API_ERROR', res.status);
+      throw new AIClientError(describeHttpError('Embedding', res.status, text), 'API_ERROR', res.status);
     }
 
     const data = await res.json() as { data: Array<{ embedding: number[] }> };
@@ -164,7 +164,7 @@ export function createOpenAIAdapter(): ProviderAdapter {
         });
         if (!res.ok) {
           const text = await res.text().catch(() => '');
-          return { success: false, latencyMs: Date.now() - t0, error: `${res.status}: ${text}` };
+          return { success: false, latencyMs: Date.now() - t0, error: describeHttpError('OpenAI-compatible', res.status, text) };
         }
         const data = await res.json() as { model?: string };
         return { success: true, latencyMs: Date.now() - t0, model: data.model ?? cfg.chatModel, dimensions: cfg.embeddingDimensions };

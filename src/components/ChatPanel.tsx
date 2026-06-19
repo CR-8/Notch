@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { browser } from 'wxt/browser';
 import { marked } from 'marked';
 import { cn } from '@/lib/utils';
 import { getChatMessagesByDocument } from '@/lib/idb';
-import type { Document, Citation } from '@/lib/types';
+import type { Document, Citation, ReadingLevel } from '@/lib/types';
+import { languageName, FOLLOW_UPS } from '@/lib/chat-actions';
 import { Textarea } from '@/components/ui/textarea';
 import { sanitizeUserInput, sanitizeHtml, ReassemblyBuffer } from '@/lib/sanitize';
 
@@ -14,6 +15,8 @@ interface Message {
   text: string;
   citations?: Citation[];
   isError?: boolean;
+  translated?: string;
+  isTranslating?: boolean;
 }
 
 // ── Citation scroll-linking helpers ──────────────────────────────────────────
@@ -30,7 +33,7 @@ function scrollToAndHighlightCitation(
   if (scroll) {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
-  el.style.background = 'var(--color-highlight)';
+  el.style.background = 'rgba(0, 117, 222, 0.1)';
   return el;
 }
 
@@ -59,7 +62,7 @@ function CitationChip({ n, citation, leftPaneRef }: CitationChipProps) {
     const el = root.querySelector<HTMLElement>(`[data-paragraph-index="${citation.paragraphIndex}"]`);
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.style.background = 'var(--color-highlight)';
+    el.style.background = 'rgba(0, 117, 222, 0.1)';
     setTimeout(() => { el.style.background = ''; }, 2000);
   }
 
@@ -78,7 +81,7 @@ function CitationChip({ n, citation, leftPaneRef }: CitationChipProps) {
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className="inline font-mono text-[10px] font-semibold text-primary hover:opacity-70 transition-opacity cursor-pointer px-0.5"
+      className="inline text-[11px] font-semibold text-[var(--color-primary)] hover:opacity-70 transition-opacity cursor-pointer px-0.5"
       title={`Go to source paragraph ${citation.paragraphIndex}`}
     >
       [{n}]
@@ -141,14 +144,14 @@ function MarkdownContent({ content, citations, leftPaneRef }: MarkdownContentPro
       const markedHtml = marked.parse(textOnly, { async: false }) as string;
       return (
         <div
-          className="prose prose-invert prose-sm max-w-none font-mono [&>p]:mb-2 [&>h1]:text-lg [&>h1]:font-bold [&>h1]:mt-4 [&>h1]:mb-2 [&>h2]:text-base [&>h2]:font-semibold [&>h2]:mt-3 [&>h2]:mb-1 [&>ul]:my-1 [&>ul]:pl-4 [&>ul]:list-disc [&>li]:mb-0.5 [&>ol]:my-1 [&>ol]:pl-4 [&>ol]:list-decimal [&>code]:bg-surface [&>code]:px-1 [&>code]:py-0.5 [&>code]:rounded [&>pre]:bg-surface [&>pre]:p-2 [&>pre]:overflow-x-auto [&>pre]:text-xs [&>blockquote]:border-l-2 [&>blockquote]:border-primary [&>blockquote]:pl-3 [&>blockquote]:italic"
+          className="notion-prose text-[14px] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
           dangerouslySetInnerHTML={{ __html: sanitizeHtml(markedHtml) }}
         />
       );
     }
 
     return (
-      <div className="text-sm leading-relaxed space-y-1">
+      <div className="text-[14px] leading-relaxed text-[var(--color-ink)] space-y-1">
         {partsWithCitations}
       </div>
     );
@@ -161,7 +164,7 @@ function MarkdownContent({ content, citations, leftPaneRef }: MarkdownContentPro
   if (hasMarkdown) {
     return (
       <div
-        className="prose prose-invert prose-sm max-w-none font-mono [&>p]:mb-2 [&>h1]:text-lg [&>h1]:font-bold [&>h1]:mt-4 [&>h1]:mb-2 [&>h2]:text-base [&>h2]:font-semibold [&>h2]:mt-3 [&>h2]:mb-1 [&>ul]:my-1 [&>ul]:pl-4 [&>ul]:list-disc [&>li]:mb-0.5 [&>ol]:my-1 [&>ol]:pl-4 [&>ol]:list-decimal [&>code]:bg-surface [&>code]:px-1 [&>code]:py-0.5 [&>code]:rounded [&>pre]:bg-surface [&>pre]:p-2 [&>pre]:overflow-x-auto [&>pre]:text-xs [&>blockquote]:border-l-2 [&>blockquote]:border-primary [&>blockquote]:pl-3 [&>blockquote]:italic"
+        className="notion-prose text-[14px] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
         dangerouslySetInnerHTML={{ __html: html }}
       />
     );
@@ -169,7 +172,7 @@ function MarkdownContent({ content, citations, leftPaneRef }: MarkdownContentPro
 
   // Plain text fallback
   return (
-    <p className="font-mono text-sm text-foreground leading-relaxed whitespace-pre-wrap">
+    <p className="text-[14px] text-[var(--color-ink)] leading-relaxed whitespace-pre-wrap">
       {content}
     </p>
   );
@@ -179,12 +182,65 @@ function MarkdownContent({ content, citations, leftPaneRef }: MarkdownContentPro
 
 function ContextPill({ title, folderColor }: { title: string; folderColor?: string }) {
   return (
-    <div className="border border-border px-7 py-2 shrink-0 flex items-center gap-2">
+    <div className="rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)] px-3 py-2 shrink-0 flex items-center gap-2">
       {folderColor && (
-        <span className="inline-block w-2 h-2 shrink-0" style={{ backgroundColor: folderColor }} />
+        <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: folderColor }} />
       )}
-      <span className="font-mono text-[10px] uppercase tracking-wider text-muted">CHATTING WITH: </span>
-      <span className="font-mono text-[10px] uppercase tracking-wider text-foreground truncate">{title}</span>
+      <span className="text-[11px] font-medium text-[var(--color-ink-muted)] shrink-0">Chatting with</span>
+      <span className="text-[12px] font-medium text-[var(--color-ink)] truncate">{title}</span>
+    </div>
+  );
+}
+
+// ── ActionBar (CHAT-3 one-click actions) ──────────────────────────────────────
+
+const QUICK_ACTIONS: Array<{ label: string; prompt: string }> = [
+  { label: 'Summarize', prompt: 'Summarize this document in a few clear sentences.' },
+  { label: 'Explain simply', prompt: 'Explain this document in simple, plain language a non-expert can follow.' },
+  { label: 'Key terms', prompt: 'List and briefly define the key terms in this document.' },
+  { label: "What's the evidence", prompt: 'What evidence or sources does this document give for its main claims?' },
+];
+
+function ActionBar({ onAction, disabled }: { onAction: (prompt: string) => void; disabled?: boolean }) {
+  return (
+    <div className="flex flex-wrap gap-1.5 shrink-0">
+      {QUICK_ACTIONS.map((a) => (
+        <button
+          key={a.label}
+          onClick={() => onAction(a.prompt)}
+          disabled={disabled}
+          className="text-[12px] font-medium px-3 py-1 rounded-full border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] transition-all hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {a.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── ReadingLevelToggle (CHAT-5) ───────────────────────────────────────────────
+
+function ReadingLevelToggle({ level, onChange }: { level: ReadingLevel; onChange: (l: ReadingLevel) => void }) {
+  const opts: Array<{ value: ReadingLevel; label: string }> = [
+    { value: 'simple', label: 'Simple' },
+    { value: 'technical', label: 'Technical' },
+  ];
+  return (
+    <div className="flex shrink-0 rounded-md border border-[var(--color-hairline)] overflow-hidden" title="Reading level">
+      {opts.map((o) => (
+        <button
+          key={o.value}
+          onClick={() => onChange(o.value)}
+          className={cn(
+            'text-[11px] font-medium px-2 py-1 transition-colors',
+            level === o.value
+              ? 'bg-[var(--color-primary)] text-white'
+              : 'bg-[var(--color-surface)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]'
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -194,8 +250,8 @@ function ContextPill({ title, folderColor }: { title: string; folderColor?: stri
 function UserBubble({ text }: { text: string }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] bg-surface border border-border px-3 py-2">
-        <p className="font-mono text-sm text-foreground leading-relaxed whitespace-pre-wrap">{text}</p>
+      <div className="max-w-[85%] rounded-lg bg-[var(--color-surface-hover)] px-3 py-2">
+        <p className="text-[14px] text-[var(--color-ink)] leading-relaxed whitespace-pre-wrap">{text}</p>
       </div>
     </div>
   );
@@ -207,21 +263,78 @@ interface NotchBubbleProps {
   text: string;
   citations?: Citation[];
   isError?: boolean;
+  translated?: string;
+  isTranslating?: boolean;
   leftPaneRef: React.RefObject<HTMLDivElement | null>;
+  onTranslate?: () => void;
 }
 
-function NotchBubble({ text, citations, isError, leftPaneRef }: NotchBubbleProps) {
-  const content = isError
-    ? <span className="font-mono text-[11px] text-danger">[CONNECTION FAILED]</span>
-    : (
-      <MarkdownContent content={text} citations={citations} leftPaneRef={leftPaneRef} />
+// CHAT-7 read-aloud via the browser speech-synthesis engine (fully local).
+function useReadAloud() {
+  const [speaking, setSpeaking] = useState(false);
+  const speak = useCallback((text: string) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.onend = () => setSpeaking(false);
+    utter.onerror = () => setSpeaking(false);
+    setSpeaking(true);
+    window.speechSynthesis.speak(utter);
+  }, []);
+  return { speaking, speak };
+}
+
+function NotchBubble({ text, citations, isError, translated, isTranslating, leftPaneRef, onTranslate }: NotchBubbleProps) {
+  const { speaking, speak } = useReadAloud();
+  const canSpeak = typeof window !== 'undefined' && !!window.speechSynthesis;
+
+  if (isError) {
+    return (
+      <div className="flex justify-start">
+        <div className="max-w-full rounded-lg border border-[var(--color-hairline)] bg-[var(--color-surface)] px-3 py-2.5">
+          <p className="text-[11px] font-semibold tracking-[0.125px] text-[var(--color-primary)] mb-1.5">Notch</p>
+          <span className="text-[13px] text-[var(--color-destructive)]">Connection failed. Please try again.</span>
+        </div>
+      </div>
     );
+  }
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-full border border-border px-3 py-2">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-primary mb-1.5">NOTCH</p>
-        {content}
+      <div className="max-w-full rounded-lg border border-[var(--color-hairline)] bg-[var(--color-surface)] px-3 py-2.5">
+        <p className="text-[11px] font-semibold tracking-[0.125px] text-[var(--color-primary)] mb-1.5">Notch</p>
+        <MarkdownContent content={text} citations={citations} leftPaneRef={leftPaneRef} />
+
+        {translated && (
+          <div className="mt-2 pt-2 border-t border-[var(--color-hairline)]">
+            <p className="text-[10px] font-medium text-[var(--color-ink-faint)] mb-1">Translation</p>
+            <MarkdownContent content={translated} leftPaneRef={leftPaneRef} />
+          </div>
+        )}
+
+        <div className="flex gap-3 mt-2">
+          {canSpeak && (
+            <button
+              onClick={() => speak(text)}
+              className="text-[11px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors"
+            >
+              {speaking ? 'Stop' : 'Read aloud'}
+            </button>
+          )}
+          {onTranslate && !translated && (
+            <button
+              onClick={onTranslate}
+              disabled={isTranslating}
+              className="text-[11px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors disabled:opacity-50"
+            >
+              {isTranslating ? 'Translating…' : 'Translate'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -232,11 +345,10 @@ function NotchBubble({ text, citations, isError, leftPaneRef }: NotchBubbleProps
 function ThinkingIndicator() {
   return (
     <div className="flex justify-start">
-      <div className="border border-border px-3 py-2">
-        <span className="font-mono text-[11px] text-primary uppercase tracking-wider blink-cursor">
-          [NOTCH IS THINKING
+      <div className="rounded-lg border border-[var(--color-hairline)] bg-[var(--color-surface)] px-3 py-2.5">
+        <span className="text-[13px] text-[var(--color-primary)] blink-cursor">
+          Notch is thinking
         </span>
-        <span className="font-mono text-[11px] text-primary uppercase tracking-wider ml-1">]</span>
       </div>
     </div>
   );
@@ -248,9 +360,12 @@ interface MessageListProps {
   messages: Message[];
   isThinking: boolean;
   leftPaneRef: React.RefObject<HTMLDivElement | null>;
+  starters: string[];
+  onAsk: (question: string) => void;
+  onTranslate: (index: number) => void;
 }
 
-function MessageList({ messages, isThinking, leftPaneRef }: MessageListProps) {
+function MessageList({ messages, isThinking, leftPaneRef, starters, onAsk, onTranslate }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -260,16 +375,53 @@ function MessageList({ messages, isThinking, leftPaneRef }: MessageListProps) {
   return (
     <div className="flex flex-col gap-3 flex-1 overflow-y-auto py-2">
       {messages.length === 0 && !isThinking && (
-        <p className="font-mono text-[11px] text-muted text-center mt-4">
-          [ASK ANYTHING ABOUT THIS DOCUMENT]
-        </p>
+        <div className="mt-4 flex flex-col gap-2">
+          <p className="text-[13px] text-[var(--color-ink-muted)] text-center">
+            Ask anything about this document
+          </p>
+          {starters.length > 0 && (
+            <div className="flex flex-col gap-1.5 mt-1">
+              {starters.map((q) => (
+                <button
+                  key={q}
+                  onClick={() => onAsk(q)}
+                  className="text-left text-[13px] text-[var(--color-ink)] rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)] px-3 py-2 transition-all hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
       {messages.map((msg, i) =>
         msg.role === 'user'
           ? <UserBubble key={i} text={msg.text} />
-          : <NotchBubble key={i} text={msg.text} citations={msg.citations} isError={msg.isError} leftPaneRef={leftPaneRef} />
+          : <NotchBubble
+              key={i}
+              text={msg.text}
+              citations={msg.citations}
+              isError={msg.isError}
+              translated={msg.translated}
+              isTranslating={msg.isTranslating}
+              leftPaneRef={leftPaneRef}
+              onTranslate={() => onTranslate(i)}
+            />
       )}
       {isThinking && <ThinkingIndicator />}
+      {!isThinking && messages.length > 0 && messages[messages.length - 1].role === 'assistant' && !messages[messages.length - 1].isError && (
+        <div className="flex flex-wrap gap-1.5">
+          {FOLLOW_UPS.map((q) => (
+            <button
+              key={q}
+              onClick={() => onAsk(q)}
+              className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] transition-all hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
       <div ref={bottomRef} />
     </div>
   );
@@ -313,25 +465,23 @@ function ChatInput({ onSubmit, disabled, initialValue }: ChatInputProps) {
   }
 
   return (
-    <div className="shrink-0 border-t border-border pt-3">
+    <div className="shrink-0 border-t border-[var(--color-hairline)] pt-3">
       <Textarea
         ref={textareaRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
         disabled={disabled}
-        placeholder="ASK ABOUT THIS DOCUMENT..."
+        placeholder="Ask about this document..."
         rows={1}
         className={cn(
-          'w-full resize-none overflow-hidden font-mono text-[11px] uppercase tracking-wider',
-          'bg-surface border-border text-foreground placeholder:text-muted',
-          'focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-primary',
-          'min-h-0 py-2 px-3',
+          'w-full resize-none overflow-hidden text-[14px]',
+          'min-h-0',
           disabled && 'opacity-50 cursor-not-allowed'
         )}
       />
-      <p className="font-mono text-[9px] text-muted mt-1">
-        ENTER TO SEND · SHIFT+ENTER FOR NEWLINE
+      <p className="text-[11px] text-[var(--color-ink-faint)] mt-1.5">
+        Enter to send · Shift+Enter for newline
       </p>
     </div>
   );
@@ -346,9 +496,25 @@ export interface ChatPanelProps {
   folderColor?: string;
 }
 
+// Page-specific starter questions (CHAT-2) — derived from the document's own
+// structure so they need no extra model call and work fully offline.
+function buildStarters(doc: Document): string[] {
+  const starters: string[] = ['Summarize the key points'];
+
+  const concept = doc.concepts?.[0]?.term;
+  starters.push(concept ? `Explain "${concept}" in simple terms` : 'Explain this page in simple terms');
+
+  const entity = (doc.entities?.[0] ?? doc.keyEntities?.[0])?.name;
+  starters.push(entity ? `What is ${entity} and why does it matter?` : "What's the main takeaway?");
+
+  return starters.slice(0, 3);
+}
+
 export function ChatPanel({ doc, prefillQuery, leftPaneRef, folderColor }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
+  const [readingLevel, setReadingLevel] = useState<ReadingLevel>('simple');
+  const starters = useMemo(() => buildStarters(doc), [doc]);
 
   useEffect(() => {
     let cancelled = false;
@@ -378,7 +544,7 @@ export function ChatPanel({ doc, prefillQuery, leftPaneRef, folderColor }: ChatP
     try {
       const response = await browser.runtime.sendMessage({
         type: 'RAG_QUERY',
-        payload: { documentId: doc.id, query: query },
+        payload: { documentId: doc.id, query, readingLevel },
       }) as { type: 'RAG_RESPONSE'; payload: { answer: string; citations: Citation[] } }
         | { type: 'RAG_ERROR'; payload: { error: string } };
 
@@ -396,12 +562,47 @@ export function ChatPanel({ doc, prefillQuery, leftPaneRef, folderColor }: ChatP
       setIsThinking(false);
       setMessages((prev) => [...prev, { role: 'assistant', text: '', isError: true }]);
     }
-  }, [doc.id]);
+  }, [doc.id, readingLevel]);
+
+  // CHAT-6: translate a single assistant message into the user's browser language.
+  const handleTranslate = useCallback(async (index: number) => {
+    const target = messages[index];
+    if (!target || target.role !== 'assistant' || !target.text) return;
+    const targetLanguage = languageName(navigator.language || 'en');
+
+    setMessages((prev) => prev.map((m, i) => i === index ? { ...m, isTranslating: true } : m));
+    try {
+      const response = await browser.runtime.sendMessage({
+        type: 'TRANSLATE',
+        payload: { text: target.text, targetLanguage },
+      }) as { type: 'TRANSLATE_RESULT'; payload: { translated: string } }
+        | { type: 'TRANSLATE_ERROR'; payload: { error: string } };
+
+      setMessages((prev) => prev.map((m, i) => {
+        if (i !== index) return m;
+        if (response.type === 'TRANSLATE_RESULT') return { ...m, isTranslating: false, translated: response.payload.translated };
+        return { ...m, isTranslating: false, translated: `(Translation failed: ${response.payload.error})` };
+      }));
+    } catch (e) {
+      setMessages((prev) => prev.map((m, i) => i === index ? { ...m, isTranslating: false, translated: `(Translation failed: ${(e as Error).message})` } : m));
+    }
+  }, [messages]);
 
   return (
     <div className="flex flex-col h-full gap-3">
       <ContextPill title={doc.title} folderColor={folderColor} />
-      <MessageList messages={messages} isThinking={isThinking} leftPaneRef={leftPaneRef} />
+      <div className="flex items-center justify-between gap-2 shrink-0">
+        <ActionBar onAction={handleSubmit} disabled={isThinking} />
+        <ReadingLevelToggle level={readingLevel} onChange={setReadingLevel} />
+      </div>
+      <MessageList
+        messages={messages}
+        isThinking={isThinking}
+        leftPaneRef={leftPaneRef}
+        starters={starters}
+        onAsk={handleSubmit}
+        onTranslate={handleTranslate}
+      />
       <ChatInput onSubmit={handleSubmit} disabled={isThinking} initialValue={prefillQuery} />
     </div>
   );
