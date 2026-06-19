@@ -6,9 +6,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 interface DiagramBlockProps {
   data: DiagramElement;
   theme: 'light' | 'dark';
+  number?: number;
 }
 
-export function DiagramBlock({ data, theme }: DiagramBlockProps) {
+export function DiagramBlock({ data, theme, number }: DiagramBlockProps) {
   const rawId = useId();
   const id = 'dgm-' + rawId.replace(/[^a-zA-Z0-9]/g, '');
   const [status, setStatus] = useState<'loading' | 'rendered' | 'error' | 'unavailable' | 'validating'>('loading');
@@ -138,9 +139,10 @@ export function DiagramBlock({ data, theme }: DiagramBlockProps) {
         </div>
       )}
 
-      {data.caption && (
-        <figcaption className="text-[13px] text-[var(--color-ink-muted)] text-center mt-2 italic">
-          {data.caption}
+      {(data.caption || number) && (
+        <figcaption className="text-[13px] text-[var(--color-ink-muted)] text-center mt-2">
+          {number ? <span className="font-semibold not-italic text-[var(--color-ink)]">Figure {number}{data.caption ? ' — ' : ''}</span> : null}
+          <span className="italic">{data.caption}</span>
         </figcaption>
       )}
     </figure>

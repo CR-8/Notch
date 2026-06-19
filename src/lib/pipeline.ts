@@ -5,6 +5,10 @@ import { chunkDocument } from '../lib/chunker';
 import { normalise, buildRAGPrompt, parseCitations, retrieveTopK } from '../lib/retrieval';
 import { buildOfflineCaptureMarkdown, rankChunksByKeywords, answerWithOfflineNLP } from '../lib/nlp-fallback';
 import { deriveAutoTags, mergeTags } from '../lib/auto-tag';
+import { extractKnowledge } from '../lib/content-engine/extraction/extractors';
+import { planDocument, type PlanDepth } from '../lib/content-engine/planner/document-planner';
+import { generateDocument } from '../lib/content-engine/generator/orchestrator';
+import type { CompleteFn } from '../lib/content-engine/generator/types';
 import { shouldRunOffline } from '../lib/privacy';
 import { readingLevelInstruction, buildTranslatePrompt } from '../lib/chat-actions';
 import { withRetry, withTimeout } from '../lib/client';
@@ -22,145 +26,133 @@ import type {
 } from '../lib/types';
 
 const MODE_PROMPTS: Record<GenerationMode, string> = {
-  FAST: `You are a document structuring assistant. Produce a well-formatted markdown document from the web page content below.
+  FAST: `You are a senior technical writer producing a concise professional knowledge note (300-600 words). Do NOT merely summarize — interpret.
 
-STRUCTURE:
+Each section has ONE distinct job. NEVER repeat the same fact across sections.
+
 # Document Title
 
 ## Summary
-2-3 sentence overview.
+What is this document about? 2-4 sentences. Prose.
 
 ## Key Points
-- Bullet points (3-5)
-
-## Key Entities
-List named people, organizations, technologies.
+What are the most important facts? 5-8 bullets. Bullets only, never paragraphs.
 
 ## Concepts
-Key technical terms with brief definitions.
+What terminology must the reader understand? Definition list only: **Term** — definition. Do not re-explain elsewhere.
 
-## Main Content
-Logical sections covering the document's substance.
+## Key Entities
+What are the main entities (people, organizations, technologies, standards, products) mentioned? Bullet list with **Entity Name** (type): brief description. At minimum, list 3. Output ONLY if entities exist.
+
+## Key Takeaways
+What should the reader remember and do? 3-5 actionable bullets. Bullets only.
+
+If a diagram genuinely aids understanding, include at most ONE \`\`\`mermaid block; pick the diagram type and direction from DIAGRAM RULES below.
 
 Output ONLY valid markdown. No preamble.`,
 
-  BALANCED: `You are a knowledge structuring assistant. Produce a comprehensive, publication-quality markdown document.
+  BALANCED: `You are a senior analyst writing a professional report (1000-2500 words). Interpret and explain — do not just summarize. The result must feel intentionally authored by an expert.
 
-STRUCTURE:
-# Document Title (clear, specific)
+Each section has ONE distinct responsibility. NEVER repeat the same information across sections.
+
+# Document Title (specific, not generic)
 
 ## Summary
-3-4 sentence executive summary.
+What is this document about? 200-400 words, prose. The big picture only.
 
 ## Key Points
-- 4-6 high-signal bullets. Lead with insight, not topic.
-
-## Key Entities
-**Name** (type): description for each entity.
+What are the most important facts? 5-10 bullets. Bullets only, never paragraphs.
 
 ## Concepts
-**Term**: clear definition.
+What terminology must the reader understand? Definition list: **Term** — definition. No repeated explanations.
 
-## Timeline (if applicable)
-Chronological events with dates.
+## Key Entities
+What are the main entities (people, organizations, technologies, standards, products) mentioned? Bullet list with **Entity Name** (type): brief description. At minimum, list 5.
+
+## Timeline
+How did this evolve over time? Only if dated events exist. Each: **Year** — event — significance.
 
 ## Main Content
-Hierarchical sections (### subsections) covering: problem/context, solutions/approach, results/outcomes, implications.
+What is the actual explanation? Deep, hierarchical (### subsections). This is where detail lives — do not pre-empt it in earlier sections.
+
+## Analysis
+Why does this matter? Your interpretation: tradeoffs, implications, what changed. Not a recap.
 
 ## Key Takeaways
-- 3-5 bullets, each a single self-contained insight (BUG-010: bullets, never a paragraph).
+What should the reader remember and do? 4-6 actionable bullets. Bullets only.
 
-FORMATTING RULES:
-- Use \`\`\`mermaid fences for any diagrams (flowcharts, sequence diagrams, etc.)
-- Use [!NOTE], [!WARNING], [!TIP], [!DANGER], [!INFO] for callouts
-- Use standard markdown tables for structured data
+Use 2-3 diagrams where they aid understanding (see DIAGRAM RULES). Use [!NOTE]/[!TIP]/[!WARNING] callouts and real markdown tables for comparisons.
 
 Output ONLY valid markdown.`,
 
-  DEEP: `You are an expert knowledge structuring assistant. Produce a thorough, publication-quality markdown document.
+  DEEP: `You are a senior technical researcher and information architect producing a thorough whitepaper (3000-7000+ words). This must read like an expert authored it — interpret, argue, and synthesize. It must be SUBSTANTIALLY richer than a short summary.
 
-STRUCTURE:
-# Document Title
+Each section has ONE distinct responsibility. NEVER repeat information across sections — escalate depth as the document progresses.
+
+# Document Title (specific and substantive)
 
 ## Summary
-4-6 sentence executive summary covering what, why, and so what.
+What is this document about? 300-400 words, prose. Orientation only.
 
 ## Key Points
-- 5-7 high-signal bullets with supporting detail
-
-## Key Entities
-**Name** (type): description for each entity.
+The most important facts. 7-10 bullets. Bullets only.
 
 ## Concepts
-**Term**: clear definition.
+Terminology the reader must understand. Definition list: **Term** — definition. Define once, never re-explain.
+
+## Key Entities
+What are the main entities (people, organizations, technologies, standards, products) mentioned? Bullet list with **Entity Name** (type): brief description. At minimum, list 8.
 
 ## Timeline
-Chronological sequence of events with dates.
+How did this evolve? Each: **Year** — event — significance. Only with real dated events.
 
 ## Main Content
-Thorough coverage using hierarchical sections:
-- Context / Background
-- Core Content / Arguments
-- Evidence / Examples
-- Analysis / Implications
+The actual explanation, in depth. Hierarchical ### / #### subsections. Context, mechanisms, evidence. This is the core — most words live here.
+
+## Examples
+Where is this used in practice? Concrete case studies and real-world examples.
+
+## Analysis
+Why does this matter? Tradeoffs, counterarguments, limitations, implications. Your expert interpretation, not a recap.
 
 ## Key Takeaways
-- 4-6 bullets, each a single self-contained insight (BUG-010: bullets, never a paragraph).
+What should the reader remember and do? 5-8 actionable bullets. Bullets only.
 
-FORMATTING RULES (CRITICAL):
-1. Use \`\`\`mermaid fences for diagrams wherever they improve understanding:
-   - \`\`\`mermaid for flowcharts (processes, workflows, decision trees)
-   - \`\`\`mermaid for sequenceDiagram (API interactions, service communication)
-   - \`\`\`mermaid for classDiagram (object models, software designs)
-   - \`\`\`mermaid for erDiagram (database systems, relationships)
-   - \`\`\`mermaid for timeline (historical events, roadmaps)
-   - \`\`\`mermaid for mindmap (knowledge breakdowns)
-   - \`\`\`mermaid for gantt (project timelines, schedules)
-   - \`\`\`mermaid for pie (distributions, proportions)
-   - \`\`\`mermaid for journey (user journeys, experiences)
-   - \`\`\`mermaid for gitGraph (version control flows)
-   - \`\`\`mermaid for quadrantChart (prioritization matrices)
-   - \`\`\`mermaid for requirementDiagram (requirements engineering)
+Use 5-15 visuals total: diagrams, comparison tables, and a knowledge graph of the key entities. Use [!NOTE]/[!TIP]/[!WARNING] callouts. Prefer a visual over prose whenever it communicates better.
 
-2. Use \`\`\`plantuml for UML diagrams when relationships are complex:
-   - class diagrams for detailed object models
-   - sequence diagrams for complex interactions
-   - activity diagrams for business processes
-   - component diagrams for system architecture
-
-3. Use GFM callouts for emphasis:
-   - [!NOTE] for additional information
-   - [!WARNING] for important cautions
-   - [!TIP] for best practices
-   - [!DANGER] for critical warnings
-   - [!INFO] for background context
-
-4. Use tables for:
-   - Feature comparisons
-   - Data comparisons
-   - Specification lists
-   - Metrics and statistics
-   - Configuration options
-
-5. NEVER generate raw text when a visual would improve understanding.
-   ALWAYS prefer diagrams, tables, and structured formatting.
-
-Output ONLY valid markdown. No preamble, no explanation.`,
+Output ONLY valid markdown. No preamble.`,
 };
 
-// BUG-002: a real OpenRouter free model. The placeholder ids below are NOT valid
-// model slugs and 404 at the API — map them to this when the endpoint is OpenRouter.
-export const OPENROUTER_FREE_MODEL = 'google/gemini-2.0-flash-exp:free';
-const INVALID_MODEL_ALIASES = new Set(['openrouter/free', 'free', 'openrouter', 'auto', 'default']);
+// Shared diagram guidance appended to every capture prompt (Problems 4 & 5):
+// choose the diagram TYPE from the content and the DIRECTION from its role.
+const DIAGRAM_RULES = `DIAGRAM RULES:
+- Choose the diagram type from the content; never default to a flowchart:
+  process/pipeline/CI-CD → flowchart · API/request-response → sequenceDiagram ·
+  system/infrastructure → flowchart (architecture) or C4 · object model → classDiagram ·
+  data/schema → erDiagram · history/evolution → timeline · concept breakdown → mindmap ·
+  lifecycle/status → stateDiagram-v2 · entities & links → a graph "knowledge graph".
+- Choose flow DIRECTION by role, never hardcode TD:
+  LR for timelines, pipelines, workflows, processes ·
+  TD for hierarchies, trees, org/structure breakdowns ·
+  RL for dependency chains / reverse flows ·
+  BT for root-cause / escalation trees.
+- Write \`flowchart LR\` (or the correct direction) explicitly. Keep node labels short and quoted if they contain punctuation. Output valid Mermaid only.`;
 
-/** Replaces invalid/placeholder model ids with a working default. Pure. */
+// BUG-002: zero-config default so a new OpenRouter user can capture without first
+// picking a model. `openrouter/free` is OpenRouter's own free auto-router — a real,
+// valid model id.
+export const OPENROUTER_DEFAULT_MODEL = 'openrouter/free';
+
+/**
+ * Supplies a default model ONLY when none is configured. It never rewrites an
+ * explicit model id — any non-empty value the user chose (e.g. `openrouter/free`,
+ * `openrouter/auto`, or any catalogue id) is passed through untouched. Pure.
+ */
 export function normalizeModelId(model: string | undefined, baseUrl?: string): string {
   const m = (model ?? '').trim();
+  if (m) return m;
   const isOpenRouter = !!baseUrl && /openrouter\.ai/i.test(baseUrl);
-  if ((!m || INVALID_MODEL_ALIASES.has(m.toLowerCase())) && isOpenRouter) {
-    return OPENROUTER_FREE_MODEL;
-  }
-  return m;
+  return isOpenRouter ? OPENROUTER_DEFAULT_MODEL : m;
 }
 
 async function resolveChatProvider(settings: Settings): Promise<ProviderConfig> {
@@ -206,6 +198,8 @@ function resolveChatModel(settings: Settings, mode: GenerationMode): string {
 export function buildCapturePrompt(content: string, mode: GenerationMode, images: string): string {
   return `${MODE_PROMPTS[mode]}
 
+${DIAGRAM_RULES}
+
 PAGE CONTENT:
 ${content.slice(0, 20000)}
 
@@ -228,6 +222,9 @@ export async function runCapturePipeline(
     .slice(0, 4000);
 
   const docId = crypto.randomUUID();
+
+  // ── Log raw extraction input ─────────────────────────────────────────────
+  log.info('pipeline', `EXTRACTION INPUT: title="${extraction.title}", url="${extraction.url}", textContent.length=${extraction.textContent.length}, wordCount=${extraction.wordCount}, images=${extraction.images.length}, cleanedHtml.length=${extraction.cleanedHtml.length}`);
 
   const doc: Document = {
     id: docId,
@@ -259,9 +256,15 @@ export async function runCapturePipeline(
 
   await saveDocument(doc);
   onProgress?.('Saved base document', 30);
+  log.info('pipeline', `Base document saved: ${docId}`);
 
   doc.status = 'structuring';
   await saveDocument(doc);
+
+  // Stage 1 (Phase 1): extract structured knowledge up front so the planner can
+  // decide the document shape BEFORE any content is generated.
+  const knowledge = extractKnowledge(extraction.textContent);
+  log.info('pipeline', `KNOWLEDGE EXTRACTION (raw text): entities=${knowledge.entities.length}, concepts=${knowledge.concepts.length}, timeline=${knowledge.timeline.length}, relationships=${knowledge.relationships.length}, topics=[${knowledge.topics.join(', ')}], documentType=${knowledge.documentType}, complexity=${knowledge.complexity}, input.length=${extraction.textContent.length}`);
 
   let structuredContent: string;
 
@@ -270,34 +273,54 @@ export async function runCapturePipeline(
     // NLP — guarantees no API call leaves the device.
     structuredContent = buildOfflineCaptureMarkdown(extraction.title, extraction.textContent);
   } else {
+    // Online: planner-driven, per-section generation (Phase 2). Each section is a
+    // scoped call so sections can't rephrase each other; diagrams are generated and
+    // validated/repaired. Falls back to the legacy single call if orchestration fails.
     const provider = await resolveChatProvider(settings);
     const model = resolveChatModel(settings, mode);
+    const chat = getChatProvider(provider);
 
-    structuredContent = await withRetry(() =>
-      withTimeout(
-        (async () => {
-          const chat = getChatProvider(provider);
-          const prompt = buildCapturePrompt(extraction.textContent, mode, imageText);
+    const complete: CompleteFn = (system, user) =>
+      withRetry(() =>
+        withTimeout(
+          (async () => {
+            let full = '';
+            for await (const chunk of chat.generate({
+              model,
+              messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: user },
+              ],
+            })) {
+              if (chunk.type === 'text' && chunk.text) full += chunk.text;
+              if (chunk.type === 'error') throw new AIClientError(chunk.error ?? 'Generation failed');
+            }
+            return full;
+          })(),
+          90000,
+        ),
+      );
 
-          let fullResponse = '';
-          for await (const chunk of chat.generate({
-            model,
-            messages: [
-              { role: 'system', content: 'You are a helpful assistant.' },
-              { role: 'user', content: prompt },
-            ],
-          })) {
-            if (chunk.type === 'text' && chunk.text) fullResponse += chunk.text;
-            if (chunk.type === 'error') throw new AIClientError(chunk.error ?? 'Generation failed');
-          }
-          return fullResponse;
-        })(),
-        120000,
-      ),
-    );
+    try {
+      const depth: PlanDepth = mode === 'FAST' ? 'fast' : mode === 'DEEP' ? 'deep' : 'standard';
+      const plan = planDocument(knowledge, depth);
+      log.info('pipeline', `PLAN: depth=${depth}, sections=${plan.sections.length}, targetWords=${plan.targetWords.min}–${plan.targetWords.max}, visuals=${plan.visuals.length}`);
+      const generated = await generateDocument(extraction.title, plan, knowledge, extraction.textContent, complete, { onProgress });
+      structuredContent = generated.markdown;
+      log.info('pipeline', `GENERATION: orchestrated, structuredContent.length=${structuredContent.length}`);
+    } catch (err) {
+      // Resilience: never fail capture because orchestration hit a snag.
+      log.warn('pipeline', 'Structured generation failed, using single-pass fallback', err);
+      structuredContent = await complete(
+        'You are a helpful assistant.',
+        buildCapturePrompt(extraction.textContent, mode, imageText),
+      );
+      log.info('pipeline', `GENERATION: single-pass fallback, structuredContent.length=${structuredContent.length}`);
+    }
   }
 
-  onProgress?.('Structuring complete', 60);
+  onProgress?.('Structuring complete', 80);
+  log.info('pipeline', `STRUCTURED CONTENT: length=${structuredContent.length}, first 200 chars="${structuredContent.slice(0, 200).replace(/\n/g, '\\n')}"`);
 
   const titleMatch = structuredContent.match(/^#\s+(.+)$/m);
   const summaryMatch = structuredContent.match(/^##\s+(?:SUMMARY|Summary)\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
@@ -311,12 +334,22 @@ export async function runCapturePipeline(
     }
   }
 
+  // Extract entities from the "Key Entities" section with flexible regex that
+  // handles multiple LLM output formats:
+  //   **Name** (type): description
+  //   **Name** (type) — description
+  //   **Name** — description
+  //   **Name**: description
   const entities: Document['entities'] = [];
   const entMatch = structuredContent.match(/^##\s+Key Entities\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
   if (entMatch) {
     entMatch[1].split('\n').forEach((line, i) => {
-      const m = line.match(/^\s*[*-]\s+\*\*([^*:]+):?\*\*:?\s+\(([^)]+)\)\s+(.*)/);
-      if (m) entities.push({ name: m[1].trim(), type: m[2].trim(), paragraphIndex: i });
+      const m = line.match(/^\s*[*-]\s+\*\*([^*:]+?)\*\*\s*(?:\(([^)]*)\))?\s*[:—–-]?\s*(.*)/);
+      if (m && m[1].trim()) entities.push({
+        name: m[1].trim(),
+        type: (m[2]?.trim() || 'other'),
+        paragraphIndex: i,
+      });
     });
   }
 
@@ -338,14 +371,78 @@ export async function runCapturePipeline(
     });
   }
 
+  // Backfill: run deterministic extraction on the generated structured content.
+  // The AI-generated markdown often contains richer entity/concept data than the
+  // raw page text (especially when Readability returns short or empty text).
+  const knowledgeFromContent = extractKnowledge(structuredContent);
+
+  // Backfill entities from Concepts section terms when Key Entities section
+  // returned nothing — every concept is a potential entity.
+  const conceptsAsEntities: Document['entities'] = concepts.length && !entities.length
+    ? concepts.slice(0, 8).map((c, i) => ({
+        name: c.term,
+        type: 'concept' as const,
+        paragraphIndex: c.paragraphIndex ?? i,
+      }))
+    : [];
+
+  // Three-tier merge: LLM-parsed → deterministic-from-structured → raw-text.
+  // The deterministic-from-structured pass catches entities/concepts that the
+  // LLM mentions in the body but didn't list in the Key Entities section.
+  const mergedEntities: Document['entities'] = entities.length
+    ? entities
+    : conceptsAsEntities.length
+      ? conceptsAsEntities
+      : knowledgeFromContent.entities.length
+        ? knowledgeFromContent.entities.map((e, i) => ({ name: e.name, type: e.type, description: e.description, mentions: e.mentions, paragraphIndex: i }))
+        : knowledge.entities.map((e, i) => ({ name: e.name, type: e.type, description: e.description, mentions: e.mentions, paragraphIndex: i }));
+  const mergedConcepts: Document['concepts'] = concepts.length
+    ? concepts
+    : knowledgeFromContent.concepts.length
+      ? knowledgeFromContent.concepts.map((c, i) => ({ term: c.concept, definition: c.definition, paragraphIndex: i }))
+      : knowledge.concepts.map((c, i) => ({ term: c.concept, definition: c.definition, paragraphIndex: i }));
+  const mergedTimeline: Document['timeline'] = timeline.length
+    ? timeline
+    : knowledgeFromContent.timeline.length
+      ? knowledgeFromContent.timeline.map((t, i) => ({ date: t.year, description: t.event, significance: t.significance, paragraphIndex: i }))
+      : knowledge.timeline.map((t, i) => ({ date: t.year, description: t.event, significance: t.significance, paragraphIndex: i }));
+
+  log.info('pipeline', `PARSE RESULTS: titleMatch=${!!titleMatch}, summaryMatch=${!!summaryMatch}, keyPoints=${keyPoints.length}, entities_llm=${entities.length}, timeline_llm=${timeline.length}, concepts_llm=${concepts.length}`);
+  log.info('pipeline', `BACKFILL RESULTS: knowledgeFromContent entities=${knowledgeFromContent.entities.length}, concepts=${knowledgeFromContent.concepts.length}, timeline=${knowledgeFromContent.timeline.length}`);
+  log.info('pipeline', `MERGE RESULTS: mergedEntities=${mergedEntities.length}, mergedConcepts=${mergedConcepts.length}, mergedTimeline=${mergedTimeline.length}`);
+
   doc.title = titleMatch?.[1]?.trim() ?? doc.title;
   doc.summary = summaryMatch?.[1]?.trim() ?? '';
   doc.keyPoints = keyPoints;
-  doc.entities = entities;
-  doc.timeline = timeline;
-  doc.concepts = concepts;
+  doc.entities = mergedEntities;
+  doc.timeline = mergedTimeline;
+  doc.concepts = mergedConcepts;
+  // Structured intelligence: prefer extraction from generated content (richer),
+  // fall back to raw-text extraction.
+  const richExtraction = knowledgeFromContent.entities.length ? knowledgeFromContent : knowledge;
+  doc.relationships = richExtraction.relationships;
+  doc.topics = richExtraction.topics;
+  doc.complexity = richExtraction.complexity;
+  doc.documentType = richExtraction.documentType;
+  log.info('pipeline', `META SET: relationships=${doc.relationships?.length ?? 0}, topics=[${doc.topics?.join(', ')}], complexity=${doc.complexity}, documentType=${doc.documentType}`);
   // Persist the full structured markdown so the reader can render the document body.
   doc.content = structuredContent;
+
+  // Recompute wordCount from the actual rendered content, not the raw extraction.
+  // The reader renders `doc.content`, so wordCount must reflect that content.
+  const contentWordCount = structuredContent.split(/\s+/).filter(Boolean).length;
+  if (contentWordCount < doc.wordCount * 0.5) {
+    log.warn('pipeline', `content wordCount (${contentWordCount}) is <50% of raw wordCount (${doc.wordCount}) — using content-based count`);
+  }
+  doc.wordCount = Math.max(contentWordCount, doc.wordCount);
+
+  // Guard: structuredContent must not be empty. If it is, the reader will show
+  // nothing in the main content panel, even though metadata may be populated.
+  if (!structuredContent || structuredContent.trim().length === 0) {
+    log.error('pipeline', 'structuredContent is EMPTY — reader will show no content');
+  }
+
+  doc.readingTimeMinutes = Math.max(1, Math.round(doc.wordCount / 220));
 
   // Content Intelligence: store enriched version and analysis metadata
   // The enriched content includes diagrams, callouts, and structured elements
@@ -356,7 +453,7 @@ export async function runCapturePipeline(
   doc.calloutCount = (structuredContent.match(/\[!(NOTE|WARNING|TIP|DANGER|INFO)\]/g) ?? []).length;
 
   // LIB-5: auto-file the note with tags derived from its own structure.
-  doc.tags = mergeTags(tags, deriveAutoTags({ entities, concepts, domain: extraction.domain }));
+  doc.tags = mergeTags(tags, deriveAutoTags({ entities: mergedEntities, concepts: mergedConcepts, domain: extraction.domain }));
 
   onProgress?.('Parsing structured data', 70);
 
@@ -366,6 +463,8 @@ export async function runCapturePipeline(
   const chunks = chunkDocument(docId, structuredContent, extraction.cleanedHtml);
   await saveChunks(chunks);
   log.info('offscreen', `Created ${chunks.length} chunks for ${docId}`);
+
+  log.info('pipeline', `FINAL DOC: id=${docId}, title="${doc.title}", content.length=${doc.content?.length ?? 0}, enrichedContent.length=${doc.enrichedContent?.length ?? 0}, wordCount=${doc.wordCount}, entities=${doc.entities?.length ?? 0}, concepts=${doc.concepts?.length ?? 0}, timeline=${doc.timeline?.length ?? 0}, diagramCount=${doc.diagramCount}, tags=[${doc.tags.join(', ')}]`);
 
   onProgress?.('Chunked content', 80);
 

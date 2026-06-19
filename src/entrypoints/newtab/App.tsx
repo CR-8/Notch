@@ -25,10 +25,13 @@ const PAGE_SIZE = 12;
 
 const fuseOptions = {
   keys: [
-    { name: 'title',   weight: 0.5 },
-    { name: 'tags',    weight: 0.25 },
-    { name: 'domain',  weight: 0.15 },
-    { name: 'summary', weight: 0.1 },
+    { name: 'title',        weight: 0.3 },
+    { name: 'summary',      weight: 0.15 },
+    { name: 'tags',         weight: 0.15 },
+    { name: 'domain',       weight: 0.1 },
+    { name: 'topEntities',  weight: 0.1 },
+    { name: 'topConcepts',  weight: 0.1 },
+    { name: 'documentType', weight: 0.1 },
   ],
   threshold: 0.3,
   includeScore: true,
@@ -39,6 +42,28 @@ const fuseOptions = {
 type Filter = 'all' | 'favorites' | 'archive';
 type SortOrder = 'newest' | 'oldest' | 'title-az';
 type ImportStatus = 'idle' | 'importing' | 'done' | 'error';
+
+type DensityLevel = 'Low' | 'Medium' | 'High' | 'Very High';
+
+function computeDensity(meta: DocumentMeta): DensityLevel {
+  const score =
+    (meta.entityCount ?? 0) * 2 +
+    (meta.conceptCount ?? 0) * 2 +
+    (meta.diagramCount ?? 0) * 3 +
+    (meta.hasTimeline ? 3 : 0) +
+    (meta.qualityScore ?? 0) * 0.1;
+  if (score >= 30) return 'Very High';
+  if (score >= 15) return 'High';
+  if (score >= 6) return 'Medium';
+  return 'Low';
+}
+
+const DENSITY_COLORS: Record<DensityLevel, string> = {
+  'Low': '#a39e98',
+  'Medium': '#62aef0',
+  'High': '#0075de',
+  'Very High': '#213183',
+};
 
 function NavItem({ label, active, onClick, icon }: { label: string; active: boolean; onClick: () => void; icon?: string }) {
   return (
@@ -57,13 +82,18 @@ function NavItem({ label, active, onClick, icon }: { label: string; active: bool
   );
 }
 
+interface SearchMatch {
+  field: string;
+  value: string;
+}
+
 function SearchInput({
   metas,
   onSearchResults,
   onQueryChange,
 }: {
   metas: DocumentMeta[];
-  onSearchResults: (r: DocumentMeta[] | null) => void;
+  onSearchResults: (r: DocumentMeta[] | null, q: string) => void;
   onQueryChange: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -75,7 +105,12 @@ function SearchInput({
     onQueryChange();
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      onSearchResults(q.trim().length < 2 ? null : fuse.search(q).map(r => r.item));
+      if (q.trim().length < 2) {
+        onSearchResults(null, '');
+      } else {
+        const results = fuse.search(q).map(r => r.item);
+        onSearchResults(results, q);
+      }
     }, 150);
   }
 
@@ -93,295 +128,209 @@ function SearchInput({
   return (
     <Input
       ref={inputRef}
-      placeholder="Search documents... (/)"
+      placeholder="Search knowledge base... (/)"
       onChange={handleChange}
-      className="w-56 text-[13px]"
+      className="w-64 text-[13px]"
     />
   );
 }
 
-function LibraryHeader({
-  sortOrder,
-  onSortChange,
-  viewMode,
-  onViewModeChange,
-  searchSlot,
-  folders,
-  activeFolderId,
-  onFolderSelect,
-  documentCount,
-}: {
-  sortOrder: SortOrder;
-  onSortChange: (s: SortOrder) => void;
-  viewMode: ViewMode;
-  onViewModeChange: (v: ViewMode) => void;
-  searchSlot?: React.ReactNode;
-  folders: Folder[];
-  activeFolderId: string | null;
-  onFolderSelect: (id: string | null) => void;
-  documentCount: number;
-}) {
-  const sorts: { label: string; value: SortOrder }[] = [
-    { label: 'Newest', value: 'newest' },
-    { label: 'Oldest', value: 'oldest' },
-    { label: 'A–Z',    value: 'title-az' },
+// ── Knowledge Overview (Task 4) ──────────────────────────────────────────────
+
+function KnowledgeOverview({ metas }: { metas: DocumentMeta[] }) {
+  const stats = useMemo(() => {
+    let entityCount = 0;
+    let conceptCount = 0;
+    let timelineCount = 0;
+    let diagramCount = 0;
+    let imageCount = 0;
+    for (const m of metas) {
+      entityCount += m.entityCount ?? 0;
+      conceptCount += m.conceptCount ?? 0;
+      if (m.hasTimeline) timelineCount++;
+      diagramCount += m.diagramCount ?? 0;
+      imageCount += m.imageCount ?? 0;
+    }
+    return { entityCount, conceptCount, timelineCount, diagramCount, imageCount };
+  }, [metas]);
+
+  const items = [
+    { label: 'Documents', value: metas.length, icon: '\u{1F4CB}' },
+    { label: 'Entities', value: stats.entityCount, icon: '\u25C6' },
+    { label: 'Concepts', value: stats.conceptCount, icon: '\u{1F9E0}' },
+    { label: 'Timelines', value: stats.timelineCount, icon: '\u{1F4C5}' },
+    { label: 'Diagrams', value: stats.diagramCount, icon: '\u{1F4CA}' },
+    { label: 'Images', value: stats.imageCount, icon: '\u{1F5BC}' },
   ];
 
-  return (
-    <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--color-hairline)] bg-white">
-      <div className="flex items-center gap-4">
-        <h1 className="text-[22px] font-bold tracking-tight text-[var(--color-ink)]">Library</h1>
-        <span className="text-[13px] text-[var(--color-ink-muted)]">{documentCount} document{documentCount !== 1 ? 's' : ''}</span>
-      </div>
-      <div className="flex items-center gap-3">
-        {searchSlot}
-        {folders.length > 0 && (
-          <select
-            value={activeFolderId ?? ''}
-            onChange={e => onFolderSelect(e.target.value || null)}
-            className="text-[12px] font-medium bg-white border border-[var(--color-hairline)] text-[var(--color-ink-muted)] rounded-md px-2 py-1.5 focus:border-[var(--color-primary)] focus:outline-none cursor-pointer"
-          >
-            <option value="">All folders</option>
-            {folders.map(f => (
-              <option key={f.id} value={f.id}>{f.name}</option>
-            ))}
-          </select>
-        )}
-        <div className="flex gap-0.5 border border-[var(--color-hairline)] rounded-md overflow-hidden">
-          {sorts.map(({ label, value }) => (
-            <button
-              key={value}
-              onClick={() => onSortChange(value)}
-              className={cn(
-                'px-2.5 py-1.5 text-[11px] font-medium transition-colors',
-                sortOrder === value
-                  ? 'bg-[var(--color-primary)] text-white'
-                  : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] bg-white'
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-0.5 border border-[var(--color-hairline)] rounded-md overflow-hidden">
-          {(['compact', 'comfortable', 'detailed'] as ViewMode[]).map((v) => (
-            <button
-              key={v}
-              onClick={() => onViewModeChange(v)}
-              className={cn(
-                'px-2 py-1.5 text-[11px] font-medium transition-colors',
-                viewMode === v
-                  ? 'bg-[var(--color-primary)] text-white'
-                  : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] bg-white'
-              )}
-            >
-              {v === 'compact' ? 'Compact' : v === 'comfortable' ? 'Comfort' : 'Detailed'}
-            </button>
-          ))}
-        </div>
-        <button
-          onClick={() => browser.runtime.openOptionsPage()}
-          title="Settings"
-          className="text-[13px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors px-2 py-1"
-        >
-          Settings
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function Sidebar({
-  activeFilter,
-  onFilterChange,
-  onImport,
-  importStatus,
-  folders,
-  activeFolderId,
-  onFolderSelect,
-  onFolderCreate,
-  onFolderDelete,
-  onDropDocumentOnFolder,
-  onExportFolder,
-  tagColors,
-  onSetTagColor,
-  allTags,
-  documentCount,
-}: {
-  activeFilter: Filter;
-  onFilterChange: (f: Filter) => void;
-  onImport: () => void;
-  importStatus: ImportStatus;
-  folders: Folder[];
-  activeFolderId: string | null;
-  onFolderSelect: (id: string | null) => void;
-  onFolderCreate: (name: string, color: string) => void;
-  onFolderDelete: (id: string) => void;
-  onDropDocumentOnFolder: (docId: string, folderId: string) => void;
-  onExportFolder: (folderId: string) => void;
-  tagColors: TagColorMap;
-  onSetTagColor: (tag: string, color: string | null) => void;
-  allTags: string[];
-  documentCount: number;
-}) {
-  const [newFolderName, setNewFolderName] = useState('');
-  const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLORS[0]);
-  const [showFolderInput, setShowFolderInput] = useState(false);
-  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
-
-    const topItems: { label: string; value: Filter | 'settings'; icon: string }[] = [
-    { label: 'All documents', value: 'all', icon: '\u{1F4C4}' },
-    { label: 'Favorites',     value: 'favorites', icon: '\u2605' },
-    { label: 'Archive',       value: 'archive', icon: '\u{1F4E6}' },
-  ];
-
-  function submitFolder() {
-    const name = newFolderName.trim();
-    if (!name) return;
-    onFolderCreate(name, newFolderColor);
-    setNewFolderName('');
-    setNewFolderColor(FOLDER_COLORS[0]);
-    setShowFolderInput(false);
-  }
-
-  const importLabel = importStatus === 'importing' ? 'Importing...'
-    : importStatus === 'done' ? 'Imported'
-    : importStatus === 'error' ? 'Failed — retry'
-    : 'Import PDF';
+  if (metas.length === 0) return null;
 
   return (
-    <div className="w-56 h-screen bg-white border-r border-[var(--color-hairline)] shrink-0 flex flex-col py-4">
-      <div className="px-4 pb-4 flex items-center gap-2">
-        <span className="text-[18px] font-bold tracking-tight text-[var(--color-ink)]">Notch</span>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-2">
-        <div className="space-y-0.5 mb-4">
-          {topItems.map(({ label, value, icon }) => (
-            <NavItem
-              key={value}
-              label={label}
-              icon={icon}
-              active={activeFilter === value && activeFolderId === null}
-              onClick={() => value === 'settings' ? window.location.href = '/settings.html' : onFilterChange(value as Filter)}
-            />
-          ))}
-        </div>
-
-        <Separator className="bg-[var(--color-hairline)] my-3" />
-
-        <div className="flex items-center justify-between px-4 mb-1">
-          <span className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide">Folders</span>
-          <button
-            onClick={() => setShowFolderInput(v => !v)}
-            className="text-[14px] text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors leading-none"
-            title="New folder"
-          >
-            +
-          </button>
-        </div>
-
-        {showFolderInput && (
-          <div className="px-4 mb-2 flex flex-col gap-1.5">
-            <input
-              autoFocus
-              value={newFolderName}
-              onChange={e => setNewFolderName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') submitFolder(); if (e.key === 'Escape') setShowFolderInput(false); }}
-              placeholder="Folder name"
-              className="notion-input text-[12px]"
-            />
-            <div className="flex gap-1 flex-wrap">
-              {FOLDER_COLORS.map(c => (
-                <button
-                  key={c}
-                  onClick={() => setNewFolderColor(c)}
-                  className="w-3.5 h-3.5 rounded-sm transition-transform hover:scale-110"
-                  style={{
-                    backgroundColor: c,
-                    outline: newFolderColor === c ? `2px solid ${c}` : 'none',
-                    outlineOffset: '1px',
-                  }}
-                />
-              ))}
-            </div>
-            <button onClick={submitFolder} className="text-[11px] font-medium text-[var(--color-primary)] text-left">
-              Create
-            </button>
-          </div>
-        )}
-
-        {folders.map(folder => (
+    <div className="px-6 pt-5 pb-2">
+      <h2 className="text-[13px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-3">Knowledge Base</h2>
+      <div className="flex flex-wrap gap-2">
+        {items.map(item => (
           <div
-            key={folder.id}
-            className={cn(
-              'group flex items-center rounded-md mx-2',
-              dragOverFolderId === folder.id && 'bg-[var(--color-surface-hover)]'
-            )}
-            onDragOver={e => { e.preventDefault(); setDragOverFolderId(folder.id); }}
-            onDragLeave={() => setDragOverFolderId(null)}
-            onDrop={e => {
-              e.preventDefault();
-              setDragOverFolderId(null);
-              const docId = e.dataTransfer.getData('text/plain');
-              if (docId) onDropDocumentOnFolder(docId, folder.id);
-            }}
+            key={item.label}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-hairline)] bg-white"
           >
-            <button
-              onClick={() => { onFolderSelect(folder.id); onFilterChange('all'); }}
-              className={cn(
-                'flex items-center gap-2 flex-1 text-left px-2 py-1 text-[13px] font-medium rounded-md transition-all',
-                activeFolderId === folder.id
-                  ? 'bg-[var(--color-primary)]/5 text-[var(--color-primary)]'
-                  : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-surface-hover)]'
-              )}
-            >
-              <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: folder.color }} />
-              <span className="truncate">{folder.name}</span>
-            </button>
-            <button
-              onClick={() => onExportFolder(folder.id)}
-              className="text-[var(--color-ink-faint)] hover:text-[var(--color-primary)] text-[11px] opacity-0 group-hover:opacity-100 transition-opacity px-1"
-              title="Export folder"
-            >
-              ↓
-            </button>
-            <button
-              onClick={() => onFolderDelete(folder.id)}
-              className="text-[var(--color-ink-faint)] hover:text-[var(--color-destructive)] text-[11px] opacity-0 group-hover:opacity-100 transition-opacity px-1"
-              title="Delete folder"
-            >
-              &times;
-            </button>
+            <span className="text-[14px] leading-none">{item.icon}</span>
+            <span className="text-[18px] font-bold text-[var(--color-ink)] tabular-nums">{item.value}</span>
+            <span className="text-[11px] text-[var(--color-ink-muted)]">{item.label}</span>
           </div>
         ))}
       </div>
-
-      <div className="px-4 mt-4">
-        <button
-          onClick={onImport}
-          disabled={importStatus === 'importing'}
-          className={cn(
-            'w-full text-[12px] font-medium py-2 rounded-full border border-dashed transition-all',
-            importStatus === 'importing' ? 'border-[var(--color-primary)] text-[var(--color-primary)] opacity-60 cursor-not-allowed'
-              : importStatus === 'done' ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
-              : importStatus === 'error' ? 'border-[var(--color-destructive)] text-[var(--color-destructive)]'
-              : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
-          )}
-        >
-          {importLabel}
-        </button>
-      </div>
-
-      <ColorLegend
-        folders={folders}
-        tagColors={tagColors}
-        onSetTagColor={onSetTagColor}
-        allTags={allTags}
-      />
     </div>
   );
 }
+
+// ── Trending Knowledge (Task 5) ──────────────────────────────────────────────
+
+function TrendingKnowledge({ metas }: { metas: DocumentMeta[] }) {
+  const trending = useMemo(() => {
+    const entityFreq: Record<string, number> = {};
+    const conceptFreq: Record<string, number> = {};
+    for (const m of metas) {
+      for (const e of m.topEntities ?? []) {
+        entityFreq[e] = (entityFreq[e] ?? 0) + 1;
+      }
+      for (const c of m.topConcepts ?? []) {
+        conceptFreq[c] = (conceptFreq[c] ?? 0) + 1;
+      }
+    }
+    const topEntities = Object.entries(entityFreq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name]) => name);
+    const topConcepts = Object.entries(conceptFreq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name]) => name);
+    return { topEntities, topConcepts };
+  }, [metas]);
+
+  if (metas.length === 0) return null;
+  if (trending.topEntities.length === 0 && trending.topConcepts.length === 0) return null;
+
+  return (
+    <div className="px-6 pb-2">
+      <div className="flex gap-8 flex-wrap">
+        {trending.topEntities.length > 0 && (
+          <div>
+            <span className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide">
+              Trending Entities
+            </span>
+            <div className="flex gap-1.5 mt-1.5 flex-wrap">
+              {trending.topEntities.map(e => (
+                <span
+                  key={e}
+                  className="text-[12px] font-medium px-2 py-0.5 rounded-full bg-[var(--color-primary)]/5 text-[var(--color-primary)] border border-[var(--color-primary)]/15"
+                >
+                  {e}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {trending.topConcepts.length > 0 && (
+          <div>
+            <span className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide">
+              Trending Concepts
+            </span>
+            <div className="flex gap-1.5 mt-1.5 flex-wrap">
+              {trending.topConcepts.map(c => (
+                <span
+                  key={c}
+                  className="text-[12px] font-medium px-2 py-0.5 rounded-full bg-[var(--color-accent-purple)]/20 text-[var(--color-secondary)] border border-[var(--color-accent-purple)]/20"
+                >
+                  {c}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Document Type Badge (Task 2) ─────────────────────────────────────────────
+
+const DOC_TYPE_STYLES: Record<string, { bg: string; text: string; border: string }> = {
+  'Tutorial':       { bg: '#e8f5e9', text: '#2e7d32', border: '#a5d6a7' },
+  'Research Paper': { bg: '#e3f2fd', text: '#1565c0', border: '#90caf9' },
+  'Documentation':  { bg: '#fff3e0', text: '#e65100', border: '#ffcc80' },
+  'News':           { bg: '#fce4ec', text: '#c62828', border: '#ef9a9a' },
+  'Analysis':       { bg: '#f3e5f5', text: '#6a1b9a', border: '#ce93d8' },
+  'Reference':      { bg: '#e0f2f1', text: '#00695c', border: '#80cbc4' },
+};
+
+function DocTypeBadge({ type }: { type?: string }) {
+  if (!type) return null;
+  const style = DOC_TYPE_STYLES[type];
+  if (!style) {
+    return (
+      <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border border-[var(--color-hairline)] text-[var(--color-ink-muted)]">
+        {type}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-[10px] font-medium px-2 py-0.5 rounded-full border"
+      style={{ backgroundColor: style.bg, color: style.text, borderColor: style.border }}
+    >
+      {type}
+    </span>
+  );
+}
+
+// ── Hover Preview (Task 8) ──────────────────────────────────────────────────
+
+function HoverPreview({ meta }: { meta: DocumentMeta }) {
+  const density = computeDensity(meta);
+  const densityColor = DENSITY_COLORS[density];
+
+  return (
+    <div className="absolute left-0 right-0 bottom-full mb-2 z-50 bg-white border border-[var(--color-hairline)] rounded-xl shadow-level-2 p-4 pointer-events-none animate-page-enter">
+      {meta.summary && (
+        <p className="text-[13px] text-[var(--color-ink-muted)] leading-relaxed line-clamp-3 mb-3">
+          {meta.summary}
+        </p>
+      )}
+      <div className="flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-ink-muted)] mb-2">
+        <span className="font-medium">{(meta.entityCount ?? 0)} entities</span>
+        <span className="text-[var(--color-hairline)]">|</span>
+        <span className="font-medium">{(meta.conceptCount ?? 0)} concepts</span>
+        {meta.hasTimeline && (
+          <>
+            <span className="text-[var(--color-hairline)]">|</span>
+            <span className="font-medium">Timeline</span>
+          </>
+        )}
+        {meta.diagramCount ? (
+          <>
+            <span className="text-[var(--color-hairline)]">|</span>
+            <span className="font-medium">{meta.diagramCount} diagrams</span>
+          </>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-2 text-[11px]">
+        {meta.readingTimeMinutes && (
+          <span className="text-[var(--color-ink-faint)]">{meta.readingTimeMinutes} min read</span>
+        )}
+        <span
+          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+          style={{ backgroundColor: `${densityColor}15`, color: densityColor }}
+        >
+          {density} density
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ── Document Card (Tasks 1, 2, 3, 13, 14) ────────────────────────────────────
 
 interface DocumentCardProps {
   meta: DocumentMeta;
@@ -400,15 +349,30 @@ interface DocumentCardProps {
 function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, onTagClick, onMoveToFolder, activeTag, onDragStart, tagColors }: DocumentCardProps) {
   const [showFolderMenu, setShowFolderMenu] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const density = computeDensity(meta);
+  const densityColor = DENSITY_COLORS[density];
 
   function stop<T>(fn: () => T) {
     return (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
   }
 
+  function handleMouseEnter() {
+    if (previewTimer.current) clearTimeout(previewTimer.current);
+    previewTimer.current = setTimeout(() => setShowPreview(true), 400);
+  }
+
+  function handleMouseLeave() {
+    if (previewTimer.current) clearTimeout(previewTimer.current);
+    setShowPreview(false);
+  }
+
   const currentFolder = folders.find(f => f.id === meta.folder);
 
   const folderMenu = (
-      <div className="relative" onClick={e => e.stopPropagation()}>
+    <div className="relative" onClick={e => e.stopPropagation()}>
       <button
         onClick={() => setShowFolderMenu(v => !v)}
         title="Move to folder"
@@ -462,14 +426,9 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
           {meta.isStarred ? '\u2605' : '\u2606'}
         </button>
         <div className="flex-1 flex items-center gap-3 min-w-0">
-          <p className="text-[13px] font-semibold text-[var(--color-ink)] truncate max-w-[35%] shrink-0">{meta.title}</p>
-          <span className="text-[11px] text-[var(--color-ink-muted)] truncate max-w-[15%] shrink-0">{meta.domain}</span>
-          {currentFolder && (
-            <div className="flex items-center gap-1 shrink-0">
-              <span className="inline-block w-1.5 h-1.5 rounded-sm shrink-0" style={{ backgroundColor: currentFolder.color }} />
-              <span className="text-[10px] font-medium truncate" style={{ color: currentFolder.color }}>{currentFolder.name}</span>
-            </div>
-          )}
+          <p className="text-[13px] font-semibold text-[var(--color-ink)] truncate max-w-[30%] shrink-0">{meta.title}</p>
+          <DocTypeBadge type={meta.documentType} />
+          <span className="text-[11px] text-[var(--color-ink-muted)] truncate max-w-[12%] shrink-0">{meta.domain}</span>
           <div className="flex gap-1 overflow-hidden">
             {meta.tags.slice(0, 2).map(tag => (
               <span
@@ -482,6 +441,12 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
               >{tag}</span>
             ))}
           </div>
+          <span
+            className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0"
+            style={{ backgroundColor: `${densityColor}12`, color: densityColor }}
+          >
+            {density}
+          </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <button onClick={stop(() => onArchive(meta.id, !meta.isArchived))} title={meta.isArchived ? 'Unarchive' : 'Archive'} className={cn('text-[16px] transition-colors flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--color-surface-hover)] leading-none', meta.isArchived ? 'text-[var(--color-primary)]' : 'text-[var(--color-ink-faint)] hover:text-[var(--color-ink)]')}>&#x22A1;</button>
@@ -492,20 +457,117 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
     );
   }
 
+  const knowledgeMeta = (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--color-ink-muted)]">
+      {(meta.entityCount ?? 0) > 0 && (
+        <span className="font-medium">◆ {meta.entityCount} entities</span>
+      )}
+      {(meta.conceptCount ?? 0) > 0 && (
+        <span className="font-medium">🧠 {meta.conceptCount} concepts</span>
+      )}
+      {meta.hasTimeline && (
+        <span className="font-medium">📅 Timeline</span>
+      )}
+      {(meta.diagramCount ?? 0) > 0 && (
+        <span className="font-medium">📊 {meta.diagramCount} diagram{(meta.diagramCount ?? 0) > 1 ? 's' : ''}</span>
+      )}
+      {(meta.imageCount ?? 0) > 0 && (
+        <span className="font-medium">📷 {meta.imageCount} image{(meta.imageCount ?? 0) > 1 ? 's' : ''}</span>
+      )}
+    </div>
+  );
+
+  const hasKnowledge = (meta.entityCount ?? 0) > 0 || (meta.conceptCount ?? 0) > 0 || meta.hasTimeline || (meta.diagramCount ?? 0) > 0 || (meta.imageCount ?? 0) > 0;
+
+  const topItems = (
+    <div className="flex flex-wrap gap-x-4 gap-y-1">
+      {(meta.topEntities?.length ?? 0) > 0 && (
+        <div>
+          <span className="text-[10px] font-medium text-[var(--color-ink-faint)]">Top entities:</span>
+          <div className="flex gap-1 mt-0.5 flex-wrap">
+            {meta.topEntities!.slice(0, 3).map(e => (
+              <span
+                key={e}
+                className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-primary)]/5 text-[var(--color-primary)]"
+              >
+                {e}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {(meta.topConcepts?.length ?? 0) > 0 && (
+        <div>
+          <span className="text-[10px] font-medium text-[var(--color-ink-faint)]">Top concepts:</span>
+          <div className="flex gap-1 mt-0.5 flex-wrap">
+            {meta.topConcepts!.slice(0, 3).map(c => (
+              <span
+                key={c}
+                className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-accent-purple)]/15 text-[var(--color-secondary)]"
+              >
+                {c}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const detailRow = (
+    <div className="flex items-center gap-3 text-[11px] text-[var(--color-ink-faint)]">
+      {meta.readingTimeMinutes && (
+        <span>{meta.readingTimeMinutes} min read</span>
+      )}
+      <span className="text-[var(--color-hairline)]">|</span>
+      <span>{meta.capturedAt.slice(0, 10)}</span>
+      {currentFolder && (
+        <>
+          <span className="text-[var(--color-hairline)]">|</span>
+          <div className="flex items-center gap-1">
+            <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: currentFolder.color }} />
+            <span className="text-[11px] font-medium" style={{ color: currentFolder.color }}>{currentFolder.name}</span>
+          </div>
+        </>
+      )}
+      <span className="ml-auto">
+        <span
+          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+          style={{ backgroundColor: `${densityColor}12`, color: densityColor }}
+        >
+          {density}
+        </span>
+      </span>
+    </div>
+  );
+
   return (
     <div
       draggable
       onDragStart={e => { setIsDragging(true); onDragStart?.(e, meta.id); }}
       onDragEnd={() => setIsDragging(false)}
       onClick={() => browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${meta.id}`) })}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       className={cn(
-        'flex flex-col gap-2.5 cursor-pointer rounded-xl border border-[var(--color-hairline)] bg-white hover:border-[var(--color-primary)] hover:shadow-level-1 transition-all',
+        'relative flex flex-col gap-3 cursor-pointer rounded-xl border border-[var(--color-hairline)] bg-white hover:border-[var(--color-primary)] hover:shadow-level-1 transition-all group',
         viewMode === 'detailed' ? 'p-5' : 'p-4',
         isDragging && 'opacity-50'
       )}
     >
+      {showPreview && viewMode !== 'detailed' && (
+        <HoverPreview meta={meta} />
+      )}
+
       <div className="flex gap-3 justify-between items-start">
-        <p className={cn("font-semibold text-[var(--color-ink)] leading-snug", viewMode === 'detailed' ? 'text-[17px]' : 'text-[15px]')}>{meta.title}</p>
+        <div className="flex-1 min-w-0">
+          <p className={cn("font-semibold text-[var(--color-ink)] leading-snug", viewMode === 'detailed' ? 'text-[17px]' : 'text-[15px]')}>
+            {meta.title}
+          </p>
+          <div className="mt-1">
+            <DocTypeBadge type={meta.documentType} />
+          </div>
+        </div>
         <button
           onClick={stop(() => onStar(meta.id, !meta.isStarred))}
           title={meta.isStarred ? 'Unstar' : 'Star'}
@@ -515,50 +577,42 @@ function DocumentCard({ meta, folders, viewMode, onStar, onArchive, onDelete, on
         </button>
       </div>
 
-      <div className="flex gap-3 items-center flex-wrap text-[12px] text-[var(--color-ink-muted)]">
-        <span>{meta.domain}</span>
-        <span>{meta.wordCount}w</span>
-        <span>{meta.capturedAt.slice(0, 10)}</span>
-        {currentFolder && (
-          <div className="flex items-center gap-1">
-            <span className="inline-block w-1.5 h-1.5 rounded-sm" style={{ backgroundColor: currentFolder.color }} />
-            <span className="text-[11px] font-medium" style={{ color: currentFolder.color }}>{currentFolder.name}</span>
-          </div>
-        )}
-      </div>
-
       {viewMode === 'detailed' && meta.summary && (
         <p className="text-[13px] text-[var(--color-ink-muted)] leading-relaxed line-clamp-3 border-l-2 border-[var(--color-hairline)] pl-3">
           {meta.summary}
         </p>
       )}
 
-      {meta.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {meta.tags.map((tag) => {
-            const tagColor = tagColors[tag];
-            return (
-              <Badge
-                key={tag}
-                variant="outline"
-                onClick={stop(() => onTagClick(tag))}
-                className={cn(
-                  'text-[10px] font-medium px-2 py-0.5 cursor-pointer transition-colors rounded-full',
-                  activeTag === tag
-                    ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
-                    : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
-                )}
-                style={tagColor && activeTag !== tag
-                  ? { borderColor: tagColor, color: tagColor }
-                  : undefined
-                }
-              >
-                {tag}
-              </Badge>
-            );
-          })}
-        </div>
-      )}
+      {hasKnowledge && knowledgeMeta}
+
+      {hasKnowledge && (viewMode === 'detailed') && topItems}
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        {meta.tags.slice(0, viewMode === 'detailed' ? undefined : 3).map((tag) => {
+          const tagColor = tagColors[tag];
+          return (
+            <Badge
+              key={tag}
+              variant="outline"
+              onClick={stop(() => onTagClick(tag))}
+              className={cn(
+                'text-[10px] font-medium px-2 py-0.5 cursor-pointer transition-colors rounded-full',
+                activeTag === tag
+                  ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+                  : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
+              )}
+              style={tagColor && activeTag !== tag
+                ? { borderColor: tagColor, color: tagColor }
+                : undefined
+              }
+            >
+              {tag}
+            </Badge>
+          );
+        })}
+      </div>
+
+      {detailRow}
 
       <div className="flex gap-1 items-center text-[14px]">
         <button
@@ -733,7 +787,7 @@ function DocumentGrid({ metas, folders, viewMode, loading, error, onStar, onArch
   if (loading) {
     return (
       <div className={cn("grid gap-3 p-6", viewMode === 'compact' ? 'grid-cols-1' : viewMode === 'detailed' ? 'grid-cols-2' : 'grid-cols-3')}>
-        {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className={viewMode === 'compact' ? "h-10 rounded-lg" : viewMode === 'detailed' ? "h-52 rounded-xl" : "h-36 rounded-xl"} />)}
+        {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className={viewMode === 'compact' ? "h-10 rounded-lg" : viewMode === 'detailed' ? "h-64 rounded-xl" : "h-52 rounded-xl"} />)}
       </div>
     );
   }
@@ -742,8 +796,8 @@ function DocumentGrid({ metas, folders, viewMode, loading, error, onStar, onArch
       return (
         <EmptyLibrary
           icon={'\u{1F4C2}'}
-          title="This folder is empty"
-          description="Capture pages to this folder, or drag existing documents here."
+          title="This collection is empty"
+          description="Capture pages to this collection, or drag existing documents here."
           action={{ label: 'Add Document', onClick: onAddDocument }}
         />
       );
@@ -761,7 +815,7 @@ function DocumentGrid({ metas, folders, viewMode, loading, error, onStar, onArch
     return (
       <EmptyLibrary
         icon={'\u{1F4CB}'}
-        title="No documents yet"
+        title="No knowledge objects yet"
         description="Open any web page, open the Notch extension, and click 'Capture this page' to save your first document."
         action={{ label: 'Learn More', onClick: () => browser.tabs.create({ url: 'https://notch.ai' }) }}
       />
@@ -798,6 +852,7 @@ export default function LibraryApp() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<DocumentMeta[] | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [quotaWarning, setQuotaWarning] = useState<{ usedBytes: number; quotaBytes: number } | null>(null);
@@ -807,6 +862,9 @@ export default function LibraryApp() {
   const [tagColors, setTagColors] = useState<TagColorMap>({});
   const [hasApiKey, setHasApiKey] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
+  const [showFolderInput, setShowFolderInput] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLORS[0]);
   const { addToast } = useToast();
 
   useEffect(() => {
@@ -914,7 +972,7 @@ export default function LibraryApp() {
     const folder = folders.find(f => f.id === folderId);
     const count = metas.filter(m => m.folder === folderId).length;
     if (count === 0) {
-      addToast('No documents in this folder', 'info');
+      addToast('No documents in this collection', 'info');
       return;
     }
     try {
@@ -922,7 +980,7 @@ export default function LibraryApp() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${folder?.name ?? 'folder'}.zip`;
+      a.download = `${folder?.name ?? 'collection'}.zip`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -972,6 +1030,11 @@ export default function LibraryApp() {
   function handleSortChange(s: SortOrder) { setSortOrder(s); setPage(1); }
   function handleTagClick(tag: string) { setActiveTag(prev => prev === tag ? null : tag); setPage(1); }
   function handleSearchReset() { setPage(1); }
+
+  function handleSearchResults(results: DocumentMeta[] | null, query: string) {
+    setSearchResults(results);
+    setSearchQuery(query);
+  }
 
   const filtered = metas.filter(m => {
     if (activeFolderId) return m.folder === activeFolderId;
@@ -1053,42 +1116,245 @@ export default function LibraryApp() {
         accept="application/pdf"
         className="hidden"
       />
-      <Sidebar
-        activeFilter={activeFilter}
-        onFilterChange={handleFilterChange}
-        onImport={handleImportClick}
-        importStatus={importStatus}
-        folders={folders}
-        activeFolderId={activeFolderId}
-        onFolderSelect={id => { setActiveFolderId(id); setPage(1); }}
-        onFolderCreate={handleFolderCreate}
-        onFolderDelete={handleFolderDelete}
-        onDropDocumentOnFolder={handleDropDocumentOnFolder}
-        onExportFolder={handleExportFolder}
-        tagColors={tagColors}
-        onSetTagColor={handleSetTagColor}
-        allTags={allTags}
-        documentCount={displayList.length}
-      />
+
+      <div className="w-56 h-screen bg-white border-r border-[var(--color-hairline)] shrink-0 flex flex-col py-4">
+        <div className="px-4 pb-4 flex items-center gap-2">
+          <span className="text-[18px] font-bold tracking-tight text-[var(--color-ink)]">Notch</span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-2">
+          <div className="space-y-0.5 mb-4">
+            <NavItem
+              label="All documents"
+              icon={'\u{1F4CB}'}
+              active={activeFilter === 'all' && activeFolderId === null}
+              onClick={() => handleFilterChange('all')}
+            />
+            <NavItem
+              label="Favorites"
+              icon={'\u2605'}
+              active={activeFilter === 'favorites'}
+              onClick={() => handleFilterChange('favorites')}
+            />
+            <NavItem
+              label="Archive"
+              icon={'\u{1F4E6}'}
+              active={activeFilter === 'archive'}
+              onClick={() => handleFilterChange('archive')}
+            />
+            <NavItem
+              label="Settings"
+              icon={'\u2699'}
+              active={false}
+              onClick={() => browser.runtime.openOptionsPage()}
+            />
+          </div>
+
+          <Separator className="bg-[var(--color-hairline)] my-3" />
+
+          <div className="flex items-center justify-between px-4 mb-1">
+            <span className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide">Collections</span>
+            <button
+              onClick={() => setShowFolderInput(v => !v)}
+              className="text-[14px] text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors leading-none"
+              title="New collection"
+            >
+              +
+            </button>
+          </div>
+
+          {showFolderInput && (
+            <div className="px-4 mb-2 flex flex-col gap-1.5">
+              <input
+                autoFocus
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    const name = newFolderName.trim();
+                    if (name) {
+                      handleFolderCreate(name, newFolderColor);
+                      setNewFolderName('');
+                      setNewFolderColor(FOLDER_COLORS[0]);
+                      setShowFolderInput(false);
+                    }
+                  }
+                  if (e.key === 'Escape') setShowFolderInput(false);
+                }}
+                placeholder="Collection name"
+                className="notion-input text-[12px]"
+              />
+              <div className="flex gap-1 flex-wrap">
+                {FOLDER_COLORS.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => setNewFolderColor(c)}
+                    className="w-3.5 h-3.5 rounded-sm transition-transform hover:scale-110"
+                    style={{
+                      backgroundColor: c,
+                      outline: newFolderColor === c ? `2px solid ${c}` : 'none',
+                      outlineOffset: '1px',
+                    }}
+                  />
+                ))}
+              </div>
+              <button
+                onClick={() => {
+                  const name = newFolderName.trim();
+                  if (name) {
+                    handleFolderCreate(name, newFolderColor);
+                    setNewFolderName('');
+                    setNewFolderColor(FOLDER_COLORS[0]);
+                    setShowFolderInput(false);
+                  }
+                }}
+                className="text-[11px] font-medium text-[var(--color-primary)] text-left"
+              >
+                Create
+              </button>
+            </div>
+          )}
+
+          {folders.map(folder => (
+            <div
+              key={folder.id}
+              className={cn(
+                'group flex items-center rounded-md mx-2'
+              )}
+              onDragOver={e => { e.preventDefault(); }}
+              onDrop={e => {
+                e.preventDefault();
+                const docId = e.dataTransfer.getData('text/plain');
+                if (docId) handleDropDocumentOnFolder(docId, folder.id);
+              }}
+            >
+              <button
+                onClick={() => { setActiveFolderId(folder.id); setActiveFilter('all'); }}
+                className={cn(
+                  'flex items-center gap-2 flex-1 text-left px-2 py-1 text-[13px] font-medium rounded-md transition-all',
+                  activeFolderId === folder.id
+                    ? 'bg-[var(--color-primary)]/5 text-[var(--color-primary)]'
+                    : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-surface-hover)]'
+                )}
+              >
+                <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: folder.color }} />
+                <span className="truncate">{folder.name}</span>
+              </button>
+              <button
+                onClick={() => handleExportFolder(folder.id)}
+                className="text-[var(--color-ink-faint)] hover:text-[var(--color-primary)] text-[11px] opacity-0 group-hover:opacity-100 transition-opacity px-1"
+                title="Export collection"
+              >
+                ↓
+              </button>
+              <button
+                onClick={() => handleFolderDelete(folder.id)}
+                className="text-[var(--color-ink-faint)] hover:text-[var(--color-destructive)] text-[11px] opacity-0 group-hover:opacity-100 transition-opacity px-1"
+                title="Delete collection"
+              >
+                &times;
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="px-4 mt-4">
+          <button
+            onClick={handleImportClick}
+            disabled={importStatus === 'importing'}
+            className={cn(
+              'w-full text-[12px] font-medium py-2 rounded-full border border-dashed transition-all',
+              importStatus === 'importing' ? 'border-[var(--color-primary)] text-[var(--color-primary)] opacity-60 cursor-not-allowed'
+                : importStatus === 'done' ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+                : importStatus === 'error' ? 'border-[var(--color-destructive)] text-[var(--color-destructive)]'
+                : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
+            )}
+          >
+            {importStatus === 'importing' ? 'Importing...'
+              : importStatus === 'done' ? 'Imported'
+              : importStatus === 'error' ? 'Failed — retry'
+              : 'Import PDF'}
+          </button>
+        </div>
+      </div>
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <LibraryHeader
-          sortOrder={sortOrder}
-          onSortChange={handleSortChange}
-          viewMode={viewMode}
-          onViewModeChange={(v) => { setViewMode(v); saveViewMode(v); }}
-          folders={folders}
-          activeFolderId={activeFolderId}
-          onFolderSelect={id => { setActiveFolderId(id); setPage(1); }}
-          documentCount={displayList.length}
-          searchSlot={
+        <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--color-hairline)] bg-white">
+          <div className="flex items-center gap-4">
+            <h1 className="text-[22px] font-bold tracking-tight text-[var(--color-ink)]">Knowledge Base</h1>
+            <span className="text-[13px] text-[var(--color-ink-muted)]">
+              {searchResults !== null
+                ? `${searchResults.length} result${searchResults.length !== 1 ? 's' : ''}`
+                : `${displayList.length} knowledge object${displayList.length !== 1 ? 's' : ''}`
+              }
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
             <SearchInput
               metas={filtered}
-              onSearchResults={setSearchResults}
+              onSearchResults={handleSearchResults}
               onQueryChange={handleSearchReset}
             />
-          }
-        />
+            {folders.length > 0 && (
+              <select
+                value={activeFolderId ?? ''}
+                onChange={e => { setActiveFolderId(e.target.value || null); setPage(1); }}
+                className="text-[12px] font-medium bg-white border border-[var(--color-hairline)] text-[var(--color-ink-muted)] rounded-md px-2 py-1.5 focus:border-[var(--color-primary)] focus:outline-none cursor-pointer"
+              >
+                <option value="">All collections</option>
+                {folders.map(f => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+            )}
+            <div className="flex gap-0.5 border border-[var(--color-hairline)] rounded-md overflow-hidden">
+              {([{ label: 'Newest', value: 'newest' }, { label: 'Oldest', value: 'oldest' }, { label: 'A–Z', value: 'title-az' }] as const).map(({ label, value }) => (
+                <button
+                  key={value}
+                  onClick={() => handleSortChange(value)}
+                  className={cn(
+                    'px-2.5 py-1.5 text-[11px] font-medium transition-colors',
+                    sortOrder === value
+                      ? 'bg-[var(--color-primary)] text-white'
+                      : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] bg-white'
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-0.5 border border-[var(--color-hairline)] rounded-md overflow-hidden">
+              {(['compact', 'comfortable', 'detailed'] as ViewMode[]).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => { setViewMode(v); saveViewMode(v); }}
+                  className={cn(
+                    'px-2 py-1.5 text-[11px] font-medium transition-colors',
+                    viewMode === v
+                      ? 'bg-[var(--color-primary)] text-white'
+                      : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] bg-white'
+                  )}
+                >
+                  {v === 'compact' ? 'Compact' : v === 'comfortable' ? 'Comfort' : 'Detailed'}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => browser.runtime.openOptionsPage()}
+              title="Settings"
+              className="text-[13px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors px-2 py-1"
+            >
+              Settings
+            </button>
+          </div>
+        </div>
+
+        {!searchResults && metas.length > 0 && (
+          <>
+            <KnowledgeOverview metas={metas} />
+            <TrendingKnowledge metas={metas} />
+          </>
+        )}
 
         {activeTag && (
           <div className="flex items-center gap-2 px-6 pt-3">

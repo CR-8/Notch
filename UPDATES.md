@@ -7,7 +7,53 @@
 **Last updated:** 2026-06-19
 
 **Verify any time:** `npm test` (vitest) · `npx tsc --noEmit` · `npx wxt build`
-**Current state:** typecheck clean · **66 tests passing** (11 files) · production build OK.
+**Current state:** typecheck clean · **106 tests passing** (17 files) · production build OK.
+
+> 🏗 **Pipeline redesign in progress** — see `PIPELINE-REDESIGN.md` for the staged
+> architecture (extraction → planner → generator → render). **Phases 1–3 shipped**:
+> structured extraction + DocumentPlanner + per-section generator + content-driven
+> diagram generation + rich-table inline markdown + figure numbering + side-panel
+> intelligence dashboard. Problems 1–8, 11 done. Next: Phase 4 (PDF figures/TOC) and
+> the chat-panel redesign (Problem 10).
+
+---
+
+## Capture pipeline debugging (2026-06-19) — Forensic audit
+
+**Context:** User reported reader showing no content, wordCount=6, entities=0, concepts=0 for captured GeeksforGeeks page despite pipeline completing (19 chunks created).
+
+### Root causes found & fixed
+
+| # | Issue | Root cause | Fix |
+|---|---|---|---|
+| 1 | `wordCount=6` / `textContent` very short | `content.ts` used `innerText` (CSS-aware, layout-dependent) which returns incomplete text on complex dynamic pages. Readability also returned null → fell back to `innerText` = ~6 words. | Changed to `textContent` (`content.ts:13`). Gets ALL text, no layout dependency. |
+| 2 | `entities=0` always | LLM prompts (FAST/BALANCED/DEEP) had **no `## Key Entities` section header**. Regex parser at `pipeline.ts:334` searched for it, always found nothing → `entities` array always `[]`. Fallback `extractKnowledge(textContent)` also returned empty because textContent was 6 words. | Added `## Key Entities` to all three prompts. LLM now explicitly lists entities with type. |
+| 3 | `concepts=0`, entities fallback still empty | Even with #1 fixed, newly captured docs would work but **already-captured** docs have no Key Entities section in their stored content. No backfill from the generated content itself. | Added `extractKnowledge(structuredContent)` as tier-2 backfill (`pipeline.ts:370`). Three-tier merge: LLM-parsed → deterministic-from-generated-content → raw-text extraction. |
+| 4 | Metadata (documentType, topics, etc.) used raw-text extraction only | `doc.documentType = knowledge.documentType` used only raw page text. If textContent was short, type defaulted to 'general'. | Changed to prefer `knowledgeFromContent` (extraction from generated markdown) when it has entities, fall back to raw-text (`pipeline.ts:411-415`). |
+| 5 | `deriveAutoTags` used raw (empty) entities | Called with unmerged `entities`/`concepts` arrays. If both were empty, no auto-tags. | Changed to use `mergedEntities`/`mergedConcepts` (`pipeline.ts:429`). |
+
+### Logging added
+
+Extensive instrumentation at every pipeline stage so the next capture produces a full trace:
+
+**Pipeline (`pipeline.ts`):**
+- EXTRACTION INPUT: textContent.length, wordCount, image count, cleanedHtml length
+- KNOWLEDGE EXTRACTION: entity/concept/relationship/timeline counts + document type + complexity
+- PLAN: depth, section count, target word range, visual count
+- GENERATION: orchestrated vs single-pass fallback + structuredContent.length
+- STRUCTURED CONTENT: first 200 chars preview
+- PARSE RESULTS: LLM-parsed entity/concept/keypoint/timeline counts
+- BACKFILL RESULTS: knowledgeFromContent entity/concept/timeline counts
+- MERGE RESULTS: final merged entity/concept/timeline counts
+- FINAL DOC: all stored field counts and sizes
+
+**Reader (`reader/App.tsx`):**
+- Document load: logs all Document fields (content length, entity count, status, textContent length, etc.)
+- parseMarkdown: logs total/known/unknown block counts + content length + warnings
+
+### Verification
+- `npm run compile` — typecheck clean
+- `npm test` — 106 tests pass (17 files)
 
 ---
 
@@ -16,12 +62,12 @@
 | ID | Status | Fix |
 |---|---|---|
 | BUG-001 Chromium capture (tabId undefined) | ✅ | Popup now passes `tabId`/`url`; `background.handleCapture` uses a `resolveActiveTab()` fallback chain (`tabs.get` → currentWindow → lastFocusedWindow → any active). Service workers have no "current window", which was the root cause. |
-| BUG-002 OpenRouter needs no model | ✅ | OpenRouter preset + save auto-default to `google/gemini-2.0-flash-exp:free` (`OPENROUTER_FREE_MODEL`) when no model is set. |
+| BUG-002 OpenRouter needs no model | ✅ | OpenRouter preset + save seed `openrouter/free` (OpenRouter's real free auto-router) **only when no model is set** — never overwrite an explicit choice. |
 | BUG-003 Remove "Generate Embeddings" button | ✅ | Removed dead button in reader. Capture pipeline already auto-embeds (`pipeline.ts:357`). |
 | BUG-004 Duplicate capture detection | ✅ | Already handled — `dedupe.normalizeUrl` (drops hash/trailing-slash/tracking params) + `findDuplicateId` gate in `handleCapture`. |
 | BUG-005/006/007/008 PDF overlap, Mermaid/UML as code, tables | ✅ | New `exportViaPrint()` (export.ts) prints the **already-rendered** reader DOM (real Mermaid/UML SVGs, images, tables) through the browser print engine with print CSS (page margins, break-inside avoid, `thead` repetition). Replaces the pdf-lib text-drawer as primary path (kept as fallback). NB: spec's Playwright cannot run inside an extension; native print is the deployable equivalent. |
 | BUG-010 Key Takeaways as bullets | ✅ | BALANCED/DEEP capture prompts now require bullet lists, not paragraphs. |
-| BUG-002b stale `openrouter/free` 404 | ✅ | `normalizeModelId()` in pipeline heals invalid/placeholder model ids (`openrouter/free`, `free`, `auto`, …) → real free model at request time, so even already-saved bad values work. Options page also heals on load/save. |
+| BUG-002b model-default handling | ✅ | `normalizeModelId()` supplies a default **only for an empty model** and never rewrites an explicit id. (Earlier version wrongly remapped the *valid* `openrouter/free` — corrected.) NB: the original capture 404 returned the OpenRouter **website** 404 HTML, which means the request hit a non-API path — i.e. the Base URL was missing `/api/v1`, not a bad model. |
 | FEATURE-016 model picker (searchable combo) | ✅ | New `ModelCombobox` (`src/components/ModelCombobox.tsx`) + `fetchAvailableModels()` (`src/lib/models-api.ts`). Options page now live-fetches the OpenAI-compatible catalogue (`GET {baseUrl}/models`, debounced) when endpoint+key are set, shows a searchable/filterable dropdown with FREE + context-length badges (free models sorted first), preserves free-text for custom ids, and **auto-saves** settings (debounced) so no Save click is needed before capture. 5 unit tests for `parseModelsResponse`. |
 | BUG-009/011/012, FEATURE-001+ | ⬜ | See "Remaining vNext" below — larger feature work (AI-derived metadata guarantees, figure numbering, mermaid/uml validation+repair, image verification, deep-mode density, frame/multi-pass generation, model pickers, local AI). |
 

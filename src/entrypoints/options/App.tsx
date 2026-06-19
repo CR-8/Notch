@@ -12,14 +12,12 @@ import { fetchAvailableModels, type ModelOption } from '@/lib/models-api';
 const DEFAULT_OPENROUTER_URL = 'https://openrouter.ai/api/v1';
 // BUG-002: a working free model so a new OpenRouter user can capture immediately
 // without picking a model first.
-const OPENROUTER_FREE_MODEL = 'google/gemini-2.0-flash-exp:free';
+// OpenRouter's own free auto-router — a real model id, used only as the zero-config
+// default when no model is set. Explicit selections are never rewritten.
+const OPENROUTER_DEFAULT_MODEL = 'openrouter/free';
 const isOpenRouterUrl = (u: string) => /openrouter\.ai/i.test(u);
-// Invalid/placeholder model ids that 404 at the API and must be remapped.
-const INVALID_MODEL_ALIASES = new Set(['openrouter/free', 'free', 'openrouter', 'auto', 'default']);
 const normalizeModel = (model: string, url: string) =>
-  (!model.trim() || INVALID_MODEL_ALIASES.has(model.trim().toLowerCase())) && isOpenRouterUrl(url)
-    ? OPENROUTER_FREE_MODEL
-    : model;
+  !model.trim() && isOpenRouterUrl(url) ? OPENROUTER_DEFAULT_MODEL : model;
 
 const PROVIDER_DEFS: Array<{ id: LLMProvider; label: string; description: string }> = [
   { id: 'anthropic', label: 'Anthropic', description: 'Claude API (api.anthropic.com)' },
@@ -249,10 +247,10 @@ export default function SettingsApp() {
                       type="button"
                       onClick={() => {
                         setBaseUrl(url);
-                        // BUG-002: pick the free model automatically for OpenRouter
-                        // unless the user has already typed a specific one.
+                        // BUG-002: seed a working default for OpenRouter only when the
+                        // user hasn't chosen a model yet — never overwrite a real choice.
                         if (isOpenRouterUrl(url) && (!modelId || modelId === DEFAULT_MODELS[provider])) {
-                          setModelId(OPENROUTER_FREE_MODEL);
+                          setModelId(OPENROUTER_DEFAULT_MODEL);
                         }
                       }}
                       className={cn(

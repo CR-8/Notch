@@ -10,7 +10,7 @@ export default defineContentScript({
       // Run extraction and respond directly — this is what browser.tabs.sendMessage awaits
       try {
         const body = document.body ?? document.documentElement;
-        const readableText = body?.innerText ?? document.documentElement?.innerText ?? '';
+        const readableText = body?.textContent ?? document.documentElement?.textContent ?? '';
         const readableHtml = body?.innerHTML ?? document.documentElement?.outerHTML ?? '';
         const documentClone = document.cloneNode(true) as Document;
         const reader = new Readability(documentClone);

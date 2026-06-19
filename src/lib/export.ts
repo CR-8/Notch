@@ -3,6 +3,7 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { Document } from './types';
 import { getChunksByDocument } from './idb';
 import { log } from './logger';
+import { numberTocEntries } from './print-toc';
 
 export interface PDFExportOptions {
   sourceElement?: HTMLElement | null;
@@ -229,6 +230,24 @@ async function renderReaderSnapshotToPdf(
   }
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+}
+
+/** Builds an auto-TOC (Problem 9) from the cloned article's headings, or '' if too few. */
+function buildPrintToc(root: HTMLElement): string {
+  const heads = Array.from(root.querySelectorAll('h2, h3')) as HTMLElement[];
+  const items = heads
+    .map((h) => ({ level: h.tagName === 'H2' ? 2 : 3, text: (h.textContent ?? '').trim(), id: h.id }))
+    .filter((i) => i.text);
+  const entries = numberTocEntries(items);
+  if (entries.length < 2) return '';
+  const lis = entries
+    .map((e) => `<li class="${e.level === 3 ? 'lvl3' : ''}">${e.number}&nbsp;&nbsp;${escapeHtml(e.text)}</li>`)
+    .join('');
+  return `<nav class="notch-toc"><h2>Contents</h2><ol>${lis}</ol></nav>`;
+}
+
 /**
  * BUG-005/006/007/008 — High-fidelity PDF via the browser's own print engine.
  *
@@ -258,18 +277,46 @@ export async function exportViaPrint(doc: Document, sourceElement?: HTMLElement 
       .map((n) => n.outerHTML)
       .join('\n');
 
+    // Clone + clean the rendered article. We strip any failed-diagram raw code so
+    // Mermaid/UML source can NEVER leak into the PDF (Problem 9), plus interactive
+    // chrome (buttons/filters) that doesn't belong in a document.
+    const clone = sourceElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll(
+      '[data-diagram-status="error"] pre, [data-diagram-status="unavailable"] pre, ' +
+      'pre code[class*="language-mermaid"], pre code[class*="language-plantuml"]',
+    ).forEach((el) => (el.closest('pre') ?? el).remove());
+    clone.querySelectorAll('button, input, [contenteditable]').forEach((el) => el.remove());
+
+    const toc = buildPrintToc(clone);
+    const meta = [doc.domain, doc.capturedAt?.slice(0, 10),
+      `${doc.readingTimeMinutes ?? Math.max(1, Math.round((doc.wordCount ?? 0) / 220))} min read`,
+      `${(doc.wordCount ?? 0).toLocaleString()} words`]
+      .filter(Boolean).join('  ·  ');
+
     const printCss = `
       @page { size: A4; margin: 16mm; }
       :root { color-scheme: light; }
       html, body { background: #fff !important; }
-      body { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      body { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; color: #1a1a1a; }
       .notch-print-root { max-width: 100%; color: #1a1a1a; }
       .notch-print-root img, .notch-print-root svg { max-width: 100% !important; height: auto !important; }
+      /* Cover + TOC each get their own page so the body starts clean. */
+      .notch-cover { padding-bottom: 8mm; border-bottom: 1px solid #e5e5e5; break-after: page; }
+      .notch-cover h1 { font-size: 28px; margin: 0 0 6px; }
+      .notch-cover .meta { color: #6b7280; font-size: 12px; }
+      .notch-toc { break-after: page; }
+      .notch-toc h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; }
+      .notch-toc ol { list-style: none; padding-left: 0; }
+      .notch-toc li { margin: 2px 0; }
+      .notch-toc .lvl3 { padding-left: 16px; font-size: 13px; color: #4b5563; }
       /* Don't split atomic blocks across pages (BUG-005). */
       pre, figure, table, blockquote, [data-diagram-kind], .notion-prose pre {
         break-inside: avoid; page-break-inside: avoid;
       }
+      figure svg { display: block; margin: 0 auto; }
+      figcaption { font-size: 12px; color: #6b7280; }
       h1, h2, h3, h4 { break-after: avoid; page-break-after: avoid; }
+      h2 { break-before: auto; margin-top: 1.2em; }
       /* Tables: full width, real borders, repeat the header on every page (BUG-008). */
       table { width: 100%; border-collapse: collapse; }
       thead { display: table-header-group; }
@@ -278,11 +325,12 @@ export async function exportViaPrint(doc: Document, sourceElement?: HTMLElement 
     `;
 
     const title = (doc.title || 'document').replace(/[<>&]/g, '');
+    const cover = `<div class="notch-cover"><h1>${title}</h1><div class="meta">${meta}</div></div>`;
     idoc.open();
     idoc.write(
       `<!doctype html><html data-theme="light"><head><meta charset="utf-8"><title>${title}</title>` +
       `${headStyles}<style>${printCss}</style></head>` +
-      `<body><div class="notch-print-root notion-prose">${sourceElement.innerHTML}</div></body></html>`,
+      `<body>${cover}${toc}<div class="notch-print-root notion-prose">${clone.innerHTML}</div></body></html>`,
     );
     idoc.close();
 

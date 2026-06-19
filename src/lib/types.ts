@@ -8,12 +8,22 @@ export interface Entity {
   name: string;
   type: string;
   paragraphIndex: number;
+  // Content Intelligence: richer extraction fields (optional, backward-compat).
+  description?: string;
+  mentions?: number;
 }
 
 export interface TimelineEvent {
   date: string;
   description: string;
   paragraphIndex: number;
+  significance?: string;
+}
+
+export interface DocumentRelationship {
+  source: string;
+  target: string;
+  relation: string;
 }
 
 export interface Concept {
@@ -58,6 +68,11 @@ export interface Document {
   // Content Intelligence Engine fields
   enrichedContent?: string;
   semanticAnalysis?: string; // JSON string of SemanticAnalysis
+  relationships?: DocumentRelationship[];
+  topics?: string[];
+  complexity?: number;
+  documentType?: string;
+  readingTimeMinutes?: number;
   qualityScore?: number;
   diagramCount?: number;
   imageCount?: number;
@@ -233,6 +248,17 @@ export type DocumentMeta = {
   id: string; title: string; url: string; domain: string; capturedAt: string;
   wordCount: number; summary: string; tags: string[]; folder?: string;
   isStarred: boolean; isArchived: boolean; isRead: boolean; mode: GenerationMode; provider: string;
+  // Knowledge intelligence fields (surfaced from Content Intelligence Engine)
+  entityCount?: number;
+  conceptCount?: number;
+  hasTimeline?: boolean;
+  diagramCount?: number;
+  imageCount?: number;
+  readingTimeMinutes?: number;
+  documentType?: string;
+  qualityScore?: number;
+  topEntities?: string[];
+  topConcepts?: string[];
 };
 export type DocumentHighlight = {
   id: string; documentId: string; text: string; paragraphIndex: number;

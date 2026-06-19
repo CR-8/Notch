@@ -57,6 +57,16 @@ export function ContentRenderer({
 
   const toc = useMemo(() => buildTOC(hierarchy), [hierarchy]);
 
+  // Problem 7: sequential figure numbers across diagrams + images, by document order.
+  const figureNumbers = useMemo(() => {
+    const map = new Map<number, number>();
+    let n = 0;
+    blocks.forEach((b, i) => {
+      if (b.type === 'diagram' || b.type === 'image') { n += 1; map.set(i, n); }
+    });
+    return map;
+  }, [blocks]);
+
   const handleNavigate = useCallback((id: string) => {
     if (onNavigate) {
       onNavigate(id);
@@ -113,6 +123,7 @@ export function ContentRenderer({
             key={index}
             data={block.data as any}
             theme={theme}
+            number={figureNumbers.get(index)}
           />
         );
       }
@@ -190,7 +201,7 @@ export function ContentRenderer({
       default:
         return null;
     }
-  }, [hierarchy, theme]);
+  }, [hierarchy, theme, figureNumbers]);
 
   return (
     <div className="flex gap-6" ref={containerRef}>

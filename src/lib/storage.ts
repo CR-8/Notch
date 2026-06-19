@@ -234,11 +234,23 @@ export async function saveDocIndex(index: string[]): Promise<void> {
 }
 
 export function deriveDocumentMeta(doc: Document): DocumentMeta {
+  const topEntities = doc.entities?.slice(0, 3).map(e => e.name);
+  const topConcepts = doc.concepts?.slice(0, 3).map(c => c.term);
   return {
     id: doc.id, title: doc.title, url: doc.url, domain: doc.domain,
     capturedAt: doc.capturedAt, wordCount: doc.wordCount, summary: doc.summary,
     tags: doc.tags, folder: doc.folder, isStarred: doc.starred,
     isArchived: doc.archived, isRead: false, mode: 'FAST', provider: '',
+    entityCount: doc.entities?.length ?? 0,
+    conceptCount: doc.concepts?.length ?? 0,
+    hasTimeline: (doc.timeline?.length ?? 0) > 0,
+    diagramCount: doc.diagramCount ?? 0,
+    imageCount: doc.imageCount ?? doc.images?.length ?? 0,
+    readingTimeMinutes: doc.readingTimeMinutes,
+    documentType: doc.documentType,
+    qualityScore: doc.qualityScore,
+    topEntities,
+    topConcepts,
   };
 }
 

@@ -4,7 +4,7 @@ import { marked } from 'marked';
 import { cn } from '@/lib/utils';
 import { getChatMessagesByDocument } from '@/lib/idb';
 import type { Document, Citation, ReadingLevel } from '@/lib/types';
-import { languageName, FOLLOW_UPS } from '@/lib/chat-actions';
+import { languageName } from '@/lib/chat-actions';
 import { Textarea } from '@/components/ui/textarea';
 import { sanitizeUserInput, sanitizeHtml, ReassemblyBuffer } from '@/lib/sanitize';
 
@@ -53,10 +53,8 @@ function CitationChip({ n, citation, leftPaneRef }: CitationChipProps) {
   const highlightedElRef = useRef<HTMLElement | null>(null);
 
   function handleClick() {
-    // Remove any hover highlight first
     clearCitationHighlight(highlightedElRef.current);
     highlightedElRef.current = null;
-    // Scroll + highlight for 2s
     const root = leftPaneRef.current;
     if (!root) return;
     const el = root.querySelector<HTMLElement>(`[data-paragraph-index="${citation.paragraphIndex}"]`);
@@ -128,15 +126,12 @@ interface MarkdownContentProps {
 function MarkdownContent({ content, citations, leftPaneRef }: MarkdownContentProps) {
   const html = useMemo(() => renderMarkdownToHtml(content), [content]);
 
-  // If there are citations, parse them separately and wrap the content
   if (citations && citations.length > 0) {
     const partsWithCitations = parseAnswerWithCitations(content, citations, leftPaneRef);
-    // Convert parsed React nodes back to text for markdown rendering
     const textOnly = partsWithCitations.map(p =>
       typeof p === 'string' ? p : ''
     ).join('');
 
-    // Check if content has markdown formatting
     const hasMarkdown = /^[#*`>\-]/.test(content.trim()) ||
       content.includes('\n') && (content.includes('**') || content.includes('`') || content.includes('- '));
 
@@ -157,7 +152,6 @@ function MarkdownContent({ content, citations, leftPaneRef }: MarkdownContentPro
     );
   }
 
-  // Check if content has markdown formatting
   const hasMarkdown = /^[#*`>\-]/.test(content.trim()) ||
     content.includes('\n') && (content.includes('**') || content.includes('`') || content.includes('- '));
 
@@ -170,7 +164,6 @@ function MarkdownContent({ content, citations, leftPaneRef }: MarkdownContentPro
     );
   }
 
-  // Plain text fallback
   return (
     <p className="text-[14px] text-[var(--color-ink)] leading-relaxed whitespace-pre-wrap">
       {content}
@@ -192,28 +185,120 @@ function ContextPill({ title, folderColor }: { title: string; folderColor?: stri
   );
 }
 
-// ── ActionBar (CHAT-3 one-click actions) ──────────────────────────────────────
+// ── Enhanced ActionBar (Task 9) ──────────────────────────────────────────────
 
 const QUICK_ACTIONS: Array<{ label: string; prompt: string }> = [
-  { label: 'Summarize', prompt: 'Summarize this document in a few clear sentences.' },
-  { label: 'Explain simply', prompt: 'Explain this document in simple, plain language a non-expert can follow.' },
-  { label: 'Key terms', prompt: 'List and briefly define the key terms in this document.' },
-  { label: "What's the evidence", prompt: 'What evidence or sources does this document give for its main claims?' },
+  { label: 'Main arguments', prompt: 'What are the main arguments in this document?' },
+  { label: 'Author assumptions', prompt: 'What assumptions does the author make?' },
+  { label: 'Key takeaways', prompt: 'What should I remember from this document?' },
+  { label: 'Challenge claims', prompt: 'Challenge the author\'s claims. What are the weaknesses or counterarguments?' },
+  { label: 'Study notes', prompt: 'Generate study notes from this document with key points and summaries.' },
+  { label: 'Interview questions', prompt: 'Create interview questions based on the content of this document.' },
+  { label: 'Weak evidence', prompt: 'Identify weak evidence or unsupported claims in this document.' },
+  { label: 'Actionable insights', prompt: 'Extract actionable insights from this document that I can apply.' },
+  { label: 'Executive summary', prompt: 'Generate an executive summary of this document.' },
+  { label: 'Compare practices', prompt: 'Compare the content of this document with industry best practices.' },
 ];
 
 function ActionBar({ onAction, disabled }: { onAction: (prompt: string) => void; disabled?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? QUICK_ACTIONS : QUICK_ACTIONS.slice(0, 4);
+
   return (
-    <div className="flex flex-wrap gap-1.5 shrink-0">
-      {QUICK_ACTIONS.map((a) => (
-        <button
-          key={a.label}
-          onClick={() => onAction(a.prompt)}
-          disabled={disabled}
-          className="text-[12px] font-medium px-3 py-1 rounded-full border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] transition-all hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {a.label}
-        </button>
-      ))}
+    <div className="flex flex-col gap-1.5 shrink-0">
+      <div className="flex flex-wrap gap-1.5">
+        {visible.map((a) => (
+          <button
+            key={a.label}
+            onClick={() => onAction(a.prompt)}
+            disabled={disabled}
+            className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] transition-all hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+          >
+            {a.label}
+          </button>
+        ))}
+        {QUICK_ACTIONS.length > 4 && (
+          <button
+            onClick={() => setExpanded(v => !v)}
+            className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all"
+          >
+            {expanded ? 'Show less' : `+${QUICK_ACTIONS.length - 4} more`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Entity Shortcuts (Task 10) ────────────────────────────────────────────────
+
+function EntityShortcuts({ entities, onAsk }: { entities: string[]; onAsk: (q: string) => void }) {
+  if (entities.length === 0) return null;
+  return (
+    <div className="shrink-0">
+      <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-1.5">Entities Found</p>
+      <div className="flex flex-wrap gap-1.5">
+        {entities.map(entity => (
+          <button
+            key={entity}
+            onClick={() => onAsk(`Explain "${entity}" in the context of this document.`)}
+            className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-[var(--color-primary)]/20 bg-[var(--color-primary)]/5 text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 transition-all"
+          >
+            {entity}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Concept Shortcuts (Task 11) ───────────────────────────────────────────────
+
+function ConceptShortcuts({ concepts, onAsk }: { concepts: string[]; onAsk: (q: string) => void }) {
+  if (concepts.length === 0) return null;
+  return (
+    <div className="shrink-0">
+      <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-1.5">Concepts Found</p>
+      <div className="flex flex-wrap gap-1.5">
+        {concepts.map(concept => (
+          <button
+            key={concept}
+            onClick={() => onAsk(`Explain "${concept}" in simple terms based on this document.`)}
+            className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-[var(--color-accent-purple)]/20 bg-[var(--color-accent-purple)]/10 text-[var(--color-secondary)] hover:bg-[var(--color-accent-purple)]/20 transition-all"
+          >
+            {concept}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Timeline Shortcuts (Task 12) ──────────────────────────────────────────────
+
+interface TimelineShortcutProps {
+  events: Array<{ date: string; description: string }>;
+  onAsk: (q: string) => void;
+}
+
+function TimelineShortcuts({ events, onAsk }: TimelineShortcutProps) {
+  if (events.length === 0) return null;
+  const displayed = events.slice(0, 5);
+  return (
+    <div className="shrink-0">
+      <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-1.5">Timeline Events</p>
+      <div className="flex flex-col gap-1">
+        {displayed.map((ev, i) => (
+          <button
+            key={i}
+            onClick={() => onAsk(`What happened during "${ev.description}" (${ev.date})? Explain the significance of this event.`)}
+            className="text-left text-[12px] font-medium px-2.5 py-1.5 rounded-md border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all"
+          >
+            <span className="font-semibold text-[var(--color-ink)]">{ev.date}</span>
+            <span className="ml-1">{ev.description}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -269,7 +354,6 @@ interface NotchBubbleProps {
   onTranslate?: () => void;
 }
 
-// CHAT-7 read-aloud via the browser speech-synthesis engine (fully local).
 function useReadAloud() {
   const [speaking, setSpeaking] = useState(false);
   const speak = useCallback((text: string) => {
@@ -331,7 +415,7 @@ function NotchBubble({ text, citations, isError, translated, isTranslating, left
               disabled={isTranslating}
               className="text-[11px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors disabled:opacity-50"
             >
-              {isTranslating ? 'Translating…' : 'Translate'}
+              {isTranslating ? 'Translating\u2026' : 'Translate'}
             </button>
           )}
         </div>
@@ -411,7 +495,12 @@ function MessageList({ messages, isThinking, leftPaneRef, starters, onAsk, onTra
       {isThinking && <ThinkingIndicator />}
       {!isThinking && messages.length > 0 && messages[messages.length - 1].role === 'assistant' && !messages[messages.length - 1].isError && (
         <div className="flex flex-wrap gap-1.5">
-          {FOLLOW_UPS.map((q) => (
+          {[
+            'Go deeper on that',
+            'Give a concrete example',
+            'Why does this matter?',
+            'Summarize that in one line',
+          ].map((q) => (
             <button
               key={q}
               onClick={() => onAsk(q)}
@@ -439,12 +528,10 @@ function ChatInput({ onSubmit, disabled, initialValue }: ChatInputProps) {
   const [value, setValue] = useState(initialValue ?? '');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Pre-fill on mount if initialValue provided
   useEffect(() => {
     if (initialValue) setValue(initialValue);
   }, [initialValue]);
 
-  // Auto-resize
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -455,7 +542,6 @@ function ChatInput({ onSubmit, disabled, initialValue }: ChatInputProps) {
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      // Sanitize user input before submission
       const trimmed = sanitizeUserInput(value).trim();
       if (trimmed && !disabled) {
         onSubmit(trimmed);
@@ -496,8 +582,6 @@ export interface ChatPanelProps {
   folderColor?: string;
 }
 
-// Page-specific starter questions (CHAT-2) — derived from the document's own
-// structure so they need no extra model call and work fully offline.
 function buildStarters(doc: Document): string[] {
   const starters: string[] = ['Summarize the key points'];
 
@@ -507,7 +591,12 @@ function buildStarters(doc: Document): string[] {
   const entity = (doc.entities?.[0] ?? doc.keyEntities?.[0])?.name;
   starters.push(entity ? `What is ${entity} and why does it matter?` : "What's the main takeaway?");
 
-  return starters.slice(0, 3);
+  if (doc.timeline?.length) {
+    const ev = doc.timeline[0];
+    starters.push(`What happened during "${ev.description}" (${ev.date})?`);
+  }
+
+  return starters.slice(0, 4);
 }
 
 export function ChatPanel({ doc, prefillQuery, leftPaneRef, folderColor }: ChatPanelProps) {
@@ -515,6 +604,24 @@ export function ChatPanel({ doc, prefillQuery, leftPaneRef, folderColor }: ChatP
   const [isThinking, setIsThinking] = useState(false);
   const [readingLevel, setReadingLevel] = useState<ReadingLevel>('simple');
   const starters = useMemo(() => buildStarters(doc), [doc]);
+
+  const entityNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const e of doc.entities ?? []) names.add(e.name);
+    for (const e of doc.keyEntities ?? []) names.add(e.name);
+    return Array.from(names).slice(0, 8);
+  }, [doc]);
+
+  const conceptTerms = useMemo(() => {
+    return (doc.concepts ?? []).slice(0, 8).map(c => c.term);
+  }, [doc]);
+
+  const timelineEvents = useMemo(() => {
+    return (doc.timeline ?? []).slice(0, 5).map(ev => ({
+      date: ev.date,
+      description: ev.description,
+    }));
+  }, [doc]);
 
   useEffect(() => {
     let cancelled = false;
@@ -564,7 +671,6 @@ export function ChatPanel({ doc, prefillQuery, leftPaneRef, folderColor }: ChatP
     }
   }, [doc.id, readingLevel]);
 
-  // CHAT-6: translate a single assistant message into the user's browser language.
   const handleTranslate = useCallback(async (index: number) => {
     const target = messages[index];
     if (!target || target.role !== 'assistant' || !target.text) return;
@@ -595,6 +701,15 @@ export function ChatPanel({ doc, prefillQuery, leftPaneRef, folderColor }: ChatP
         <ActionBar onAction={handleSubmit} disabled={isThinking} />
         <ReadingLevelToggle level={readingLevel} onChange={setReadingLevel} />
       </div>
+
+      {messages.length === 0 && (entityNames.length > 0 || conceptTerms.length > 0 || timelineEvents.length > 0) && (
+        <div className="flex flex-col gap-3 overflow-y-auto shrink-0 max-h-[40%]">
+          <EntityShortcuts entities={entityNames} onAsk={handleSubmit} />
+          <ConceptShortcuts concepts={conceptTerms} onAsk={handleSubmit} />
+          <TimelineShortcuts events={timelineEvents} onAsk={handleSubmit} />
+        </div>
+      )}
+
       <MessageList
         messages={messages}
         isThinking={isThinking}

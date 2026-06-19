@@ -162,6 +162,8 @@ function DocumentRenderer({ content, onAskAI, leftPaneRef, resolvedTheme, docume
     );
   }
 
+
+
   // Legacy plain markdown renderer fallback
   return (
     <div ref={containerRef} className="relative">
@@ -367,13 +369,57 @@ function ReaderTopBar({ title, activeTab, onTabChange, onExportMd, onExportPdf, 
   );
 }
 
+function complexityLabel(score?: number): string {
+  if (score == null) return '—';
+  if (score < 35) return 'Low';
+  if (score < 65) return 'Medium';
+  return 'High';
+}
+
+function StatCell({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div>
+      <p className="text-[10px] font-semibold text-[var(--color-ink-faint)] uppercase tracking-wide">{label}</p>
+      <p className="text-[14px] font-semibold text-[var(--color-ink)] mt-0.5">{value}</p>
+    </div>
+  );
+}
+
 function NotesPanel({ doc, leftPaneRef }: { doc: Document; leftPaneRef: React.RefObject<HTMLDivElement | null> }) {
   const keyPoints = doc.keyPoints ?? [];
   const entities = (doc as any).keyEntities ?? doc.entities ?? [];
+  const relationships = doc.relationships ?? [];
+  const topics = doc.topics ?? [];
+  const diagramCount = doc.diagramCount ?? 0;
   const isEmpty = doc.summary === '' && keyPoints.length === 0 && entities.length === 0 && doc.timeline.length === 0 && doc.concepts.length === 0;
 
   return (
     <div className="flex flex-col gap-4">
+      {/* PROBLEM 11: document-intelligence dashboard */}
+      <div className="notion-card">
+        <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-3">Document intelligence</p>
+        <div className="grid grid-cols-2 gap-y-3 gap-x-4">
+          <StatCell label="Reading time" value={`${doc.readingTimeMinutes ?? Math.max(1, Math.round((doc.wordCount ?? 0) / 220))} min`} />
+          <StatCell label="Complexity" value={doc.complexity != null ? `${complexityLabel(doc.complexity)} (${doc.complexity})` : '—'} />
+          <StatCell label="Type" value={doc.documentType ?? 'general'} />
+          <StatCell label="Words" value={(doc.wordCount ?? 0).toLocaleString()} />
+          <StatCell label="Entities" value={entities.length} />
+          <StatCell label="Diagrams" value={diagramCount} />
+          <StatCell label="Timeline" value={doc.timeline.length} />
+          <StatCell label="Concepts" value={doc.concepts.length} />
+        </div>
+        {topics.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-[var(--color-hairline)]">
+            <p className="text-[10px] font-semibold text-[var(--color-ink-faint)] uppercase tracking-wide mb-1.5">Topics</p>
+            <div className="flex flex-wrap gap-1.5">
+              {topics.map((t, i) => (
+                <Badge key={i} variant="outline" className="text-[10px] rounded-full border-[var(--color-hairline)] text-[var(--color-ink-muted)]">{t}</Badge>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="notion-card">
         <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-2">Summary</p>
         {doc.summary
@@ -412,7 +458,11 @@ function NotesPanel({ doc, leftPaneRef }: { doc: Document; leftPaneRef: React.Re
                   <Badge variant="outline" className="text-[9px] font-medium rounded-full border-[var(--color-hairline)] text-[var(--color-ink-muted)] shrink-0">
                     {e.type}
                   </Badge>
-                  <span className="text-[13px] text-[var(--color-ink)]">{e.name}</span>
+                  <span className="min-w-0">
+                    <span className="text-[13px] text-[var(--color-ink)]">{e.name}</span>
+                    {e.mentions ? <span className="text-[10px] text-[var(--color-ink-faint)] ml-1.5">×{e.mentions}</span> : null}
+                    {e.description ? <span className="block text-[11px] text-[var(--color-ink-muted)] leading-snug line-clamp-2">{e.description}</span> : null}
+                  </span>
                 </button>
               ))}
             </div>
@@ -434,6 +484,7 @@ function NotesPanel({ doc, leftPaneRef }: { doc: Document; leftPaneRef: React.Re
                 >
                   <p className="text-[11px] font-medium text-[var(--color-primary)]">{t.date}</p>
                   <p className="text-[13px] text-[var(--color-ink)]">{t.description}</p>
+                  {t.significance ? <p className="text-[11px] text-[var(--color-ink-faint)] italic">{t.significance}</p> : null}
                 </button>
               ))}
             </div>
@@ -462,6 +513,21 @@ function NotesPanel({ doc, leftPaneRef }: { doc: Document; leftPaneRef: React.Re
           : <p className="text-[12px] text-[var(--color-ink-faint)]">No concepts found</p>
         }
       </div>
+
+      {relationships.length > 0 && (
+        <div className="notion-card">
+          <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-2">Relationships</p>
+          <div className="flex flex-col gap-1.5">
+            {relationships.map((r, i) => (
+              <p key={i} className="text-[12px] text-[var(--color-ink)] leading-snug">
+                <span className="font-medium">{r.source}</span>
+                <span className="text-[var(--color-ink-faint)]"> {r.relation.replace(/-/g, ' ')} </span>
+                <span className="font-medium">{r.target}</span>
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isEmpty && (
         <p className="text-[12px] text-[var(--color-ink-faint)] text-center">Notes will populate after capture</p>
@@ -521,8 +587,39 @@ export default function ReaderApp() {
     const id = new URLSearchParams(window.location.search).get('documentId');
     if (!id) { setError('No document ID provided.'); setLoading(false); return; }
     Promise.all([getDocument(id), getFolders()]).then(([result, folders]) => {
-      if (!result) setError(`Document not found: ${id}`);
+      if (!result) { console.warn(`[NOTCH:READER] Document not found: ${id}`); setError(`Document not found: ${id}`); }
       else {
+        console.log(`[NOTCH:READER] Loaded doc:`, {
+          id: result.id,
+          title: result.title,
+          hasContent: !!result.content,
+          contentLen: result.content?.length ?? 0,
+          contentWordCount: (result.content ?? '').split(/\s+/).filter(Boolean).length,
+          hasEnriched: !!result.enrichedContent,
+          enrichedLen: result.enrichedContent?.length ?? 0,
+          summaryLen: result.summary?.length ?? 0,
+          wordCount: result.wordCount,
+          entities: result.entities?.length ?? 0,
+          concepts: result.concepts?.length ?? 0,
+          timeline: result.timeline?.length ?? 0,
+          status: result.status,
+          hasTextContent: !!result.textContent,
+          textContentLen: result.textContent?.length ?? 0,
+          textContentWordCount: (result.textContent ?? '').split(/\s+/).filter(Boolean).length,
+        });
+        // Detect content/wordCount mismatch: if wordCount is suspiciously small
+        // (<20) but textContent is large, wordCount was likely computed from the
+        // wrong source. Recalculate from the actual content content.
+        if (result.wordCount < 20 && (result.textContent ?? '').split(/\s+/).filter(Boolean).length > 100) {
+          console.warn(`[NOTCH:READER] wordCount=${result.wordCount} but textContent has ${(result.textContent ?? '').split(/\s+/).filter(Boolean).length} words — fixing wordCount`);
+          result.wordCount = (result.content ?? result.textContent ?? '').split(/\s+/).filter(Boolean).length;
+        }
+        // If content is empty but textContent exists, surface it so the reader
+        // is never completely blank.
+        if (!result.content && !result.enrichedContent && result.textContent) {
+          console.warn(`[NOTCH:READER] content is empty but textContent exists (${result.textContent.length} chars) — using textContent as fallback`);
+          result.content = result.textContent;
+        }
         setDoc(result);
         if (result.folder) {
           const f = folders.find(f => f.id === result.folder) ?? null;
@@ -703,7 +800,12 @@ export default function ReaderApp() {
               </div>
               <Separator className="bg-[var(--color-hairline)] mb-8" />
               {(() => {
-                const parsed = parseMarkdown((doc as any).content ?? doc.summary ?? '');
+                const contentForParse = doc.content ?? doc.enrichedContent ?? doc.summary ?? '';
+                const parsed = parseMarkdown(contentForParse);
+                const total = parsed.blocks.length;
+                const known = parsed.blocks.filter(b => b.type !== 'unknown').length;
+                const unknown = parsed.blocks.filter(b => b.type === 'unknown').length;
+                console.log(`[NOTCH:READER] parseMarkdown: total=${total}, known=${known}, unknown=${unknown}, contentLen=${contentForParse.length}, warnings=${parsed.warnings.length}`);
                 const parseFailed = parsed.blocks.length > 0 && parsed.blocks.every(b => b.type === 'unknown');
                 if (!parseFailed) return null;
                 return (
@@ -719,11 +821,11 @@ export default function ReaderApp() {
               })()}
               {showRawMarkdown ? (
                 <pre className="text-[13px] text-[var(--color-ink-muted)] whitespace-pre-wrap break-words border border-[var(--color-hairline)] rounded-lg p-5 bg-[var(--color-canvas-soft)]">
-                  {(doc as any).content ?? ''}
+                  {doc.content ?? doc.enrichedContent ?? doc.summary ?? ''}
                 </pre>
               ) : (
                 <DocumentRenderer
-                  content={(doc as any).content ?? ''}
+                  content={doc.content ?? doc.enrichedContent ?? doc.summary ?? ''}
                   onAskAI={handleAskAI}
                   leftPaneRef={leftPaneRef}
                   resolvedTheme={resolvedTheme}
