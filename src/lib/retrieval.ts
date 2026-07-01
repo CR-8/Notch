@@ -6,7 +6,9 @@ export interface RetrievedChunk extends DocumentChunk {
 }
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  let dot = 0, normA = 0, normB = 0;
+  let dot = 0,
+    normA = 0,
+    normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
@@ -32,26 +34,24 @@ export async function retrieveTopK(
   k: number = 6,
   noteId?: string,
 ): Promise<RetrievedChunk[]> {
-  const vectors = await db.vectors
-    .where('embeddingVersion')
-    .equals(embeddingVersion)
-    .toArray();
+  const vectors = await db.vectors.where('embeddingVersion').equals(embeddingVersion).toArray();
 
   // When a note is given, restrict scoring to that document's chunks so a query
   // in the reader only retrieves from the document currently open.
   let allowedChunkIds: Set<string> | null = null;
   if (noteId) {
     const docChunkIds = await db.chunks.where('noteId').equals(noteId).primaryKeys();
-    allowedChunkIds = new Set(docChunkIds as string[]);
+    allowedChunkIds = new Set(docChunkIds);
   }
 
   const scored: Array<{ chunkId: string; score: number }> = [];
 
   for (const v of vectors) {
     if (allowedChunkIds && !allowedChunkIds.has(v.chunkId)) continue;
-    const vec = v.embedding instanceof Float32Array
-      ? v.embedding
-      : new Float32Array(Object.values(v.embedding));
+    const vec =
+      v.embedding instanceof Float32Array
+        ? v.embedding
+        : new Float32Array(Object.values(v.embedding));
     const score = cosineSimilarity(queryEmbedding, vec);
     scored.push({ chunkId: v.chunkId, score });
   }
@@ -59,11 +59,11 @@ export async function retrieveTopK(
   scored.sort((a, b) => b.score - a.score);
   const topK = scored.slice(0, k);
 
-  const chunks = await db.chunks.bulkGet(topK.map(s => s.chunkId));
+  const chunks = await db.chunks.bulkGet(topK.map((s) => s.chunkId));
   return chunks
     .filter((c): c is DocumentChunk => c != null)
-    .map(c => {
-      const found = topK.find(s => s.chunkId === c.id);
+    .map((c) => {
+      const found = topK.find((s) => s.chunkId === c.id);
       return { ...c, score: found?.score ?? 0 };
     })
     .sort((a, b) => b.score - a.score);
@@ -85,7 +85,7 @@ export function buildRAGPrompt(
   prompt += `\n`;
 
   if (history.length > 0) {
-    prompt += `CONVERSATION HISTORY:\n${history.map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n')}\n\n`;
+    prompt += `CONVERSATION HISTORY:\n${history.map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n')}\n\n`;
   }
 
   prompt += `NOTE EXCERPTS:\n${chunksText}\n\nUSER QUESTION:\n${query}\n\nYOUR ANSWER:`;

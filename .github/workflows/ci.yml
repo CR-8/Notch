@@ -6,8 +6,8 @@ on:
       - main
 
 jobs:
-  compile:
-    name: Compile (tsc --noEmit)
+  lint:
+    name: Lint & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,7 +16,20 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run compile
+      - run: npm run lint
+      - run: npm run format
+
+  typecheck:
+    name: TypeScript (tsc --noEmit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
 
   build:
     name: Build (wxt build)
@@ -29,6 +42,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-chrome-mv3
+          path: .output/chrome-mv3/
+          retention-days: 7
 
   test:
     name: Test (vitest --run)
@@ -41,3 +59,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high

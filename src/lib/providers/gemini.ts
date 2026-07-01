@@ -1,16 +1,29 @@
-import type { ProviderAdapter, ProviderConfig, ChatProvider, EmbeddingProvider, ChatRequest, ChatChunk, TestResult } from '../types';
+import type {
+  ProviderAdapter,
+  ProviderConfig,
+  ChatProvider,
+  EmbeddingProvider,
+  ChatRequest,
+  TestResult,
+} from '../types';
 import { AIClientError, describeHttpError } from './errors';
+
+type GeminiStreamPart = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{ text?: string }>;
+    };
+  }>;
+};
 
 const GeminiChatProvider = (cfg: ProviderConfig): ChatProvider => ({
   id: cfg.id,
   capabilities: { streaming: true, maxContextTokens: 1000000 },
   async *generate(req: ChatRequest) {
     const baseUrl = cfg.baseUrl.replace(/\/+$/, '');
-    // alt=sse makes Gemini stream Server-Sent Events ("data: {…}") instead of a
-    // single JSON array; the parser below relies on that line framing.
     const url = `${baseUrl}/models/${req.model}:streamGenerateContent?alt=sse&key=${cfg.apiKey}`;
 
-    const contents = req.messages.map(m => ({
+    const contents = req.messages.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }],
     }));
@@ -24,7 +37,11 @@ const GeminiChatProvider = (cfg: ProviderConfig): ChatProvider => ({
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new AIClientError(describeHttpError('Gemini', res.status, text), 'API_ERROR', res.status);
+      throw new AIClientError(
+        describeHttpError('Gemini', res.status, text),
+        'API_ERROR',
+        res.status,
+      );
     }
 
     const reader = res.body?.getReader();
@@ -44,10 +61,12 @@ const GeminiChatProvider = (cfg: ProviderConfig): ChatProvider => ({
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         try {
-          const parsed = JSON.parse(line.slice(6));
+          const parsed = JSON.parse(line.slice(6)) as GeminiStreamPart;
           const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
           if (text) yield { type: 'text', text };
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
     }
     yield { type: 'done' };
@@ -73,10 +92,14 @@ const GeminiEmbeddingProvider = (cfg: ProviderConfig): EmbeddingProvider => ({
 
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
-        throw new AIClientError(describeHttpError('Gemini', res.status, errText), 'API_ERROR', res.status);
+        throw new AIClientError(
+          describeHttpError('Gemini', res.status, errText),
+          'API_ERROR',
+          res.status,
+        );
       }
 
-      const data = await res.json() as { embedding?: { values?: number[] } };
+      const data = (await res.json()) as { embedding?: { values?: number[] } };
       if (!data.embedding?.values) throw new AIClientError('No embedding in response', 'API_ERROR');
       results.push(data.embedding.values);
     }
@@ -104,10 +127,13 @@ export function createGeminiAdapter(): ProviderAdapter {
 
         if (!res.ok) {
           const text = await res.text().catch(() => '');
-          return { success: false, latencyMs: Date.now() - t0, error: describeHttpError('Gemini', res.status, text) };
+          return {
+            success: false,
+            latencyMs: Date.now() - t0,
+            error: describeHttpError('Gemini', res.status, text),
+          };
         }
 
-        // Also test embedding endpoint if configured
         let dimensions: number | undefined;
         if (cfg.embeddingModel) {
           const embedUrl = `${baseUrl}/models/${cfg.embeddingModel}:embedContent?key=${cfg.apiKey}`;
@@ -117,7 +143,7 @@ export function createGeminiAdapter(): ProviderAdapter {
             body: JSON.stringify({ content: { parts: [{ text: 'test' }] } }),
           });
           if (embedRes.ok) {
-            const embedData = await embedRes.json() as { embedding?: { values?: number[] } };
+            const embedData = (await embedRes.json()) as { embedding?: { values?: number[] } };
             dimensions = embedData.embedding?.values?.length;
           }
         }

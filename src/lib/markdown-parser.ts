@@ -14,12 +14,12 @@ export interface DocBlock {
   type: 'heading' | 'paragraph' | 'code' | 'list' | 'table' | 'blockquote' | 'unknown';
   raw: string;
   // type-specific fields
-  level?: number;                                    // heading
-  language?: string;                                 // code
-  alignment?: ('left' | 'center' | 'right')[];      // table columns
-  children?: DocBlock[];                             // list items / nested lists
-  depth?: number;                                    // list nesting depth (0-based)
-  paragraphId?: string;                              // stable hash-based ID for paragraphs
+  level?: number; // heading
+  language?: string; // code
+  alignment?: ('left' | 'center' | 'right')[]; // table columns
+  children?: DocBlock[]; // list items / nested lists
+  depth?: number; // list nesting depth (0-based)
+  paragraphId?: string; // stable hash-based ID for paragraphs
 }
 
 export interface ParseResult {
@@ -50,9 +50,7 @@ function convertListItems(items: Tokens.ListItem[], depth: number): DocBlock[] {
   for (const item of items) {
     // Check if this list item contains a nested list
     const nestedList = item.tokens?.find((t): t is Tokens.List => t.type === 'list');
-    const children: DocBlock[] = nestedList
-      ? convertListItems(nestedList.items, depth + 1)
-      : [];
+    const children: DocBlock[] = nestedList ? convertListItems(nestedList.items, depth + 1) : [];
 
     result.push({
       type: 'list',
@@ -109,17 +107,15 @@ function tokenToDocBlock(token: Token, warnings: ParseWarning[]): DocBlock | nul
         return null;
 
       default:
-        // Unknown token type — emit as unknown block
-        return { type: 'unknown', raw: (token as any).raw ?? '' };
+        return { type: 'unknown', raw: token.raw };
     }
   } catch (err) {
-    const raw = (token as any).raw ?? '';
     warnings.push({
       line: 0,
       message: err instanceof Error ? err.message : String(err),
-      raw,
+      raw: token.raw,
     });
-    return { type: 'unknown', raw };
+    return { type: 'unknown', raw: token.raw };
   }
 }
 
@@ -153,18 +149,7 @@ export function parseMarkdown(md: string): ParseResult {
   }
 
   for (const token of tokens) {
-    let block: DocBlock | null = null;
-    try {
-      block = tokenToDocBlock(token, warnings);
-    } catch (err) {
-      const raw = (token as any).raw ?? '';
-      warnings.push({
-        line: 0,
-        message: err instanceof Error ? err.message : String(err),
-        raw,
-      });
-      block = { type: 'unknown', raw };
-    }
+    const block = tokenToDocBlock(token, warnings);
     if (block !== null) {
       blocks.push(block);
     }
@@ -228,7 +213,11 @@ function serializeListBlock(block: DocBlock, indentLevel: number): string {
   if (block.children && block.children.length > 0) {
     for (const child of block.children) {
       // Extract the text from the child's raw (strip list marker)
-      const text = child.raw.replace(/^[\s]*[-*+]\s+/, '').replace(/^\s*\d+\.\s+/, '').split('\n')[0].trim();
+      const text = child.raw
+        .replace(/^[\s]*[-*+]\s+/, '')
+        .replace(/^\s*\d+\.\s+/, '')
+        .split('\n')[0]
+        .trim();
       lines.push(`${indent}- ${text}`);
       if (child.children && child.children.length > 0) {
         for (const grandchild of child.children) {
@@ -238,7 +227,11 @@ function serializeListBlock(block: DocBlock, indentLevel: number): string {
     }
   } else {
     // Leaf list item
-    const text = block.raw.replace(/^[\s]*[-*+]\s+/, '').replace(/^\s*\d+\.\s+/, '').split('\n')[0].trim();
+    const text = block.raw
+      .replace(/^[\s]*[-*+]\s+/, '')
+      .replace(/^\s*\d+\.\s+/, '')
+      .split('\n')[0]
+      .trim();
     lines.push(`${indent}- ${text}`);
   }
 

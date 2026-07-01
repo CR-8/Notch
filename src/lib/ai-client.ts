@@ -92,7 +92,10 @@ function reassembleFrameResponses(responses: string[]): string {
   for (let i = 1; i < responses.length; i++) {
     const stripped = responses[i]
       .replace(/^#\s+.+\n*/m, '')
-      .replace(/^##\s+(?:SUMMARY|Key Points|Key Entities|Timeline|Concepts)\s*\n[\s\S]*?(?=\n##\s|\n*$)/gim, '')
+      .replace(
+        /^##\s+(?:SUMMARY|Key Points|Key Entities|Timeline|Concepts)\s*\n[\s\S]*?(?=\n##\s|\n*$)/gim,
+        '',
+      )
       .trim();
     if (stripped) continuationParts.push(stripped);
   }
@@ -105,11 +108,12 @@ function reassembleFrameResponses(responses: string[]): string {
 // ─── Prompt Templates ──────────────────────────────────────────────────────────
 
 function buildCapturePrompt(content: string, imageRefs: string, frame?: ContentFrame): string {
-  const frameHint = frame && frame.total > 1
-    ? frame.index === 0
-      ? `\n\n[FRAME ${frame.index + 1}/${frame.total}] Include: title, summary, key points, key entities, concepts, timeline, and main content sections.`
-      : `\n\n[FRAME ${frame.index + 1}/${frame.total}] Continue main content only. Do NOT repeat title, summary, key points, entities, concepts, or timeline.`
-    : '';
+  const frameHint =
+    frame && frame.total > 1
+      ? frame.index === 0
+        ? `\n\n[FRAME ${frame.index + 1}/${frame.total}] Include: title, summary, key points, key entities, concepts, timeline, and main content sections.`
+        : `\n\n[FRAME ${frame.index + 1}/${frame.total}] Continue main content only. Do NOT repeat title, summary, key points, entities, concepts, or timeline.`
+      : '';
 
   return `You are a document structuring assistant. Given the following web page content, produce a clean, well-formatted markdown document.${frameHint}
 
@@ -187,11 +191,12 @@ YOUR ANSWER:`;
 }
 
 function buildDeepPrompt(content: string, imageRefs: string, frame?: ContentFrame): string {
-  const frameHint = frame && frame.total > 1
-    ? frame.index === 0
-      ? `\n\n[FRAME ${frame.index + 1}/${frame.total}] Include full structure: title, summary, key points, entities, concepts, timeline, and main content.`
-      : `\n\n[FRAME ${frame.index + 1}/${frame.total}] Continue main content only. Do NOT repeat title, summary, points, entities, concepts, or timeline.`
-    : '';
+  const frameHint =
+    frame && frame.total > 1
+      ? frame.index === 0
+        ? `\n\n[FRAME ${frame.index + 1}/${frame.total}] Include full structure: title, summary, key points, entities, concepts, timeline, and main content.`
+        : `\n\n[FRAME ${frame.index + 1}/${frame.total}] Continue main content only. Do NOT repeat title, summary, points, entities, concepts, or timeline.`
+      : '';
 
   return `You are an expert knowledge structuring assistant. Produce a comprehensive, well-formatted markdown document.${frameHint}
 
@@ -281,7 +286,12 @@ async function callOpenAICompatible(
     // OpenCode Zen uses different endpoints based on model type
     // Claude models use /messages, GPT models use /responses, others use /chat/completions
     const base = resolvedBaseUrl.endsWith('/') ? resolvedBaseUrl.slice(0, -1) : resolvedBaseUrl;
-    if (model.includes('claude') || model.includes('opus') || model.includes('sonnet') || model.includes('haiku')) {
+    if (
+      model.includes('claude') ||
+      model.includes('opus') ||
+      model.includes('sonnet') ||
+      model.includes('haiku')
+    ) {
       endpoint = `${base}/v1/messages`;
     } else if (model.includes('gpt-') || model.includes('gemini')) {
       endpoint = `${base}/v1/responses`;
@@ -289,14 +299,16 @@ async function callOpenAICompatible(
       endpoint = `${base}/v1/chat/completions`;
     }
   } else {
-    endpoint = resolvedBaseUrl.endsWith('/') ? `${resolvedBaseUrl}v1/chat/completions` : `${resolvedBaseUrl}/v1/chat/completions`;
+    endpoint = resolvedBaseUrl.endsWith('/')
+      ? `${resolvedBaseUrl}v1/chat/completions`
+      : `${resolvedBaseUrl}/v1/chat/completions`;
   }
 
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: isOpenCodeZen ? `opencode/${model}` : model, // OpenCode Zen requires opencode/ prefix
@@ -317,7 +329,7 @@ async function callOpenAICompatible(
     throw err;
   }
 
-  const data = await res.json() as {
+  const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string; refusal?: string } }>;
     model?: string;
     usage?: { prompt_tokens?: number; completion_tokens?: number; cached_tokens?: number };
@@ -400,18 +412,23 @@ export async function sendCaptureRequest(
     }
 
     const imageRefsText = imageRefs
-      .map(img => `[IMG: ${img.url} | ${img.alt} | ${img.paragraphContext}]`)
+      .map((img) => `[IMG: ${img.url} | ${img.alt} | ${img.paragraphContext}]`)
       .join('\n');
-    const cappedImageRefs = imageRefsText.length > MAX_CAPTURE_IMAGE_REFS_CHARS
-      ? imageRefsText.slice(0, MAX_CAPTURE_IMAGE_REFS_CHARS)
-      : imageRefsText;
+    const cappedImageRefs =
+      imageRefsText.length > MAX_CAPTURE_IMAGE_REFS_CHARS
+        ? imageRefsText.slice(0, MAX_CAPTURE_IMAGE_REFS_CHARS)
+        : imageRefsText;
 
     // Build message for single or multi-frame
     const buildMessages = (frameContent: string, frame?: ContentFrame) => {
-      const prompt = mode === 'DEEP'
-        ? buildDeepPrompt(frameContent, cappedImageRefs, frame)
-        : buildCapturePrompt(frameContent, cappedImageRefs, frame);
-      return [{ role: 'system' as const, content: 'You are a helpful assistant.' }, { role: 'user' as const, content: prompt }];
+      const prompt =
+        mode === 'DEEP'
+          ? buildDeepPrompt(frameContent, cappedImageRefs, frame)
+          : buildCapturePrompt(frameContent, cappedImageRefs, frame);
+      return [
+        { role: 'system' as const, content: 'You are a helpful assistant.' },
+        { role: 'user' as const, content: prompt },
+      ];
     };
 
     const models = settings.modelId
@@ -419,11 +436,16 @@ export async function sendCaptureRequest(
       : ['claude-3-5-sonnet-20241022', 'openai/gpt-4o'];
 
     if (settings.provider === 'openai-compatible') {
-      const singleContent = content.length > FRAME_TARGET_CHARS
-        ? content.slice(0, MAX_CAPTURE_CONTENT_CHARS)
-        : content;
+      const singleContent =
+        content.length > FRAME_TARGET_CHARS ? content.slice(0, MAX_CAPTURE_CONTENT_CHARS) : content;
       const messages = buildMessages(singleContent);
-      const response = await callWithFallback(settings.baseUrl!, models, messages, settings.apiKey!, signal);
+      const response = await callWithFallback(
+        settings.baseUrl!,
+        models,
+        messages,
+        settings.apiKey,
+        signal,
+      );
       const sanitized = sanitizeAiResponse(response.content);
       return formatMarkdown(sanitized);
     }
@@ -431,11 +453,18 @@ export async function sendCaptureRequest(
     // Multi-frame for large content
     const frames = fragmentIntoFrames(content, FRAME_TARGET_CHARS);
     if (frames.length === 1) {
-      const cappedContent = content.length > MAX_CAPTURE_CONTENT_CHARS
-        ? content.slice(0, MAX_CAPTURE_CONTENT_CHARS)
-        : content;
+      const cappedContent =
+        content.length > MAX_CAPTURE_CONTENT_CHARS
+          ? content.slice(0, MAX_CAPTURE_CONTENT_CHARS)
+          : content;
       const messages = buildMessages(cappedContent);
-      const response = await callWithFallback(settings.baseUrl!, models, messages, settings.apiKey!, signal);
+      const response = await callWithFallback(
+        settings.baseUrl!,
+        models,
+        messages,
+        settings.apiKey,
+        signal,
+      );
       const sanitized = sanitizeAiResponse(response.content);
       return formatMarkdown(sanitized);
     }
@@ -445,18 +474,28 @@ export async function sendCaptureRequest(
 
     for (let i = 0; i < frames.length; i++) {
       const frame: ContentFrame = { index: i, total: frames.length };
-      const cappedContent = frames[i].length > MAX_CAPTURE_CONTENT_CHARS
-        ? frames[i].slice(0, MAX_CAPTURE_CONTENT_CHARS)
-        : frames[i];
+      const cappedContent =
+        frames[i].length > MAX_CAPTURE_CONTENT_CHARS
+          ? frames[i].slice(0, MAX_CAPTURE_CONTENT_CHARS)
+          : frames[i];
 
       onProgress?.(i + 1, frames.length);
       const messages = buildMessages(cappedContent, frame);
-      const response = await callWithFallback(settings.baseUrl!, models, messages, settings.apiKey!, signal);
+      const response = await callWithFallback(
+        settings.baseUrl!,
+        models,
+        messages,
+        settings.apiKey,
+        signal,
+      );
       responses.push(response.content);
     }
 
     const reassembled = reassembleFrameResponses(responses);
-    log.success('ai-client', `Reassembled ${frames.length} frames into ${reassembled.length} chars`);
+    log.success(
+      'ai-client',
+      `Reassembled ${frames.length} frames into ${reassembled.length} chars`,
+    );
     const sanitized = sanitizeAiResponse(reassembled);
     return formatMarkdown(sanitized);
   } catch (err) {
@@ -479,9 +518,7 @@ export async function sendRAGRequest(
     throw new AIClientError('No API key configured.', 'MISSING_KEY');
   }
 
-  const chunksText = chunks
-    .map((c, i) => `[${i + 1}] ${c.text}`)
-    .join('\n\n');
+  const chunksText = chunks.map((c, i) => `[${i + 1}] ${c.text}`).join('\n\n');
 
   const messages = [
     { role: 'system' as const, content: 'You are a precise question-answering assistant.' },
@@ -489,12 +526,18 @@ export async function sendRAGRequest(
   ];
 
   const models = settings.modelId
-    ? [settings.modelId!]
+    ? [settings.modelId]
     : ['claude-3-5-sonnet-20241022', 'openai/gpt-4o'];
 
   const { signal, clear } = withTimeout(120_000);
   try {
-    const response = await callWithFallback(settings.baseUrl!, models, messages, settings.apiKey!, signal);
+    const response = await callWithFallback(
+      settings.baseUrl!,
+      models,
+      messages,
+      settings.apiKey,
+      signal,
+    );
     const sanitized = sanitizeAiResponse(response.content);
     return formatChatResponse(sanitized);
   } catch (err) {

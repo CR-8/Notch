@@ -13,39 +13,51 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
 
   useEffect(() => {
     let cancelled = false;
-    import('mermaid').then((mod) => {
-      if (cancelled) return;
-      mod.default.initialize({
-        theme: 'default',
-        securityLevel: 'strict',
-        startOnLoad: false,
+    import('mermaid')
+      .then((mod) => {
+        if (cancelled) return;
+        mod.default.initialize({
+          theme: 'default',
+          securityLevel: 'strict',
+          startOnLoad: false,
+        });
+        setReady(true);
+        setStatus('loading');
+      })
+      .catch(() => {
+        if (!cancelled) setStatus('error');
       });
-      setReady(true);
-      setStatus('loading');
-    }).catch(() => {
-      if (!cancelled) setStatus('error');
-    });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
-    setStatus('loading');
+    const t = setTimeout(() => {
+      if (!cancelled) setStatus('loading');
+    }, 0);
 
-    import('mermaid').then(({ default: mermaid }) => mermaid.render(id, code))
+    import('mermaid')
+      .then(({ default: mermaid }) => mermaid.render(id, code))
       .then(({ svg }) => {
         if (cancelled) return;
+        clearTimeout(t);
         setSvgContent(svg);
         setStatus('rendered');
       })
       .catch(() => {
         if (cancelled) return;
+        clearTimeout(t);
         setSvgContent(null);
         setStatus('error');
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [code, id, ready]);
 
   return (
@@ -55,6 +67,9 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
       data-diagram-status={status}
     >
       {status === 'rendered' && svgContent && (
+        // Mermaid renders with securityLevel: 'strict' (its own sanitization).
+        // Re-running DOMPurify here strips the <foreignObject>/<style> label
+        // markup and breaks text rendering, so we trust mermaid's output.
         <div dangerouslySetInnerHTML={{ __html: svgContent }} />
       )}
       {status === 'loading' && (
@@ -62,8 +77,12 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
       )}
       {status === 'error' && (
         <>
-          <span className="text-[12px] font-medium text-[var(--color-destructive)]">Diagram failed to render</span>
-          <pre className="font-mono text-[12px] text-[var(--color-ink-muted)] mt-2 whitespace-pre-wrap break-all">{code}</pre>
+          <span className="text-[12px] font-medium text-[var(--color-destructive)]">
+            Diagram failed to render
+          </span>
+          <pre className="font-mono text-[12px] text-[var(--color-ink-muted)] mt-2 whitespace-pre-wrap break-all">
+            {code}
+          </pre>
         </>
       )}
     </div>

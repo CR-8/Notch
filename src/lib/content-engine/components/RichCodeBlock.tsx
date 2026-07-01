@@ -9,14 +9,39 @@ interface RichCodeBlockProps {
 const COPY_DURATION = 2000;
 
 const LANGUAGE_LABELS: Record<string, string> = {
-  js: 'JavaScript', ts: 'TypeScript', py: 'Python', rb: 'Ruby',
-  go: 'Go', rs: 'Rust', java: 'Java', kt: 'Kotlin', swift: 'Swift',
-  c: 'C', cpp: 'C++', cs: 'C#', php: 'PHP', r: 'R',
-  sql: 'SQL', html: 'HTML', css: 'CSS', scss: 'SCSS', sass: 'Sass',
-  sh: 'Shell', bash: 'Bash', zsh: 'Zsh', ps1: 'PowerShell',
-  json: 'JSON', yaml: 'YAML', yml: 'YAML', xml: 'XML', toml: 'TOML',
-  md: 'Markdown', mermaid: 'Mermaid', plantuml: 'PlantUML',
-  dockerfile: 'Dockerfile', graphql: 'GraphQL',
+  js: 'JavaScript',
+  ts: 'TypeScript',
+  py: 'Python',
+  rb: 'Ruby',
+  go: 'Go',
+  rs: 'Rust',
+  java: 'Java',
+  kt: 'Kotlin',
+  swift: 'Swift',
+  c: 'C',
+  cpp: 'C++',
+  cs: 'C#',
+  php: 'PHP',
+  r: 'R',
+  sql: 'SQL',
+  html: 'HTML',
+  css: 'CSS',
+  scss: 'SCSS',
+  sass: 'Sass',
+  sh: 'Shell',
+  bash: 'Bash',
+  zsh: 'Zsh',
+  ps1: 'PowerShell',
+  json: 'JSON',
+  yaml: 'YAML',
+  yml: 'YAML',
+  xml: 'XML',
+  toml: 'TOML',
+  md: 'Markdown',
+  mermaid: 'Mermaid',
+  plantuml: 'PlantUML',
+  dockerfile: 'Dockerfile',
+  graphql: 'GraphQL',
 };
 
 export function RichCodeBlock({ data, number }: RichCodeBlockProps) {
@@ -48,7 +73,8 @@ export function RichCodeBlock({ data, number }: RichCodeBlockProps) {
     <div className="my-6 group" data-code-lang={data.language}>
       {data.caption && (
         <p className="text-[13px] text-[var(--color-ink-muted)] mb-1.5 font-medium">
-          {number ? `Listing ${number}: ` : ''}{data.caption}
+          {number ? `Listing ${number}: ` : ''}
+          {data.caption}
         </p>
       )}
 
@@ -66,13 +92,15 @@ export function RichCodeBlock({ data, number }: RichCodeBlockProps) {
           </div>
           <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
-              onClick={() => setExpanded(v => !v)}
+              onClick={() => setExpanded((v) => !v)}
               className="text-[11px] px-2 py-0.5 rounded text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-hover)] transition-colors"
             >
               {expanded ? 'Collapse' : 'Expand'}
             </button>
             <button
-              onClick={handleCopy}
+              onClick={() => {
+                void handleCopy();
+              }}
               className="text-[11px] px-2 py-0.5 rounded text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-hover)] transition-colors"
             >
               {copied ? 'Copied!' : 'Copy'}

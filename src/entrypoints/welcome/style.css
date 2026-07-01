@@ -1,1 +1,147 @@
-@import "../../assets/globals.css";
+@import '../../assets/globals.css';
+
+/* ── Grid Background ─────────────────────────────────────────────────────── */
+.welcome-grid-bg {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--color-hairline) 40%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Entrance Animation ──────────────────────────────────────────────────── */
+@keyframes welcome-slide-up-fade {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.welcome-step-card {
+  animation: welcome-slide-up-fade 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ── Glassmorphism ───────────────────────────────────────────────────────── */
+.welcome-glass {
+  background: color-mix(in srgb, var(--color-canvas) 85%, transparent);
+  backdrop-filter: blur(20px);
+  border: 1px solid color-mix(in srgb, var(--color-hairline) 50%, transparent) !important;
+  box-shadow:
+    0 30px 60px -15px rgba(0, 0, 0, 0.08),
+    0 0 0 1px color-mix(in srgb, var(--color-canvas) 50%, transparent) inset !important;
+  border-radius: 20px !important;
+}
+
+html[data-theme='dark'] .welcome-glass {
+  background: color-mix(in srgb, var(--color-canvas) 70%, transparent);
+  box-shadow:
+    0 30px 60px -15px rgba(0, 0, 0, 0.4),
+    0 0 0 1px color-mix(in srgb, var(--color-canvas) 12%, transparent) inset !important;
+}
+
+/* ── Interactive Choice Cards ────────────────────────────────────────────── */
+.welcome-choice-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+  border-radius: 16px !important;
+  padding: 24px;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  outline: none;
+}
+
+.welcome-choice-card:hover {
+  transform: translateY(-2px);
+}
+
+.choice-card-cloud:hover {
+  border-color: var(--color-info) !important;
+  box-shadow:
+    0 12px 24px -10px color-mix(in srgb, var(--color-info) 15%, transparent),
+    0 0 0 1px var(--color-info) inset !important;
+}
+
+.choice-card-local:hover {
+  border-color: var(--color-success) !important;
+  box-shadow:
+    0 12px 24px -10px color-mix(in srgb, var(--color-success) 15%, transparent),
+    0 0 0 1px var(--color-success) inset !important;
+}
+
+.welcome-choice-card:active {
+  transform: translateY(0) scale(0.98);
+}
+
+/* ── Text Gradients ──────────────────────────────────────────────────────── */
+.welcome-gradient-title {
+  background: linear-gradient(135deg, var(--color-ink) 20%, var(--color-ink-secondary) 80%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Simulated Terminal for Live Capture ─────────────────────────────────── */
+.welcome-terminal {
+  background: #111111;
+  color: #a4a4a4;
+  border: 1px solid #222222;
+  border-radius: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 16px;
+  text-align: left;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.8);
+  width: 100%;
+}
+
+.terminal-line {
+  margin-bottom: 4px;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
+.terminal-line-active {
+  color: #ffffff;
+  opacity: 1;
+}
+
+/* ── Live Step Glow Indicators ───────────────────────────────────────────── */
+.pulsing-dot {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background-color: var(--color-primary);
+  border-radius: 50%;
+}
+
+.pulsing-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-color: inherit;
+  animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}

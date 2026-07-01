@@ -2,7 +2,8 @@ export type GenerationMode = 'FAST' | 'BALANCED' | 'DEEP';
 export type ViewMode = 'compact' | 'comfortable' | 'detailed';
 export type ReadingLevel = 'simple' | 'technical';
 export type ProviderProtocol = 'openai' | 'anthropic' | 'gemini';
-export type CaptureStatus = 'captured' | 'structuring' | 'chunked' | 'embedding' | 'ready' | 'failed';
+export type CaptureStatus =
+  'captured' | 'structuring' | 'chunked' | 'embedding' | 'ready' | 'failed';
 
 export interface Entity {
   name: string;
@@ -39,6 +40,14 @@ export interface ImageRef {
   paragraphContext: string;
 }
 
+export interface VideoRef {
+  url: string;
+  title: string;
+  description: string;
+  thumbnailUrl?: string;
+  duration?: number;
+}
+
 export interface Document {
   id: string;
   title: string;
@@ -55,9 +64,12 @@ export interface Document {
   concepts: Concept[];
   tags: string[];
   images: ImageRef[];
+  videos: VideoRef[];
   status: CaptureStatus;
   starred: boolean;
   archived: boolean;
+  /** LIB-7: read/unread state — set true when the reader loads the document */
+  isRead?: boolean;
   createdAt: string;
   updatedAt: string;
   // Backward-compat fields
@@ -67,7 +79,6 @@ export interface Document {
   embeddingsGenerated?: boolean;
   // Content Intelligence Engine fields
   enrichedContent?: string;
-  semanticAnalysis?: string; // JSON string of SemanticAnalysis
   relationships?: DocumentRelationship[];
   topics?: string[];
   complexity?: number;
@@ -79,7 +90,6 @@ export interface Document {
   calloutCount?: number;
   hasToc?: boolean;
   hasNumbering?: boolean;
-  pageBreakPrefs?: string;
 }
 
 export interface DocumentChunk {
@@ -132,8 +142,29 @@ export interface DOMExtraction {
   textContent: string;
   cleanedHtml: string;
   images: Array<{ url: string; alt: string; paragraphContext: string }>;
+  videos: Array<{
+    url: string;
+    title: string;
+    description: string;
+    thumbnailUrl?: string;
+    duration?: number;
+  }>;
   wordCount: number;
   metaDescription: string;
+  /** CAP-7: set when the page appears to be paywalled or unreadable */
+  isPaywalled?: boolean;
+  /** CAP-7: signal that triggered paywall detection */
+  paywallSignal?: string;
+  /** CAP-3: if the user triggered a selection-only capture, this is the selected text */
+  selectionText?: string;
+  /** CAP-4: YouTube video ID when captured from youtube.com/watch */
+  youtubeVideoId?: string;
+  /** CAP-4: whether a YouTube transcript was successfully extracted */
+  hasTranscript?: boolean;
+  /** True when content was extracted directly from a PDF file (not DOM) */
+  isPdf?: boolean;
+  /** True when the PDF is detected as an academic research paper */
+  isPaper?: boolean;
 }
 
 export interface ProviderConfig {
@@ -149,14 +180,8 @@ export interface ProviderConfig {
   enabled: boolean;
 }
 
-export interface ModeModels {
-  FAST: string;
-  BALANCED: string;
-  DEEP: string;
-}
-
 export interface AIRuntimeConfig {
-  chat: { providerId: string; modeModels: ModeModels };
+  chat: { providerId: string; modeModels: { FAST: string; BALANCED: string; DEEP: string } };
   embedding: { providerId: string; model: string; dimensions: number; version: number };
 }
 
@@ -165,6 +190,10 @@ export interface Settings {
   defaults: { tags: string[] };
   // PRIV-3: when true, all work stays on-device — no network calls ever.
   localOnly?: boolean;
+  // When true, PlantUML diagrams are rendered by sending their source to the
+  // public plantuml.com service. Off by default (local-first); always
+  // suppressed when localOnly is set.
+  allowRemotePlantUml?: boolean;
   // Backward-compat fields
   apiKey?: string;
   provider?: string;
@@ -226,28 +255,23 @@ export interface ContentFrame {
   total: number;
 }
 
-// ── Backward-compat aliases ──────────────────────────────────────────────────
-export type LLMProvider = string; // replaced by provider abstraction
-export type AIModel = { id: string; name: string; contextWindow: number };
-export const SUPPORTED_MODELS: AIModel[] = [
-  { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', contextWindow: 200000 },
-  { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', contextWindow: 200000 },
-  { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', contextWindow: 200000 },
-  { id: 'openai/gpt-4o', name: 'GPT-4o (OpenRouter)', contextWindow: 128000 },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet (OpenRouter)', contextWindow: 200000 },
-  { id: 'google/gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (OpenRouter)', contextWindow: 1000000 },
-  { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash Free (OpenRouter)', contextWindow: 1000000 },
-  { id: 'deepseek/deepseek-chat-v3', name: 'DeepSeek V3 (OpenRouter)', contextWindow: 64000 },
-  { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B (OpenRouter)', contextWindow: 32000 },
-  { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', contextWindow: 1000000 },
-  { id: 'local/custom', name: 'Custom Endpoint', contextWindow: 0 },
-];
 export type Folder = { id: string; name: string; color: string; createdAt: string };
 export type TagColorMap = Record<string, string>;
 export type DocumentMeta = {
-  id: string; title: string; url: string; domain: string; capturedAt: string;
-  wordCount: number; summary: string; tags: string[]; folder?: string;
-  isStarred: boolean; isArchived: boolean; isRead: boolean; mode: GenerationMode; provider: string;
+  id: string;
+  title: string;
+  url: string;
+  domain: string;
+  capturedAt: string;
+  wordCount: number;
+  summary: string;
+  tags: string[];
+  folder?: string;
+  isStarred: boolean;
+  isArchived: boolean;
+  isRead: boolean;
+  mode: GenerationMode;
+  provider: string;
   // Knowledge intelligence fields (surfaced from Content Intelligence Engine)
   entityCount?: number;
   conceptCount?: number;
@@ -261,16 +285,37 @@ export type DocumentMeta = {
   topConcepts?: string[];
 };
 export type DocumentHighlight = {
-  id: string; documentId: string; text: string; paragraphIndex: number;
-  paragraphId?: string; createdAt: string;
+  id: string;
+  documentId: string;
+  text: string;
+  paragraphIndex: number;
+  paragraphId?: string;
+  createdAt: string;
 };
 
 export type RuntimeMessage =
-  | { type: 'CAPTURE_PAGE'; payload: { mode: GenerationMode; tags: string[]; tabId?: number; url?: string } }
+  | {
+      type: 'CAPTURE_PAGE';
+      payload: { mode: GenerationMode; tags: string[]; tabId?: number; url?: string };
+    }
+  | {
+      type: 'CAPTURE_SELECTION';
+      payload: {
+        mode: GenerationMode;
+        tags: string[];
+        tabId?: number;
+        url?: string;
+        selectionText: string;
+      };
+    }
   | { type: 'CAPTURE_PROGRESS'; payload: { step: string; pct: number } }
   | { type: 'CAPTURE_COMPLETE'; payload: { documentId: string } }
   | { type: 'CAPTURE_ERROR'; payload: { error: string } }
-  | { type: 'RAG_QUERY'; payload: { documentId: string; query: string; readingLevel?: ReadingLevel } }
+  | { type: 'PAYWALL_DETECTED'; payload: { signal: string; url: string } }
+  | {
+      type: 'RAG_QUERY';
+      payload: { documentId: string; query: string; readingLevel?: ReadingLevel };
+    }
   | { type: 'RAG_RESPONSE'; payload: { answer: string; citations: Citation[] } }
   | { type: 'RAG_ERROR'; payload: { error: string } }
   | { type: 'GENERATE_EMBEDDINGS'; payload: { documentId: string } }
@@ -285,11 +330,16 @@ export type RuntimeMessage =
   | { type: 'TEST_CONNECTION_RESULT'; payload: { providerId: string; result: TestResult } }
   | { type: 'RE_EMBED_ALL'; payload: { providerId: string; model: string } }
   | { type: 'RE_EMBED_PROGRESS'; payload: { done: number; total: number } }
-  // Content Intelligence Engine message types
-  | { type: 'ENRICH_DOCUMENT'; payload: { documentId: string; mode: 'FAST' | 'BALANCED' | 'DEEP' } }
-  | { type: 'ENRICH_COMPLETE'; payload: { documentId: string; enriched: boolean; diagramCount: number; calloutCount: number } }
-  | { type: 'ENRICH_ERROR'; payload: { error: string } }
-  | { type: 'EXPORT_ENHANCED_PDF'; payload: { documentId: string; options: { title: string; includeToc: boolean; includePageNumbers: boolean } } }
-  | { type: 'EXPORT_ENHANCED_PROGRESS'; payload: { step: string; pct: number } }
-  | { type: 'EXPORT_ENHANCED_COMPLETE'; payload: { pdfBytes: number[] } }
-  | { type: 'EXPORT_ENHANCED_ERROR'; payload: { error: string } };
+  // MODEL-1..7: on-device model management
+  | { type: 'MODEL_DOWNLOAD_START'; payload: { modelId: string } }
+  | { type: 'MODEL_DOWNLOAD_PROGRESS'; payload: { modelId: string; pct: number } }
+  | { type: 'MODEL_DOWNLOAD_COMPLETE'; payload: { modelId: string } }
+  | { type: 'MODEL_DOWNLOAD_ERROR'; payload: { modelId: string; error: string } }
+  | { type: 'MODEL_SET_EMBEDDING'; payload: { modelId: string } }
+  | { type: 'MODEL_SET_CHAT'; payload: { modelId: string } }
+  | { type: 'MODEL_ENABLE_ON_DEVICE'; payload: { enabled: boolean } }
+  // TTS — text-to-speech
+  | { type: 'TTS_SPEAK'; payload: { text: string } }
+  | { type: 'TTS_RESULT'; payload: { audioBase64: string; sampleRate: number } }
+  | { type: 'TTS_ERROR'; payload: { error: string } }
+  | { type: 'TTS_STOP'; payload: Record<string, never> };

@@ -1,0 +1,211 @@
+/* ============================================================================
+   Notch — Design Tokens (single source of truth)
+   ----------------------------------------------------------------------------
+   Implements the DESIGN.md "Nike editorial" system: a near-monochrome
+   ink / canvas / soft-cloud chrome where all chromatic energy is reserved for
+   semantic signals (sale red, success green, the rare info blue). Photography-
+   grade flatness — no decorative drop shadows, hairline dividers only, pill
+   geometry on every CTA, square flat cards.
+
+   Everything visual in the workspace resolves through the custom properties
+   declared here. Tailwind utilities (`bg-canvas`, `text-ink`, `rounded-full`,
+   `shadow-level-1`, …) and the `.notion-*` component classes in globals.css
+   both read these tokens, so the entire light/dark system is controlled from
+   this one file.
+
+   This file is @import-ed by globals.css right after `@import "tailwindcss"`,
+   so Tailwind processes the `@theme` block below and regenerates utilities
+   from the Nike palette. The `html[data-theme="dark"]` block at the bottom
+   re-points the same custom properties for the night palette.
+   ========================================================================== */
+
+@theme {
+  /* ── Surface · ink / canvas / soft-cloud ──────────────────────────────
+     soft-cloud (#f5f5f5) is the "studio stage" every product/card sits on;
+     canvas (#ffffff) is the card itself. hairline carries the only dividers. */
+  --color-canvas: #ffffff;
+  --color-canvas-soft: #f5f5f5; /* soft-cloud — page stage */
+  --color-soft-cloud: #f5f5f5;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f5f5f5;
+  --color-hairline: #cacacb; /* 1px dividers */
+  --color-hairline-soft: #e5e5e5; /* inset hairline under sticky bars */
+
+  /* ── Brand · ink is the only "color" ──────────────────────────────────
+     The primary CTA, active chip, headline and body text. Adaptive across
+     themes (ink in light, cloud in dark) so it works as both a fill and a
+     readable accent/link color. `--accent-user`, when set by the appearance
+     settings, overrides it; default leaves it monochrome. */
+  --color-primary: var(--accent-user, #111111);
+  --color-primary-active: var(--accent-user, #000000);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #f5f5f5; /* soft-cloud secondary pill */
+  --color-secondary-foreground: #111111;
+  --color-on-primary: #ffffff;
+
+  /* ── Text ramp ────────────────────────────────────────────────────────
+     ink → charcoal → mute → stone, mapped onto the structural names the
+     components already consume. */
+  --color-ink: #111111;
+  --color-ink-secondary: #39393b; /* charcoal */
+  --color-ink-muted: #707072; /* mute */
+  --color-ink-faint: #9e9ea0; /* stone */
+  --color-charcoal: #39393b;
+  --color-ash: #4b4b4d;
+  --color-mute: #707072;
+  --color-stone: #9e9ea0;
+  --color-link: var(--color-primary);
+
+  /* ── Semantic · the only non-neutral chrome ───────────────────────────
+     sale red is the lone red in retail chrome; success/info appear sparingly. */
+  --color-sale: #d30005;
+  --color-sale-deep: #780700;
+  --color-success: #007d48;
+  --color-success-bright: #1eaa52;
+  --color-info: #1151ff;
+  --color-info-deep: #0034e3;
+
+  /* ── Category / editorial accents (illustration only, never chrome) ─── */
+  --color-accent-pink: #ed1aa0;
+  --color-accent-pink-soft: #ffb0dd;
+  --color-accent-pink-deep: #4c012d;
+  --color-accent-purple: #beaffd;
+  --color-accent-purple-soft: #beaffd;
+  --color-accent-purple-pale: #d6d1ff;
+  --color-accent-purple-deep: #391c57;
+  --color-accent-teal: #0a7281;
+  /* legacy decorative names kept so callouts / diagrams keep resolving */
+  --color-accent-sky: #1151ff;
+  --color-accent-green: #007d48;
+  --color-accent-orange: #dd5b00;
+  --color-accent-orange-deep: #793400;
+  --color-accent-brown: #523410;
+
+  /* ── shadcn / structural aliases ──────────────────────────────────────
+     Body sits on the soft-cloud stage; cards/popovers on canvas white. */
+  --color-background: #f5f5f5;
+  --color-foreground: #111111;
+  --color-card: #ffffff;
+  --color-card-foreground: #111111;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #111111;
+  --color-muted: #707072;
+  --color-muted-foreground: #707072;
+  --color-accent: #f5f5f5;
+  --color-accent-foreground: #111111;
+  --color-destructive: #d30005; /* sale red */
+  --color-destructive-foreground: #ffffff;
+  --color-border: #cacacb;
+  --color-input: #cacacb;
+  --color-ring: #111111;
+
+  /* ── Typography ───────────────────────────────────────────────────────
+     Inter substitutes Helvetica Now (DESIGN.md substitution path); the
+     display tier leans on heavy weight + uppercase + 0.9 line-height to
+     approximate the Futura ND campaign lockup without a font dependency. */
+  --font-sans: Inter, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-display: Inter, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+  /* ── Spacing · 8px base, 48px section rhythm ─────────────────────────── */
+  --spacing-section: 48px;
+
+  /* ── Border radius · square containers / pill CTAs ────────────────────
+     Containers stay crisp (0–16px); the pill geometry comes from
+     --radius-full. --radius-pill-* mirror DESIGN.md's 24/30px CTA pills. */
+  --radius: 8px;
+  --radius-none: 0px;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+  --radius-avatar: 18px;
+  --radius-pill-md: 24px;
+  --radius-pill-lg: 30px;
+
+  /* ── Elevation · FLAT. Hairlines and inset lines only, no soft lifts ──
+     The Nike system has no drop-shadow elevation; the only depth cue is the
+     1px inset hairline on sticky strips. "level" shadows become crisp rings. */
+  --shadow-level-0: 0 0 0 1px var(--color-hairline);
+  --shadow-level-1: 0 0 0 1px var(--color-hairline);
+  --shadow-level-2: inset 0 -1px 0 var(--color-hairline-soft);
+
+  /* ── Focus ring · the soft-cloud "glove" (2px ink + canvas gap) ──────── */
+  --focus-ring: 0 0 0 2px var(--color-canvas), 0 0 0 4px var(--color-ink);
+
+  /* ── Animations ──────────────────────────────────────────────────────── */
+  --animate-pulse-skeleton: pulse-skeleton 1.5s ease-in-out infinite;
+  --animate-blink: blink 1s step-end infinite;
+  --animate-capture-pulse: capture-pulse 1.5s ease-in-out infinite;
+  --animate-page-enter: page-enter 300ms ease-out both;
+}
+
+/* ============================================================================
+   Dark theme — "Nike night"
+   ----------------------------------------------------------------------------
+   Near-black canvas, dark soft-cloud stage, cloud-white ink ramp. The ink
+   accent flips to cloud so it stays a readable link/accent and inverts the
+   primary pill to white-on-ink. Activated by [data-theme="dark"] on <html>.
+   ========================================================================== */
+html[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --color-canvas: #1b1b1b;
+  --color-canvas-soft: #121212;
+  --color-soft-cloud: #242424;
+  --color-surface: #1f1f1f;
+  --color-surface-hover: #2a2a2a;
+  --color-hairline: #343436;
+  --color-hairline-soft: #2a2a2a;
+
+  /* Brand — ink flips to cloud; primary pill becomes white-on-ink */
+  --color-primary: var(--accent-user, #f5f5f5);
+  --color-primary-active: var(--accent-user, #ffffff);
+  --color-primary-foreground: #111111;
+  --color-secondary: #2a2a2a;
+  --color-secondary-foreground: #f5f5f5;
+  --color-on-primary: #111111;
+
+  /* Text ramp */
+  --color-ink: #f5f5f5;
+  --color-ink-secondary: #cacacb;
+  --color-ink-muted: #9e9ea0;
+  --color-ink-faint: #707072;
+  --color-charcoal: #cacacb;
+  --color-ash: #9e9ea0;
+  --color-mute: #9e9ea0;
+  --color-stone: #707072;
+
+  /* Semantic — brightened so they read on the dark stage */
+  --color-sale: #ff5a5f;
+  --color-sale-deep: #d30005;
+  --color-success: #1eaa52;
+  --color-success-bright: #3ecf7a;
+  --color-info: #4d7dff;
+  --color-info-deep: #1151ff;
+
+  /* Editorial accents */
+  --color-accent-sky: #4d7dff;
+  --color-accent-green: #1eaa52;
+  --color-accent-orange: #ff7a33;
+
+  /* shadcn / structural aliases */
+  --color-background: #121212;
+  --color-foreground: #f5f5f5;
+  --color-card: #1f1f1f;
+  --color-card-foreground: #f5f5f5;
+  --color-popover: #1f1f1f;
+  --color-popover-foreground: #f5f5f5;
+  --color-muted: #9e9ea0;
+  --color-muted-foreground: #9e9ea0;
+  --color-accent: #2a2a2a;
+  --color-accent-foreground: #f5f5f5;
+  --color-destructive: #ff5a5f;
+  --color-destructive-foreground: #111111;
+  --color-border: #343436;
+  --color-input: #343436;
+  --color-ring: #f5f5f5;
+}

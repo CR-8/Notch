@@ -11,6 +11,7 @@
  * - Structural fence integrity for markdown documents
  */
 
+import DOMPurify from 'dompurify';
 import type { Citation } from './types';
 
 // ── Complete HTML Entity Escaping ────────────────────────────────────────────
@@ -33,36 +34,89 @@ export function escapeHtmlFull(text: string): string {
 // ── HTML Sanitization ────────────────────────────────────────────────────────
 
 /**
- * Strip dangerous HTML elements and attributes from a string.
- * Used to sanitize AI-generated markdown before it's converted to HTML
- * and rendered via marked.
- *
- * Removes:
- * - <script>, <iframe>, <object>, <embed>, <applet>, <form> tags (with content)
- * - Event handler attributes (onclick, onerror, etc.)
- * - javascript:, data:, vbscript: URL schemes in href/src attributes
+ * Tags that are valid HTML (so DOMPurify keeps them by default) but have no
+ * place in rendered document content and are common injection / phishing
+ * vectors. The `style` *tag* is blocked to prevent CSS injection — note the
+ * style *attribute* is kept because KaTeX math output depends on it, and
+ * DOMPurify already strips dangerous values from it.
+ */
+const FORBIDDEN_TAGS = [
+  'style',
+  'form',
+  'input',
+  'textarea',
+  'select',
+  'button',
+  'iframe',
+  'object',
+  'embed',
+  'applet',
+  'link',
+  'meta',
+  'base',
+];
+
+const HTML_CONFIG = {
+  FORBID_TAGS: FORBIDDEN_TAGS,
+  ADD_ATTR: ['target'],
+  ALLOW_DATA_ATTR: false,
+};
+
+// SVG sanitization for diagram output (Mermaid / PlantUML). The `html` profile
+// is included so Mermaid's <foreignObject> label markup survives, while
+// scripts, event handlers and javascript: URLs are still stripped.
+const SVG_CONFIG = {
+  USE_PROFILES: { svg: true, svgFilters: true, html: true },
+};
+
+let hooksInstalled = false;
+function ensureHooks(): void {
+  if (hooksInstalled || !DOMPurify.isSupported) return;
+  hooksInstalled = true;
+  // Harden links that open in a new tab against reverse-tabnabbing.
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    const el = node;
+    if (typeof el.getAttribute === 'function' && el.getAttribute('target')) {
+      el.setAttribute('target', '_blank');
+      el.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
+}
+
+/** Fail-closed fallback used only when no DOM is available (e.g. a service worker). */
+function stripAllTags(html: string): string {
+  return html.replace(/<\/?[^>]+(>|$)/g, '');
+}
+
+/**
+ * Sanitize an HTML string (typically marked.parse() output of AI/markdown
+ * content) with DOMPurify before it is injected via dangerouslySetInnerHTML.
+ * Removes scripts, event handlers, dangerous URL schemes and the forbidden
+ * tags above, while preserving formatting, tables, links and KaTeX math.
  */
 export function sanitizeHtml(html: string): string {
-  return html
-    // Remove <script> tags and their content
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    // Remove other dangerous tags with content
-    .replace(/<(iframe|object|embed|applet|form|input|textarea|select|button|link|style|meta|base)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
-    // Remove self-closing / void dangerous tags
-    .replace(/<(iframe|object|embed|applet|form|input|textarea|select|button|link|style|meta|base)\b[^>]*\/?>/gi, '')
-    // Remove event handler attributes (onclick="...", onerror='...', onload=...)
-    .replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    // Block dangerous URL schemes in href
-    .replace(/(\bhref\s*=\s*)(["']?)\s*(javascript|data|vbscript)\s*:/gi, '$1$2about:blank#blocked-')
-    // Block dangerous URL schemes in src
-    .replace(/(\bsrc\s*=\s*)(["']?)\s*(javascript|data|vbscript)\s*:/gi, '$1$2about:blank#blocked-');
+  if (!DOMPurify.isSupported) {
+    // Callers run in document contexts; this is a defensive path, not expected.
+    return stripAllTags(html);
+  }
+  ensureHooks();
+  return DOMPurify.sanitize(html, HTML_CONFIG);
+}
+
+/**
+ * Sanitize an SVG string (Mermaid / PlantUML diagram output) before it is
+ * injected via dangerouslySetInnerHTML. Returns an empty string when no DOM
+ * is available so nothing unsanitized is ever rendered.
+ */
+export function sanitizeSvg(svg: string): string {
+  if (!DOMPurify.isSupported) return '';
+  ensureHooks();
+  return DOMPurify.sanitize(svg, SVG_CONFIG);
 }
 
 // ── URL Scheme Validation ────────────────────────────────────────────────────
 
-const SAFE_URL_SCHEMES = new Set([
-  'http', 'https', 'mailto', 'tel', 'ftp', 'ftps',
-]);
+const SAFE_URL_SCHEMES = new Set(['http', 'https', 'mailto', 'tel', 'ftp', 'ftps']);
 
 /**
  * Validate a URL scheme. Returns the URL if safe, or a blocked placeholder
@@ -85,25 +139,88 @@ export function sanitizeUrl(url: string): string {
 
 const ALLOWED_LANGUAGES = new Set([
   // Common languages
-  'javascript', 'js', 'typescript', 'ts', 'python', 'py', 'ruby', 'rb',
-  'java', 'c', 'cpp', 'c++', 'csharp', 'c#', 'go', 'golang', 'rust',
-  'swift', 'kotlin', 'scala', 'r', 'sql', 'shell', 'bash', 'sh', 'zsh',
-  'powershell', 'ps1', 'cmd', 'bat',
+  'javascript',
+  'js',
+  'typescript',
+  'ts',
+  'python',
+  'py',
+  'ruby',
+  'rb',
+  'java',
+  'c',
+  'cpp',
+  'c++',
+  'csharp',
+  'c#',
+  'go',
+  'golang',
+  'rust',
+  'swift',
+  'kotlin',
+  'scala',
+  'r',
+  'sql',
+  'shell',
+  'bash',
+  'sh',
+  'zsh',
+  'powershell',
+  'ps1',
+  'cmd',
+  'bat',
   // Web
-  'html', 'css', 'scss', 'sass', 'less', 'xml', 'yaml', 'yml', 'json',
-  'toml', 'ini', 'env',
+  'html',
+  'css',
+  'scss',
+  'sass',
+  'less',
+  'xml',
+  'yaml',
+  'yml',
+  'json',
+  'toml',
+  'ini',
+  'env',
   // Markup / docs
-  'markdown', 'md', 'latex', 'tex', 'asciidoc', 'adoc',
+  'markdown',
+  'md',
+  'latex',
+  'tex',
+  'asciidoc',
+  'adoc',
   // Diagrams (Notch-specific)
-  'mermaid', 'plantuml',
+  'mermaid',
+  'plantuml',
   // Other common
-  'dockerfile', 'makefile', 'graphql', 'proto', 'protobuf',
-  'lua', 'perl', 'php', 'dart', 'elixir', 'erlang', 'haskell',
-  'clojure', 'lisp', 'scheme', 'fsharp', 'ocaml',
+  'dockerfile',
+  'makefile',
+  'graphql',
+  'proto',
+  'protobuf',
+  'lua',
+  'perl',
+  'php',
+  'dart',
+  'elixir',
+  'erlang',
+  'haskell',
+  'clojure',
+  'lisp',
+  'scheme',
+  'fsharp',
+  'ocaml',
   // Data formats
-  'csv', 'tsv', 'diff', 'patch', 'log',
+  'csv',
+  'tsv',
+  'diff',
+  'patch',
+  'log',
   // Generic
-  'text', 'plaintext', 'code', 'source',
+  'text',
+  'plaintext',
+  'code',
+  'source',
 ]);
 
 /**
@@ -132,7 +249,10 @@ const CONTROL_CHARS_REGEX = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
  * - Trims whitespace
  * - Enforces maximum length
  */
-export function sanitizeUserInput(input: string, maxLength: number = MAX_USER_INPUT_LENGTH): string {
+export function sanitizeUserInput(
+  input: string,
+  maxLength: number = MAX_USER_INPUT_LENGTH,
+): string {
   const stripped = input.replace(CONTROL_CHARS_REGEX, '');
   const trimmed = stripped.trim();
   if (trimmed.length > maxLength) {
@@ -149,9 +269,7 @@ export function sanitizeUserInput(input: string, maxLength: number = MAX_USER_IN
  * - Validates and sanitizes markdown link/image URLs
  */
 export function sanitizeAiResponse(text: string): string {
-  let sanitized = text
-    .replace(/\x00/g, '')
-    .replace(CONTROL_CHARS_REGEX, '');
+  let sanitized = text.replace(/\x00/g, '').replace(CONTROL_CHARS_REGEX, '');
 
   // Sanitize markdown link URLs: [text](url)
   sanitized = sanitized.replace(
@@ -218,7 +336,9 @@ export function validateImportBundle(raw: unknown): {
 
   // Required string fields
   if (!isString(d.id) || d.id.length === 0 || d.id.length > 256) {
-    throw new Error('Invalid import bundle: document.id must be a non-empty string (max 256 chars)');
+    throw new Error(
+      'Invalid import bundle: document.id must be a non-empty string (max 256 chars)',
+    );
   }
   if (!isString(d.title) || d.title.length > 10_000) {
     throw new Error('Invalid import bundle: document.title must be a string (max 10000 chars)');
@@ -240,10 +360,14 @@ export function validateImportBundle(raw: unknown): {
 
   // Enum fields
   if (!isString(d.mode) || !VALID_MODES.has(d.mode)) {
-    throw new Error('Invalid import bundle: document.mode must be one of: FAST, DEEP, BALANCED, LOCAL');
+    throw new Error(
+      'Invalid import bundle: document.mode must be one of: FAST, DEEP, BALANCED, LOCAL',
+    );
   }
   if (!isString(d.provider) || !VALID_PROVIDERS.has(d.provider)) {
-    throw new Error('Invalid import bundle: document.provider must be one of: gemini, ollama, offline, openai, anthropic');
+    throw new Error(
+      'Invalid import bundle: document.provider must be one of: gemini, ollama, offline, openai, anthropic',
+    );
   }
 
   // Content
@@ -303,13 +427,17 @@ export function validateImportBundle(raw: unknown): {
       throw new Error(`Invalid import bundle: chunks[${i}].documentId must be a string`);
     }
     if (!isNumber(c.chunkIndex) || c.chunkIndex < 0) {
-      throw new Error(`Invalid import bundle: chunks[${i}].chunkIndex must be a non-negative number`);
+      throw new Error(
+        `Invalid import bundle: chunks[${i}].chunkIndex must be a non-negative number`,
+      );
     }
     if (!isString(c.text)) {
       throw new Error(`Invalid import bundle: chunks[${i}].text must be a string`);
     }
     if (!isNumber(c.paragraphIndex) || c.paragraphIndex < 0) {
-      throw new Error(`Invalid import bundle: chunks[${i}].paragraphIndex must be a non-negative number`);
+      throw new Error(
+        `Invalid import bundle: chunks[${i}].paragraphIndex must be a non-negative number`,
+      );
     }
   }
 
@@ -330,13 +458,17 @@ export function validateImportBundle(raw: unknown): {
     if (!isArray(e.vector)) {
       throw new Error(`Invalid import bundle: embeddings[${i}].vector must be an array`);
     }
-    const vec = e.vector as unknown[];
+    const vec = e.vector;
     if (vec.length > 10_000) {
-      throw new Error(`Invalid import bundle: embeddings[${i}].vector exceeds maximum length (10000)`);
+      throw new Error(
+        `Invalid import bundle: embeddings[${i}].vector exceeds maximum length (10000)`,
+      );
     }
     for (let j = 0; j < vec.length; j++) {
       if (!isNumber(vec[j])) {
-        throw new Error(`Invalid import bundle: embeddings[${i}].vector[${j}] must be a finite number`);
+        throw new Error(
+          `Invalid import bundle: embeddings[${i}].vector[${j}] must be a finite number`,
+        );
       }
     }
   }
@@ -491,14 +623,9 @@ export function formatMarkdown(md: string): string {
     if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
       if (!prevWasCode && result.length > 0) result.push(''); // Blank line before code
       result.push(trimmed);
-      prevWasCode = !trimmed.startsWith('```') || !trimmed.includes('```', 3)
-        ? trimmed.startsWith('```') && !trimmed.includes('```', 3)
-        : !trimmed.endsWith('```');
-      // Actually prevWasCode should track if we're IN a code block
-      const isOpen = !trimmed.startsWith('```') || !trimmed.includes('```', 3)
-        ? trimmed.startsWith('~~~') && !trimmed.includes('~~~', 3)
-        : !trimmed.endsWith('```');
-      prevWasCode = trimmed.startsWith('```') && !trimmed.endsWith('```') || trimmed.startsWith('~~~') && !trimmed.endsWith('~~~');
+      prevWasCode =
+        (trimmed.startsWith('```') && !trimmed.endsWith('```')) ||
+        (trimmed.startsWith('~~~') && !trimmed.endsWith('~~~'));
       inList = false;
       continue;
     }
@@ -507,7 +634,8 @@ export function formatMarkdown(md: string): string {
     if (result.length > 0) {
       const lastLine = result[result.length - 1];
       const lastIsCodeStart = lastLine.startsWith('```') || lastLine.startsWith('~~~');
-      const lastIsCodeEnd = (lastLine.startsWith('```') && lastLine.endsWith('```') && lastLine.length > 3) ||
+      const lastIsCodeEnd =
+        (lastLine.startsWith('```') && lastLine.endsWith('```') && lastLine.length > 3) ||
         (lastLine.startsWith('~~~') && lastLine.endsWith('~~~') && lastLine.length > 3);
       if (lastIsCodeStart && !lastIsCodeEnd) {
         result.push(line); // Inside code block, preserve content
@@ -560,7 +688,7 @@ export function formatMarkdown(md: string): string {
  */
 export function formatChatResponse(text: string): string {
   // Ensure proper spacing around citations [N]
-  let formatted = text.replace(/(\S)\[(\d+)\]/g, '$1 [$2]');
+  const formatted = text.replace(/(\S)\[(\d+)\]/g, '$1 [$2]');
 
   // Add line break after answer prefix if long
   const firstLineBreak = formatted.indexOf('\n');

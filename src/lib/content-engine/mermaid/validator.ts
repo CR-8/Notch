@@ -57,12 +57,6 @@ const DIAGRAM_TYPE_PATTERNS: Record<string, RegExp> = {
   xyChart: /^xychart-beta\s/,
 };
 
-const FLOWCHART_DIRECTIONS = new Set(['TB', 'TD', 'BT', 'LR', 'RL']);
-const VALID_SHAPES = new Set([
-  '-->', '---', '==>', '-.->', '==', '-.-',
-  '=>', '--o', '--x', '-o', '-x',
-]);
-
 export function detectDiagramType(code: string): MermaidDiagramType | null {
   const trimmed = code.trim();
   for (const [type, pattern] of Object.entries(DIAGRAM_TYPE_PATTERNS)) {
@@ -94,7 +88,10 @@ export function validateMermaidCode(code: string): MermaidValidationResult {
   const trimmed = code.trim();
 
   if (!trimmed) {
-    return { valid: false, errors: [{ line: 0, message: 'Empty diagram code', severity: 'error' }] };
+    return {
+      valid: false,
+      errors: [{ line: 0, message: 'Empty diagram code', severity: 'error' }],
+    };
   }
 
   const diagramType = detectDiagramType(trimmed);
@@ -154,11 +151,15 @@ export function validateMermaidCode(code: string): MermaidValidationResult {
         break;
     }
   } else {
-    errors.push({ line: 1, message: 'Could not detect diagram type. Ensure first line declares a valid diagram type.', severity: 'warning' });
+    errors.push({
+      line: 1,
+      message: 'Could not detect diagram type. Ensure first line declares a valid diagram type.',
+      severity: 'warning',
+    });
   }
 
   return {
-    valid: errors.filter(e => e.severity === 'error').length === 0,
+    valid: errors.filter((e) => e.severity === 'error').length === 0,
     errors,
   };
 }
@@ -189,7 +190,11 @@ function validateFlowchart(code: string, errors: MermaidError[]): void {
   }
 
   if (inSubgraph > 0) {
-    errors.push({ line: lines.length, message: `Unclosed subgraph block (${inSubgraph} open)`, severity: 'error' });
+    errors.push({
+      line: lines.length,
+      message: `Unclosed subgraph block (${inSubgraph} open)`,
+      severity: 'error',
+    });
   }
 }
 
@@ -204,41 +209,53 @@ function validateSequenceDiagram(code: string, errors: MermaidError[]): void {
     if (/^participant\s+\w+/i.test(line)) hasParticipants = true;
 
     // Check activation/deactivation balance
-    const activateCount = (line.match(/\bactivate\b/gi) ?? []).length;
-    const deactivateCount = (line.match(/\bdeactivate\b/gi) ?? []).length;
+    const _activateCount = (line.match(/\bactivate\b/gi) ?? []).length;
+    const _deactivateCount = (line.match(/\bdeactivate\b/gi) ?? []).length;
   }
 
   if (!hasParticipants) {
-    errors.push({ line: 1, message: 'No participants defined. Use "participant Name" to declare actors.', severity: 'warning' });
+    errors.push({
+      line: 1,
+      message: 'No participants defined. Use "participant Name" to declare actors.',
+      severity: 'warning',
+    });
   }
 }
 
 function validateGantt(code: string, errors: MermaidError[]): void {
   const lines = code.split('\n');
   let hasDateFormat = false;
-  let hasTitle = false;
+  let _hasTitle = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line || line.startsWith('%%')) continue;
     if (/^dateFormat\s+/i.test(line)) hasDateFormat = true;
-    if (/^title\s+/i.test(line)) hasTitle = true;
+    if (/^title\s+/i.test(line)) _hasTitle = true;
 
     // Validate section tasks have proper format
     if (line.startsWith('    ') && !line.startsWith('    section')) {
       const parts = line.split(':');
       if (parts.length < 2) {
-        errors.push({ line: i + 1, message: 'Task should have format "task name: status, start, end"', severity: 'warning' });
+        errors.push({
+          line: i + 1,
+          message: 'Task should have format "task name: status, start, end"',
+          severity: 'warning',
+        });
       }
     }
   }
 
   if (!hasDateFormat) {
-    errors.push({ line: 1, message: 'No dateFormat specified. Add "dateFormat YYYY-MM-DD"', severity: 'warning' });
+    errors.push({
+      line: 1,
+      message: 'No dateFormat specified. Add "dateFormat YYYY-MM-DD"',
+      severity: 'warning',
+    });
   }
 }
 
-function validateERDiagram(code: string, errors: MermaidError[]): void {
+function validateERDiagram(code: string, _errors: MermaidError[]): void {
   const lines = code.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -251,7 +268,7 @@ function validateERDiagram(code: string, errors: MermaidError[]): void {
   }
 }
 
-function validateClassDiagram(code: string, errors: MermaidError[]): void {
+function validateClassDiagram(code: string, _errors: MermaidError[]): void {
   const lines = code.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -282,19 +299,23 @@ function validateMindmap(code: string, errors: MermaidError[]): void {
     if (indent > 0 && rootLevel !== null) {
       const relativeDepth = indent - rootLevel;
       if (relativeDepth % 2 !== 0) {
-        errors.push({ line: i + 1, message: 'Mindmap indentation should be consistent (multiples of 2 spaces)', severity: 'warning' });
+        errors.push({
+          line: i + 1,
+          message: 'Mindmap indentation should be consistent (multiples of 2 spaces)',
+          severity: 'warning',
+        });
       }
     }
   }
 }
 
-function validateTimeline(code: string, errors: MermaidError[]): void {
+function validateTimeline(code: string, _errors: MermaidError[]): void {
   const lines = code.split('\n');
-  let hasTitle = false;
+  let _hasTitle = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line || line.startsWith('%%')) continue;
-    if (/^title\s+/i.test(line)) hasTitle = true;
+    if (/^title\s+/i.test(line)) _hasTitle = true;
   }
 }

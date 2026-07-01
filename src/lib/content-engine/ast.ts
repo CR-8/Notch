@@ -1,7 +1,15 @@
-import { Lexer, Parser } from 'marked';
+import { Lexer } from 'marked';
 import type { Token, Tokens } from 'marked';
-import type { EnrichedBlock, ContentHierarchy, HeadingNode, NumberedItem } from './types';
-import { escapeHtmlFull } from '../sanitize';
+import type {
+  EnrichedBlock,
+  ContentHierarchy,
+  HeadingNode,
+  NumberedItem,
+  CalloutElement,
+  DiagramElement,
+  CalloutKind,
+  DiagramKind,
+} from './types';
 
 export interface ASTParseOptions {
   detectCallouts?: boolean;
@@ -15,15 +23,21 @@ const DEFAULT_OPTIONS: ASTParseOptions = {
   numberingEnabled: true,
 };
 
-const CALLOUT_PATTERN = /^\[!(NOTE|WARNING|TIP|DANGER|INFO)\](.*)?$/im;
-const MERMAID_FENCE = /^```mermaid\s*$/im;
-const PLANTUML_FENCE = /^```plantuml\s*$/im;
-
 function isMermaidBlock(language: string): boolean {
   const mermaidLangs = new Set([
-    'mermaid', 'flowchart', 'sequencediagram', 'classdiagram',
-    'statediagram', 'erdiagram', 'journey', 'gantt',
-    'pie', 'mindmap', 'timeline', 'gitgraph', 'architecture',
+    'mermaid',
+    'flowchart',
+    'sequencediagram',
+    'classdiagram',
+    'statediagram',
+    'erdiagram',
+    'journey',
+    'gantt',
+    'pie',
+    'mindmap',
+    'timeline',
+    'gitgraph',
+    'architecture',
   ]);
   return mermaidLangs.has(language.toLowerCase());
 }
@@ -85,12 +99,35 @@ function tokenToEnriched(
               raw,
               data: {
                 type: 'callout',
-                kind: callout.kind as any,
+                kind: callout.kind as CalloutKind,
                 content: callout.content,
                 title: callout.title,
               },
             };
           }
+        }
+
+        // Extract standalone image paragraphs as dedicated image blocks.
+        const imgMatch = raw.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+        if (imgMatch) {
+          const alt = imgMatch[1];
+          const url = imgMatch[2];
+          state.figureCount++;
+          return {
+            type: 'image',
+            raw,
+            id: `img-${state.figureCount}`,
+            data: {
+              type: 'image',
+              kind: 'generic',
+              prompt: '',
+              caption: alt,
+              altText: alt,
+              placement: -1,
+              id: `img-${state.figureCount}`,
+              url,
+            },
+          };
         }
 
         return { type: 'paragraph', raw };
@@ -143,12 +180,18 @@ function tokenToEnriched(
         if (options.detectDiagrams && isMermaidBlock(lang)) {
           state.diagramCount++;
           const id = `diagram-${state.diagramCount}`;
-          const kind = lang === 'sequencediagram' ? 'sequenceDiagram'
-            : lang === 'classdiagram' ? 'classDiagram'
-            : lang === 'statediagram' ? 'stateDiagram'
-            : lang === 'erdiagram' ? 'erDiagram'
-            : lang === 'gitgraph' ? 'gitGraph'
-            : lang as any;
+          const kind =
+            lang === 'sequencediagram'
+              ? ('sequenceDiagram' as DiagramKind)
+              : lang === 'classdiagram'
+                ? ('classDiagram' as DiagramKind)
+                : lang === 'statediagram'
+                  ? ('stateDiagram' as DiagramKind)
+                  : lang === 'erdiagram'
+                    ? ('erDiagram' as DiagramKind)
+                    : lang === 'gitgraph'
+                      ? ('gitGraph' as DiagramKind)
+                      : (lang as DiagramKind);
           return {
             type: 'diagram',
             raw: t.raw,
@@ -191,11 +234,9 @@ function tokenToEnriched(
         const tableId = `table-${state.tableCount}`;
         const columns = (t.header ?? []).map((h, i) => ({
           header: h.text ?? '',
-          align: (t.align[i] ?? 'left') as 'left' | 'center' | 'right',
+          align: t.align[i] ?? 'left',
         }));
-        const rows = (t.rows ?? []).map(row =>
-          row.map(cell => cell.text ?? ''),
-        );
+        const rows = (t.rows ?? []).map((row) => row.map((cell) => cell.text ?? ''));
         return {
           type: 'rich_table',
           raw: t.raw,
@@ -218,10 +259,10 @@ function tokenToEnriched(
         return null;
 
       default:
-        return { type: 'paragraph', raw: (token as any).raw ?? '' };
+        return { type: 'paragraph', raw: (token as { raw: string }).raw ?? '' };
     }
   } catch (err) {
-    const raw = (token as any).raw ?? '';
+    const raw = (token as { raw: string }).raw ?? '';
     warnings.push(err instanceof Error ? err.message : String(err));
     return { type: 'paragraph', raw };
   }
@@ -237,7 +278,7 @@ export function parseToEnrichedAST(
   let tokens: Token[];
   try {
     tokens = Lexer.lex(md);
-  } catch (err) {
+  } catch {
     warnings.push('Failed to lex markdown');
     return {
       blocks: [{ type: 'paragraph', raw: md }],
@@ -259,7 +300,7 @@ export function parseToEnrichedAST(
 
 export function buildHierarchy(
   blocks: EnrichedBlock[],
-  state?: { figureCount: number; tableCount: number; diagramCount: number; codeCount: number },
+  _state?: { figureCount: number; tableCount: number; diagramCount: number; codeCount: number },
 ): ContentHierarchy {
   const toc: HeadingNode[] = [];
   const stack: HeadingNode[] = [];
@@ -268,14 +309,13 @@ export function buildHierarchy(
   const diagrams: NumberedItem[] = [];
   const codeBlocks: NumberedItem[] = [];
 
-  let figNum = 0;
   let tableNum = 0;
   let diagNum = 0;
   let codeNum = 0;
 
   for (const block of blocks) {
     if (block.type === 'heading' && block.level) {
-      const text = (block.raw.replace(/^#+\s*/, '').trim()) || '';
+      const text = block.raw.replace(/^#+\s*/, '').trim() || '';
       const node: HeadingNode = {
         level: block.level,
         text,
@@ -297,7 +337,7 @@ export function buildHierarchy(
 
     if (block.type === 'diagram' && block.data && 'kind' in block.data) {
       diagNum++;
-      const diagramData = block.data as any;
+      const diagramData = block.data as DiagramElement;
       diagrams.push({
         type: 'diagram',
         number: diagNum,
@@ -346,11 +386,14 @@ function assignNumbers(nodes: HeadingNode[], prefix = ''): void {
   }
 }
 
-export function applyNumberingToBlocks(blocks: EnrichedBlock[], hierarchy: ContentHierarchy): EnrichedBlock[] {
+export function applyNumberingToBlocks(
+  blocks: EnrichedBlock[],
+  hierarchy: ContentHierarchy,
+): EnrichedBlock[] {
   const headingMap = new Map<string, string>();
   flattenHeadings(hierarchy.toc, headingMap);
 
-  return blocks.map(block => {
+  return blocks.map((block) => {
     if (block.type === 'heading' && block.id && headingMap.has(block.id)) {
       return { ...block, number: headingMap.get(block.id) };
     }
@@ -383,7 +426,7 @@ export function serializeEnrichedBlock(block: EnrichedBlock): string {
       return block.raw.trim();
     case 'callout': {
       if (block.data && 'kind' in block.data) {
-        const d = block.data as any;
+        const d = block.data as CalloutElement;
         const title = d.title ? ` ${d.title}` : '';
         return `[!${d.kind.toUpperCase()}]${title}\n${d.content}`;
       }
@@ -391,7 +434,7 @@ export function serializeEnrichedBlock(block: EnrichedBlock): string {
     }
     case 'diagram': {
       if (block.data && 'kind' in block.data) {
-        const d = block.data as any;
+        const d = block.data as DiagramElement;
         const lang = d.kind === 'plantuml' ? 'plantuml' : 'mermaid';
         return `\`\`\`${lang}\n${d.content}\n\`\`\``;
       }
@@ -412,4 +455,11 @@ export function serializeEnrichedBlock(block: EnrichedBlock): string {
 
 export function serializeEnrichedDocument(blocks: EnrichedBlock[]): string {
   return blocks.map(serializeEnrichedBlock).join('\n\n');
+}
+
+export function stripNotchMarkers(markdown: string): string {
+  return markdown
+    .replace(/<!-- NOTCH-ANALYSIS -->[\s\S]*?<!-- \/NOTCH-ANALYSIS -->\n*/g, '')
+    .replace(/<!-- NOTCH-DIAGRAMS -->[\s\S]*?<!-- \/NOTCH-DIAGRAMS -->\n*/g, '')
+    .replace(/<!-- NOTCH-IMAGES -->[\s\S]*?<!-- \/NOTCH-IMAGES -->\n*/g, '');
 }

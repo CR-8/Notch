@@ -1,9 +1,43 @@
-import type { DocumentChunk } from './types';
-
 const STOP_WORDS = new Set([
-  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he', 'in', 'is', 'it',
-  'its', 'of', 'on', 'or', 'that', 'the', 'their', 'this', 'to', 'was', 'were', 'will', 'with',
-  'what', 'when', 'where', 'which', 'who', 'why', 'how', 'can', 'could', 'should', 'would',
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'by',
+  'for',
+  'from',
+  'has',
+  'he',
+  'in',
+  'is',
+  'it',
+  'its',
+  'of',
+  'on',
+  'or',
+  'that',
+  'the',
+  'their',
+  'this',
+  'to',
+  'was',
+  'were',
+  'will',
+  'with',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'why',
+  'how',
+  'can',
+  'could',
+  'should',
+  'would',
 ]);
 
 function normalizeToken(token: string): string {
@@ -84,7 +118,7 @@ export function rankChunksByKeywords(
       text: chunk.text,
       paragraphIndex: chunk.paragraphIndex,
       score: keywordScore + sourceBoost,
-      source: (chunk.source ?? 'document') as 'document' | 'history',
+      source: chunk.source ?? 'document',
     };
   });
 
@@ -170,9 +204,12 @@ export function buildOfflineCaptureMarkdown(title: string, content: string): str
   const summarySentences = splitSentences(clean).slice(0, 3);
   const summary = summarySentences.join(' ').trim() || clean.slice(0, 450);
   const terms = topTerms(content, 8);
-  const keyPoints = summarySentences.length > 0
-    ? summarySentences.map((sentence) => `- ${sentence}`)
-    : terms.slice(0, 3).map((term) => `- ${term}: key topic mentioned repeatedly in this source.`);
+  const keyPoints =
+    summarySentences.length > 0
+      ? summarySentences.map((sentence) => `- ${sentence}`)
+      : terms
+          .slice(0, 3)
+          .map((term) => `- ${term}: key topic mentioned repeatedly in this source.`);
 
   return [
     `# ${title || 'Imported Document'}`,

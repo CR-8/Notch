@@ -70,9 +70,11 @@ export async function fetchAvailableModels(
 
   const res = await fetch(buildModelsEndpoint(baseUrl), { method: 'GET', headers, signal });
   if (!res.ok) {
-    throw new Error(`Could not load models (HTTP ${res.status}). Check the endpoint URL and API key.`);
+    throw new Error(
+      `Could not load models (HTTP ${res.status}). Check the endpoint URL and API key.`,
+    );
   }
-  const json = await res.json().catch(() => null);
+  const json: unknown = await res.json().catch(() => null);
   const models = parseModelsResponse(json);
   if (models.length === 0) throw new Error('Endpoint returned no models.');
   return models;

@@ -1,110 +1,55 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+@import './tokens.css';
 @plugin "@tailwindcss/typography";
 
-@theme {
-  /* ── Surface palette (Notion warm paper) ─────────────────────────────── */
-  --color-canvas-soft: #f6f5f4;
-  --color-canvas: #ffffff;
-  --color-surface: #ffffff;
-  --color-surface-hover: #f0efee;
-  --color-hairline: #e6e6e6;
+/* ============================================================================
+   Notch global stylesheet — DESIGN.md "Nike editorial" system.
 
-  /* ── Brand accent (Notion Blue — single structural accent) ──────────── */
-  --color-primary: #0075de;
-  --color-primary-active: #005bab;
-  --color-primary-foreground: #ffffff;
-  --color-secondary: #213183;
-  --color-secondary-foreground: #ffffff;
-
-  /* ── Decorative sticker palette (illustration only, never structural) ── */
-  --color-accent-sky: #62aef0;
-  --color-accent-purple: #d6b6f6;
-  --color-accent-purple-deep: #391c57;
-  --color-accent-pink: #ff64c8;
-  --color-accent-orange: #dd5b00;
-  --color-accent-orange-deep: #793400;
-  --color-accent-teal: #2a9d99;
-  --color-accent-green: #1aae39;
-  --color-accent-brown: #523410;
-
-  /* ── Text ramp (near-black on warm paper) ────────────────────────────── */
-  --color-ink: #000000;
-  --color-ink-secondary: #31302e;
-  --color-ink-muted: #615d59;
-  --color-ink-faint: #a39e98;
-
-  /* ── shadcn CSS variable aliases ──────────────────────────────────────── */
-  --color-background: #f6f5f4;
-  --color-foreground: #000000;
-  --color-card: #ffffff;
-  --color-card-foreground: #000000;
-  --color-popover: #ffffff;
-  --color-popover-foreground: #000000;
-  --color-muted: #615d59;
-  --color-muted-foreground: #615d59;
-  --color-accent: #f0efee;
-  --color-accent-foreground: #000000;
-  --color-destructive: #be5b50;
-  --color-destructive-foreground: #ffffff;
-  --color-border: #e6e6e6;
-  --color-input: #e6e6e6;
-  --color-ring: #0075de;
-
-  /* ── Typography ──────────────────────────────────────────────────────── */
-  --font-sans: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
-  --font-mono: "IBM Plex Mono", "SF Mono", "Fira Code", "Cascadia Code", monospace;
-
-  /* ── Border radius scale (Notion: pill CTAs / 8px utility / 4px inputs) ─ */
-  --radius: 8px;
-  --radius-xs: 4px;
-  --radius-sm: 5px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-full: 9999px;
-
-  /* ── Elevation (barely-there layered micro-shadows) ──────────────────── */
-  --shadow-level-0: 0 0 0 1px #e6e6e6;
-  --shadow-level-1:
-    0 0.175px 1.041px rgba(0,0,0,0.01),
-    0 0.8px 2.925px rgba(0,0,0,0.02),
-    0 2.025px 7.847px rgba(0,0,0,0.027),
-    0 4px 18px rgba(0,0,0,0.04);
-  --shadow-level-2:
-    0 0.175px 1.041px rgba(0,0,0,0.02),
-    0 0.8px 2.925px rgba(0,0,0,0.03),
-    0 2.025px 7.847px rgba(0,0,0,0.04),
-    0 4px 18px rgba(0,0,0,0.05),
-    0 23px 52px rgba(0,0,0,0.05);
-
-  /* ── Focus ring (Notion blue) ────────────────────────────────────────── */
-  --focus-ring: 0 0 0 2px #0075de, 0 0 0 5px rgba(0, 117, 222, 0.15);
-
-  /* ── Animations ──────────────────────────────────────────────────────── */
-  --animate-pulse-skeleton: pulse-skeleton 1.5s ease-in-out infinite;
-  --animate-blink: blink 1s step-end infinite;
-  --animate-capture-pulse: capture-pulse 1.5s ease-in-out infinite;
-  --animate-page-enter: page-enter 300ms ease-out both;
-}
+   All design tokens live in ./tokens.css (the single source of truth for the
+   light + dark palettes). This file consumes those tokens for the base layer
+   (typography, links, focus), the `.notion-*` component vocabulary (pill CTAs,
+   flat square cards, hairline dividers), and the reader / content-engine prose.
+   ========================================================================== */
 
 @keyframes pulse-skeleton {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 @keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
 }
 
 @keyframes capture-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 @keyframes page-enter {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── Base layer ──────────────────────────────────────────────────────────── */
@@ -120,7 +65,7 @@
     min-height: 100vh;
     background-color: var(--color-canvas-soft);
     color: var(--color-ink);
-    font-family: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     font-size: 16px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
@@ -133,23 +78,51 @@
     animation: var(--animate-page-enter);
   }
 
-  h1, h2, h3, h4, h5, h6 {
-    font-family: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
-    font-weight: 700;
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-display);
     color: var(--color-ink);
   }
 
-  /* Notion-style heading hierarchy */
-  h1 { font-size: 40px; line-height: 1.1; letter-spacing: -1px; }
-  h2 { font-size: 26px; line-height: 1.23; letter-spacing: -0.625px; }
-  h3 { font-size: 22px; line-height: 1.27; letter-spacing: -0.25px; }
+  /* Nike hierarchy: a heavy uppercase display tier at the top of every page,
+     dropping straight to a quiet medium-weight body — "billboard above,
+     catalog below". Letter-spacing tightened to mimic Futura's optical fit. */
+  h1 {
+    font-size: 40px;
+    font-weight: 800;
+    line-height: 0.95;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+  }
+  h2 {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.005em;
+  }
+  h4,
+  h5,
+  h6 {
+    font-weight: 600;
+  }
 
   a {
-    color: var(--color-primary);
+    color: var(--color-link);
     text-decoration: none;
   }
   a:hover {
     text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   *:focus-visible {
@@ -158,146 +131,158 @@
     border-radius: var(--radius-xs);
   }
 
-  /* Selection color */
+  /* Selection: a soft ink wash rather than a chromatic tint. */
   ::selection {
-    background: rgba(0, 117, 222, 0.15);
+    background: color-mix(in srgb, var(--color-ink) 16%, transparent);
   }
 }
 
 /* ── Component layer ─────────────────────────────────────────────────────── */
 @layer components {
-  /* Notion feature card — white surface, hairline, lg radius */
+  /* Feature card — flat white surface, square (rounded-none), hairline only.
+     No drop shadow, no lift: the Nike system's only depth cue is the hairline. */
   .notion-card {
     background: var(--color-surface);
     border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-none);
     padding: 24px;
-    transition: box-shadow 0.2s, border-color 0.2s;
+    transition: border-color 0.2s;
   }
   .notion-card:hover {
-    border-color: var(--color-primary);
-    box-shadow: var(--shadow-level-1);
+    border-color: var(--color-ink);
   }
 
-  /* Notion raised card — white surface + level-1 shadow */
+  /* Raised card — same flat language; a crisp hairline replaces the lift. */
   .notion-card-elevated {
     background: var(--color-surface);
-    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-none);
     padding: 24px;
-    box-shadow: var(--shadow-level-1);
   }
 
-  /* Notion pill button — primary CTA (pill shape, blue) */
+  /* Primary CTA — the universal ink pill (button-primary). Inverts to a
+     white pill in dark mode via the primary / primary-foreground tokens. */
   .notion-btn-primary {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    font-family: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     font-size: 16px;
     font-weight: 500;
     line-height: 1.5;
-    padding: 10px 24px;
+    padding: 12px 32px;
     border-radius: var(--radius-full);
     background: var(--color-primary);
     color: var(--color-primary-foreground);
     border: none;
     cursor: pointer;
-    transition: background 0.15s, transform 0.1s;
+    transition:
+      background 0.15s,
+      transform 0.1s;
   }
   .notion-btn-primary:hover {
     background: var(--color-primary-active);
   }
+  /* Nike "tap collapse" pressed feedback. */
   .notion-btn-primary:active {
     transform: scale(0.97);
   }
 
-  /* Notion secondary pill — white button with level-1 shadow */
+  /* Secondary CTA — soft-cloud pill, ink label (button-secondary). Flat. */
   .notion-btn-secondary {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    font-family: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     font-size: 16px;
     font-weight: 500;
     line-height: 1.5;
-    padding: 10px 24px;
+    padding: 12px 32px;
     border-radius: var(--radius-full);
-    background: var(--color-surface);
-    color: var(--color-ink);
+    background: var(--color-secondary);
+    color: var(--color-secondary-foreground);
     border: none;
-    box-shadow: var(--shadow-level-1);
     cursor: pointer;
-    transition: box-shadow 0.15s;
+    transition:
+      background 0.15s,
+      transform 0.1s;
   }
   .notion-btn-secondary:hover {
-    box-shadow: var(--shadow-level-2);
+    background: var(--color-surface-hover);
+  }
+  .notion-btn-secondary:active {
+    transform: scale(0.97);
   }
 
-  /* Notion utility button — 8px radius, hairline border */
+  /* Utility button — compact hairline pill (Pill or icon-circular only). */
   .notion-btn-utility {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    font-family: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     font-size: 14px;
     font-weight: 500;
     line-height: 1.5;
-    padding: 4px 14px;
-    border-radius: var(--radius-md);
+    padding: 6px 16px;
+    border-radius: var(--radius-full);
     background: var(--color-surface);
     color: var(--color-ink);
     border: 1px solid var(--color-hairline);
     cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
+    transition:
+      border-color 0.15s,
+      background 0.15s;
   }
   .notion-btn-utility:hover {
-    border-color: var(--color-primary);
+    border-color: var(--color-ink);
     background: var(--color-surface-hover);
   }
 
-  /* Notion badge-pill — eyebrow label, pill shape */
+  /* Badge — promo pill (badge-promo): canvas fill, hairline, ink label. */
   .notion-badge-pill {
     display: inline-flex;
     align-items: center;
-    font-family: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     font-size: 12px;
     font-weight: 600;
     line-height: 1.33;
-    letter-spacing: 0.125px;
-    padding: 4px 8px;
+    letter-spacing: 0.01em;
+    padding: 4px 12px;
     border-radius: var(--radius-full);
     background: var(--color-surface);
-    color: var(--color-primary);
-    border: 1px solid var(--color-primary);
+    color: var(--color-ink);
+    border: 1px solid var(--color-hairline);
   }
 
-  /* Notion text input — 4px radius, tight padding */
+  /* Text input — search-pill chrome: hairline field, ink focus + soft glove. */
   .notion-input {
-    font-family: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     font-size: 15px;
     font-weight: 400;
-    line-height: 1.33;
-    padding: 6px 8px;
-    border-radius: var(--radius-xs);
-    border: 1px solid rgb(221, 221, 221);
+    line-height: 1.4;
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-input);
     background: var(--color-surface);
     color: var(--color-ink);
     width: 100%;
     outline: none;
-    transition: box-shadow 0.15s;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
   }
   .notion-input::placeholder {
     color: var(--color-ink-faint);
   }
   .notion-input:focus {
-    box-shadow: var(--shadow-level-1);
-    border-color: var(--color-primary);
+    border-color: var(--color-ink);
+    box-shadow: 0 0 0 3px var(--color-soft-cloud);
   }
 
-  /* Notion hairline separator */
+  /* Hairline separator — the system's 1px divider. */
   .notion-separator {
     height: 1px;
     background: var(--color-hairline);
@@ -305,41 +290,58 @@
     border: none;
   }
 
-  /* Notion skeleton loader */
+  /* Skeleton loader. */
   .notion-skeleton {
-    background: linear-gradient(90deg, var(--color-hairline) 0%, rgba(0,0,0,0.04) 50%, var(--color-hairline) 100%);
+    background: linear-gradient(
+      90deg,
+      var(--color-hairline) 0%,
+      color-mix(in srgb, var(--color-ink) 4%, transparent) 50%,
+      var(--color-hairline) 100%
+    );
     background-size: 200% 100%;
     animation: var(--animate-pulse-skeleton);
     border-radius: var(--radius-xs);
   }
 
-  /* Notion page header text (display-1 equivalent) */
+  /* ── Type scale utilities ─────────────────────────────────────────────── */
+  /* Display / campaign lockup — uppercase Futura-substitute tier. */
   .notion-display-1 {
     font-size: 40px;
-    font-weight: 700;
-    line-height: 1.1;
-    letter-spacing: -1px;
+    font-weight: 800;
+    line-height: 0.95;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+  }
+
+  /* True campaign hero size for editorial moments. */
+  .display-campaign {
+    font-family: var(--font-display);
+    font-size: clamp(48px, 8vw, 96px);
+    font-weight: 800;
+    line-height: 0.9;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
   }
 
   .notion-heading-2 {
     font-size: 26px;
     font-weight: 700;
-    line-height: 1.23;
-    letter-spacing: -0.625px;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
   }
 
   .notion-heading-3 {
     font-size: 22px;
-    font-weight: 700;
-    line-height: 1.27;
-    letter-spacing: -0.25px;
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.005em;
   }
 
   .notion-title {
     font-size: 20px;
     font-weight: 600;
     line-height: 1.4;
-    letter-spacing: -0.125px;
+    letter-spacing: -0.005em;
   }
 
   .notion-body {
@@ -351,12 +353,12 @@
   .notion-body-sm {
     font-size: 15px;
     font-weight: 400;
-    line-height: 1.33;
+    line-height: 1.4;
   }
 
   .notion-caption {
     font-size: 14px;
-    font-weight: 400;
+    font-weight: 500;
     line-height: 1.43;
     color: var(--color-ink-muted);
   }
@@ -365,7 +367,7 @@
     font-size: 12px;
     font-weight: 600;
     line-height: 1.33;
-    letter-spacing: 0.125px;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
@@ -376,33 +378,33 @@
   }
 
   .blink-cursor::after {
-    content: "|";
+    content: '|';
     color: var(--color-primary);
     animation: var(--animate-blink);
   }
 }
 
-/* ── Prose / Markdown reader — Notion document style ────────────────────── */
+/* ── Prose / Markdown reader — editorial document style ─────────────────── */
 @layer base {
   .notion-prose {
-    --tw-prose-body: #000000;
-    --tw-prose-headings: #000000;
-    --tw-prose-lead: #31302e;
-    --tw-prose-links: #0075de;
-    --tw-prose-bold: #000000;
-    --tw-prose-counters: #615d59;
-    --tw-prose-bullets: #615d59;
-    --tw-prose-hr: #e6e6e6;
-    --tw-prose-quotes: #31302e;
-    --tw-prose-quote-borders: #0075de;
-    --tw-prose-captions: #615d59;
-    --tw-prose-code: #000000;
-    --tw-prose-pre-code: #000000;
-    --tw-prose-pre-bg: #f6f5f4;
-    --tw-prose-th-borders: #e6e6e6;
-    --tw-prose-td-borders: #e6e6e6;
+    --tw-prose-body: var(--color-ink);
+    --tw-prose-headings: var(--color-ink);
+    --tw-prose-lead: var(--color-ink-secondary);
+    --tw-prose-links: var(--color-link);
+    --tw-prose-bold: var(--color-ink);
+    --tw-prose-counters: var(--color-ink-muted);
+    --tw-prose-bullets: var(--color-ink-muted);
+    --tw-prose-hr: var(--color-hairline);
+    --tw-prose-quotes: var(--color-ink-secondary);
+    --tw-prose-quote-borders: var(--color-ink);
+    --tw-prose-captions: var(--color-ink-muted);
+    --tw-prose-code: var(--color-ink);
+    --tw-prose-pre-code: var(--color-ink);
+    --tw-prose-pre-bg: var(--color-soft-cloud);
+    --tw-prose-th-borders: var(--color-hairline);
+    --tw-prose-td-borders: var(--color-hairline);
     max-width: none;
-    font-family: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     font-size: 16px;
     line-height: 1.6;
   }
@@ -411,24 +413,43 @@
   .notion-prose h2,
   .notion-prose h3,
   .notion-prose h4 {
-    font-family: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-family: var(--font-display);
     font-weight: 700;
-    color: #000000;
+    color: var(--color-ink);
+    text-transform: none;
   }
 
-  .notion-prose h1 { font-size: 32px; line-height: 1.15; letter-spacing: -0.75px; margin-top: 2rem; margin-bottom: 1rem; }
-  .notion-prose h2 { font-size: 24px; line-height: 1.25; letter-spacing: -0.5px; margin-top: 1.75rem; margin-bottom: 0.75rem; }
-  .notion-prose h3 { font-size: 20px; line-height: 1.3; letter-spacing: -0.25px; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+  .notion-prose h1 {
+    font-size: 32px;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+  }
+  .notion-prose h2 {
+    font-size: 24px;
+    line-height: 1.25;
+    letter-spacing: -0.015em;
+    margin-top: 1.75rem;
+    margin-bottom: 0.75rem;
+  }
+  .notion-prose h3 {
+    font-size: 20px;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+  }
 
   .notion-prose p,
   .notion-prose li,
   .notion-prose blockquote {
-    color: #000000;
-    font-family: Inter, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
   }
 
   .notion-prose a {
-    color: #0075de;
+    color: var(--color-link);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
@@ -438,34 +459,34 @@
 
   .notion-prose code,
   .notion-prose pre {
-    font-family: "IBM Plex Mono", "SF Mono", "Fira Code", monospace;
+    font-family: var(--font-mono);
     font-size: 0.85em;
   }
 
   .notion-prose pre {
-    background: #f6f5f4 !important;
-    border: 1px solid #e6e6e6;
-    border-radius: 8px;
+    background: var(--color-soft-cloud) !important;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-md);
     padding: 16px;
     overflow-x: auto;
   }
 
   .notion-prose :not(pre) > code {
-    background: #f0efee;
-    border-radius: 4px;
+    background: var(--color-surface-hover);
+    border-radius: var(--radius-xs);
     padding: 0.1em 0.3em;
     font-size: 0.85em;
   }
 
   .notion-prose blockquote {
-    border-left-color: #0075de;
+    border-left-color: var(--color-ink);
     border-left-width: 3px;
-    color: #31302e;
+    color: var(--color-ink-secondary);
     font-style: normal;
   }
 
   .notion-prose hr {
-    border-color: #e6e6e6;
+    border-color: var(--color-hairline);
   }
 
   .notion-prose img {
@@ -473,8 +494,8 @@
     height: auto;
     margin: 1.5rem auto;
     display: block;
-    border-radius: 8px;
-    border: 1px solid #e6e6e6;
+    border-radius: var(--radius-none);
+    border: 1px solid var(--color-hairline);
   }
 
   .notion-prose table {
@@ -485,107 +506,128 @@
   }
 
   .notion-prose th {
-    border: 1px solid #e6e6e6;
+    border: 1px solid var(--color-hairline);
     padding: 8px 12px;
     text-align: left;
     font-weight: 600;
-    background: #f6f5f4;
+    background: var(--color-soft-cloud);
   }
 
   .notion-prose td {
-    border: 1px solid #e6e6e6;
+    border: 1px solid var(--color-hairline);
     padding: 8px 12px;
   }
 
   .notion-prose tr:hover {
-    background: #f0efee;
+    background: var(--color-surface-hover);
   }
 
-  .notion-prose ul,
+  /* ── List markers ──────────────────────────────────────────────────── */
+  .notion-prose ul {
+    list-style-type: disc;
+    padding-left: 1.75rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
   .notion-prose ol {
-    padding-left: 1.5rem;
+    list-style-type: decimal;
+    padding-left: 1.75rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .notion-prose ul ul {
+    list-style-type: circle;
+  }
+  .notion-prose ul ul ul {
+    list-style-type: square;
+  }
+  .notion-prose ol ol {
+    list-style-type: lower-alpha;
+  }
+  .notion-prose li {
+    margin-top: 0.3rem;
+    margin-bottom: 0.3rem;
+    padding-left: 0.25rem;
+    line-height: 1.65;
+  }
+  .notion-prose li::marker {
+    color: var(--color-ink-muted);
+    font-weight: 500;
+  }
+
+  /* ── Paragraph spacing ─────────────────────────────────────────────── */
+  .notion-prose p {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    line-height: 1.75;
+    color: var(--color-ink);
+  }
+  .notion-prose p + p {
+    margin-top: 0.25rem;
+  }
+
+  /* ── Strong / em ───────────────────────────────────────────────────── */
+  .notion-prose strong {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .notion-prose em {
+    color: var(--color-ink-secondary);
+    font-style: italic;
+  }
+
+  /* ── Callout blocks ([!NOTE] / [!WARNING] etc.) ─────────────────────── */
+  .notion-prose .callout {
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    border-radius: var(--radius-none);
+    margin: 1rem 0;
+    border-left: 3px solid var(--callout-accent, var(--color-ink));
+    background: color-mix(in srgb, var(--callout-accent, var(--color-ink)) 8%, transparent);
+  }
+  .notion-prose .callout-icon {
+    font-size: 1rem;
+    line-height: 1.6;
+    flex-shrink: 0;
+  }
+  .notion-prose .callout-content {
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: var(--color-ink-secondary);
+  }
+
+  /* ── Horizontal rule ───────────────────────────────────────────────── */
+  .notion-prose hr {
+    margin: 2rem 0;
+    border: none;
+    border-top: 1px solid var(--color-hairline);
   }
 }
 
-/* ── Dark theme ──────────────────────────────────────────────────────────────
-   A Notion-style "night" palette: dark warm-neutral canvas, light ink ramp,
-   same structural blue. Activated by [data-theme="dark"] on <html>; the light
-   system above is the default. html[...] beats :root specificity cleanly. */
-html[data-theme="dark"] {
-  color-scheme: dark;
+/* ── Dark theme component tweaks ─────────────────────────────────────────────
+   Palette values live in tokens.css; these rules only handle the few places
+   that hard-code literal colors or need a structural override in dark mode. */
 
-  --color-canvas-soft: #191919;
-  --color-canvas: #1f1f1f;
-  --color-surface: #262626;
-  --color-surface-hover: #2f2f2f;
-  --color-hairline: #383838;
-
-  --color-ink: #e9e9e7;
-  --color-ink-secondary: #cfcfcd;
-  --color-ink-muted: #9b9a97;
-  --color-ink-faint: #6f6f6c;
-
-  /* shadcn aliases */
-  --color-background: #191919;
-  --color-foreground: #e9e9e7;
-  --color-card: #262626;
-  --color-card-foreground: #e9e9e7;
-  --color-popover: #262626;
-  --color-popover-foreground: #e9e9e7;
-  --color-muted: #9b9a97;
-  --color-muted-foreground: #9b9a97;
-  --color-accent: #2f2f2f;
-  --color-accent-foreground: #e9e9e7;
-  --color-border: #383838;
-  --color-input: #383838;
-}
-
-/* Hand-coded literal whites flip to the surface token in dark mode.
-   Scoped to dark so light mode is untouched; specificity beats `.bg-white`. */
-html[data-theme="dark"] .bg-white {
+/* Hand-coded literal whites flip to the surface token in dark mode. */
+html[data-theme='dark'] .bg-white {
   background-color: var(--color-surface);
-}
-html[data-theme="dark"] .notion-input,
-html[data-theme="dark"] input.notion-input {
-  border-color: var(--color-hairline);
 }
 
 /* Dark prose for the reader document body. */
-html[data-theme="dark"] .notion-prose {
-  --tw-prose-body: #e9e9e7;
+html[data-theme='dark'] .notion-prose {
   --tw-prose-headings: #ffffff;
-  --tw-prose-lead: #cfcfcd;
-  --tw-prose-links: var(--color-primary);
   --tw-prose-bold: #ffffff;
-  --tw-prose-counters: #9b9a97;
-  --tw-prose-bullets: #9b9a97;
-  --tw-prose-hr: #383838;
-  --tw-prose-quotes: #cfcfcd;
-  --tw-prose-quote-borders: var(--color-primary);
-  --tw-prose-captions: #9b9a97;
-  --tw-prose-code: #e9e9e7;
-  --tw-prose-pre-code: #e9e9e7;
-  --tw-prose-pre-bg: #1f1f1f;
-  --tw-prose-th-borders: #383838;
-  --tw-prose-td-borders: #383838;
 }
-html[data-theme="dark"] .notion-prose h1,
-html[data-theme="dark"] .notion-prose h2,
-html[data-theme="dark"] .notion-prose h3,
-html[data-theme="dark"] .notion-prose h4 { color: #ffffff; }
-html[data-theme="dark"] .notion-prose p,
-html[data-theme="dark"] .notion-prose li { color: #e9e9e7; }
-html[data-theme="dark"] .notion-prose blockquote { color: #cfcfcd; }
-html[data-theme="dark"] .notion-prose pre {
-  background: #1f1f1f !important;
-  border-color: #383838;
+html[data-theme='dark'] .notion-prose h1,
+html[data-theme='dark'] .notion-prose h2,
+html[data-theme='dark'] .notion-prose h3,
+html[data-theme='dark'] .notion-prose h4 {
+  color: #ffffff;
 }
-html[data-theme="dark"] .notion-prose :not(pre) > code { background: #2f2f2f; }
-html[data-theme="dark"] .notion-prose th { background: #1f1f1f; }
-html[data-theme="dark"] .notion-prose td,
-html[data-theme="dark"] .notion-prose th { border-color: #383838; }
-html[data-theme="dark"] .notion-prose tr:hover { background: #2f2f2f; }
-html[data-theme="dark"] .notion-prose img { border-color: #383838; }
+html[data-theme='dark'] .notion-prose strong {
+  color: #ffffff;
+}
 
 /* ── Content Intelligence Engine Styles ───────────────────────────────────── */
 
@@ -594,40 +636,72 @@ html[data-theme="dark"] .notion-prose img { border-color: #383838; }
 .notion-heading-level-2,
 .notion-heading-level-3 {
   scroll-margin-top: 80px;
+  color: var(--color-ink);
 }
-.notion-heading-level-1 { font-size: 32px; line-height: 1.15; letter-spacing: -0.75px; margin-top: 2rem; margin-bottom: 1rem; font-weight: 700; }
-.notion-heading-level-2 { font-size: 24px; line-height: 1.25; letter-spacing: -0.5px; margin-top: 1.75rem; margin-bottom: 0.75rem; font-weight: 700; }
-.notion-heading-level-3 { font-size: 20px; line-height: 1.3; letter-spacing: -0.25px; margin-top: 1.5rem; margin-bottom: 0.5rem; font-weight: 600; }
+.notion-heading-level-1 {
+  font-size: 32px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+  font-weight: 700;
+}
+.notion-heading-level-2 {
+  font-size: 24px;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  margin-top: 1.75rem;
+  margin-bottom: 0.75rem;
+  font-weight: 700;
+}
+.notion-heading-level-3 {
+  font-size: 20px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
 
-/* Callout styles */
+/* Callout styles — semantic accents only */
 [data-callout-kind] {
   animation: page-enter 200ms ease-out both;
 }
-[data-callout-kind="note"] { --callout-accent: var(--color-primary); }
-[data-callout-kind="warning"] { --callout-accent: #dd5b00; }
-[data-callout-kind="tip"] { --callout-accent: #1aae39; }
-[data-callout-kind="danger"] { --callout-accent: #be5b50; }
-[data-callout-kind="info"] { --callout-accent: #62aef0; }
+[data-callout-kind='note'] {
+  --callout-accent: var(--color-info);
+}
+[data-callout-kind='warning'] {
+  --callout-accent: var(--color-accent-orange);
+}
+[data-callout-kind='tip'] {
+  --callout-accent: var(--color-success);
+}
+[data-callout-kind='danger'] {
+  --callout-accent: var(--color-sale);
+}
+[data-callout-kind='info'] {
+  --callout-accent: var(--color-info);
+}
 
 /* Diagram styles */
-[data-diagram-status="loading"] {
+[data-diagram-status='loading'] {
   animation: capture-pulse 1.5s ease-in-out infinite;
 }
-[data-diagram-status="rendered"] svg {
+[data-diagram-status='rendered'] svg {
   max-width: 100%;
   height: auto;
 }
-[data-diagram-kind="mermaid"] svg,
-[data-diagram-kind="plantuml"] svg {
+[data-diagram-kind='mermaid'] svg,
+[data-diagram-kind='plantuml'] svg {
   max-width: 100%;
   height: auto;
 }
 /* Mermaid diagram dark mode inversion */
-html[data-theme="dark"] [data-diagram-kind="mermaid"] svg .label {
-  fill: #e9e9e7 !important;
+html[data-theme='dark'] [data-diagram-kind='mermaid'] svg .label {
+  fill: #f5f5f5 !important;
 }
-html[data-theme="dark"] [data-diagram-kind="plantuml"] svg text {
-  fill: #e9e9e7 !important;
+html[data-theme='dark'] [data-diagram-kind='plantuml'] svg text {
+  fill: #f5f5f5 !important;
 }
 
 /* Rich table styles */
@@ -660,10 +734,10 @@ html[data-theme="dark"] [data-diagram-kind="plantuml"] svg text {
 
 /* Ref links (Figure X, Table X references) */
 .ref-link {
-  color: var(--color-primary);
+  color: var(--color-link);
   cursor: pointer;
   text-decoration: none;
-  border-bottom: 1px dotted var(--color-primary);
+  border-bottom: 1px dotted var(--color-link);
 }
 .ref-link:hover {
   border-bottom-style: solid;
@@ -675,8 +749,6 @@ html[data-theme="dark"] [data-diagram-kind="plantuml"] svg text {
   break-before: page;
 }
 
-/* Notch analysis markers are hidden via JS at render time */
-
 /* Selection tooltip */
 [data-selection-tooltip] {
   pointer-events: auto;
@@ -687,12 +759,14 @@ html[data-theme="dark"] [data-diagram-kind="plantuml"] svg text {
 }
 
 /* ── Dark theme overrides for content engine ────────────────────────────────── */
-html[data-theme="dark"] [data-diagram-kind="mermaid"] {
+html[data-theme='dark'] [data-diagram-kind='mermaid'] {
   background: var(--color-surface) !important;
 }
-html[data-theme="dark"] [data-diagram-kind="plantuml"] {
+html[data-theme='dark'] [data-diagram-kind='plantuml'] {
   background: var(--color-surface) !important;
 }
-html[data-theme="dark"] .notion-heading-level-1,
-html[data-theme="dark"] .notion-heading-level-2,
-html[data-theme="dark"] .notion-heading-level-3 { color: #ffffff; }
+html[data-theme='dark'] .notion-heading-level-1,
+html[data-theme='dark'] .notion-heading-level-2,
+html[data-theme='dark'] .notion-heading-level-3 {
+  color: #ffffff;
+}

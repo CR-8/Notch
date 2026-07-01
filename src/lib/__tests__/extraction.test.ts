@@ -4,7 +4,6 @@ import {
   extractConcepts,
   extractTimeline,
   extractRelationships,
-  detectDocumentType,
   estimateComplexity,
   extractTopics,
   extractKnowledge,
@@ -51,7 +50,7 @@ describe('extractConcepts', () => {
       Boosting is a sequential ensemble technique.
     `;
     const concepts = extractConcepts(text);
-    const terms = concepts.map(c => c.concept);
+    const terms = concepts.map((c) => c.concept);
     // Should capture real concepts
     expect(terms).toContain('Bagging');
     expect(terms).toContain('Boosting');
@@ -75,13 +74,14 @@ describe('extractRelationships', () => {
   it('links entities that co-occur with a relation verb', () => {
     const entities = extractEntities(DEVOPS);
     const rels = extractRelationships(DEVOPS, entities);
-    expect(rels.some((r) => r.relation === 'manages' || r.relation === 'integrates-with')).toBe(true);
+    expect(rels.some((r) => r.relation === 'manages' || r.relation === 'integrates-with')).toBe(
+      true,
+    );
   });
 });
 
-describe('classification', () => {
-  it('detects document type and a bounded complexity score', () => {
-    expect(typeof detectDocumentType(DEVOPS)).toBe('string');
+describe('complexity', () => {
+  it('returns a bounded complexity score', () => {
     const c = estimateComplexity(DEVOPS);
     expect(c).toBeGreaterThanOrEqual(0);
     expect(c).toBeLessThanOrEqual(100);
@@ -92,16 +92,38 @@ describe('extractTopics', () => {
   it('produces noun-phrase topics not sentence fragments', () => {
     const topics = extractTopics(
       [
-        { name: 'Machine Learning', type: 'concept', mentions: 5, description: '', paragraphIndex: 0 },
-        { name: 'Ensemble Learning', type: 'concept', mentions: 3, description: '', paragraphIndex: 0 },
-        { name: 'Random Forest', type: 'technology', mentions: 4, description: '', paragraphIndex: 0 },
-        { name: 'Docker', type: 'technology', mentions: 2, description: '', paragraphIndex: 0 },
+        {
+          name: 'Machine Learning',
+          type: 'concept',
+          mentions: 5,
+          description: '',
+          confidence: 0.9,
+        },
+        {
+          name: 'Ensemble Learning',
+          type: 'concept',
+          mentions: 3,
+          description: '',
+          confidence: 0.8,
+        },
+        {
+          name: 'Random Forest',
+          type: 'technology',
+          mentions: 4,
+          description: '',
+          confidence: 0.85,
+        },
+        { name: 'Docker', type: 'technology', mentions: 2, description: '', confidence: 0.75 },
       ],
       [
-        { concept: 'Machine Learning', definition: 'A method of data analysis', paragraphIndex: 0 },
-        { concept: 'Bagging', definition: 'Bootstrap aggregating', paragraphIndex: 0 },
-        { concept: 'One Major Drawback', definition: 'A drawback is that...', paragraphIndex: 0 },
-        { concept: 'Another Critical Implication', definition: 'An implication is...', paragraphIndex: 0 },
+        { concept: 'Machine Learning', definition: 'A method of data analysis', confidence: 0.9 },
+        { concept: 'Bagging', definition: 'Bootstrap aggregating', confidence: 0.8 },
+        { concept: 'One Major Drawback', definition: 'A drawback is that...', confidence: 0.2 },
+        {
+          concept: 'Another Critical Implication',
+          definition: 'An implication is...',
+          confidence: 0.15,
+        },
       ],
     );
     expect(topics).toContain('Machine Learning');
@@ -125,8 +147,13 @@ describe('extractKnowledge', () => {
     expect(k.entities.length).toBeGreaterThan(0);
     expect(k.timeline.length).toBeGreaterThan(0);
     expect(k.topics.length).toBeGreaterThan(0);
+    // Confidence and provenance fields are populated (Phase B)
+    expect(k.entities[0].confidence).toBeGreaterThan(0);
+    expect(k.timeline[0].confidence).toBeGreaterThan(0);
+    expect(k.timeline[0].source).toBeDefined();
+    expect(k.concepts[0].confidence).toBeGreaterThan(0);
     // Topics should be clean noun phrases
-    k.topics.forEach(t => {
+    k.topics.forEach((t) => {
       expect(t.split(/\s+/)[0].toLowerCase()).not.toBe('one');
       expect(t.split(/\s+/)[0].toLowerCase()).not.toBe('another');
       expect(t.split(/\s+/)[0].toLowerCase()).not.toBe('a');

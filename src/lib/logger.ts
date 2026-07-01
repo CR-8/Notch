@@ -12,17 +12,17 @@
  */
 
 // ─── MASTER SWITCH ────────────────────────────────────────────────────────────
-// Set to false before shipping to production. One change, all logging stops.
-const LOGGING_ENABLED = true;
+// Auto-disabled in production builds. Override via env var for debugging.
+const LOGGING_ENABLED = process.env.NODE_ENV !== 'production';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type LogLevel = 'info' | 'success' | 'warn' | 'error';
 
 interface LogEntry {
-  ts: string;          // ISO timestamp
+  ts: string; // ISO timestamp
   level: LogLevel;
-  module: string;      // e.g. 'background', 'ai-client', 'storage'
+  module: string; // e.g. 'background', 'ai-client', 'storage'
   message: string;
   data?: unknown;
 }
@@ -30,18 +30,48 @@ interface LogEntry {
 // ─── Styles (console group colours) ──────────────────────────────────────────
 
 const STYLES: Record<LogLevel, string> = {
-  info:    'color:#5E6AD2;font-weight:600',   // violet
-  success: 'color:#22c55e;font-weight:600',   // green
-  warn:    'color:#f59e0b;font-weight:600',   // amber
-  error:   'color:#FF3366;font-weight:600',   // danger red
+  info: 'color:#5E6AD2;font-weight:600', // violet
+  success: 'color:#22c55e;font-weight:600', // green
+  warn: 'color:#f59e0b;font-weight:600', // amber
+  error: 'color:#FF3366;font-weight:600', // danger red
 };
 
 const ICONS: Record<LogLevel, string> = {
-  info:    'ℹ',
+  info: 'ℹ',
   success: '✓',
-  warn:    '⚠',
-  error:   '✗',
+  warn: '⚠',
+  error: '✗',
 };
+
+// ─── PRIV-7: API key redaction ────────────────────────────────────────────────
+// Patterns that look like API keys / bearer tokens — redacted before logging.
+const KEY_PATTERNS: RegExp[] = [
+  /sk-ant-[A-Za-z0-9\-_]{20,}/g, // Anthropic
+  /sk-[A-Za-z0-9]{20,}/g, // OpenAI-style
+  /eyJ[A-Za-z0-9\-_.+/]{30,}/g, // JWT / bearer
+  /Bearer\s+[A-Za-z0-9\-_.+/]{20,}/gi, // Authorization header
+  /(?<=["\s=:,])([A-Za-z0-9_-]{32,})/g, // Generic long random strings in key position
+];
+
+function redact(value: string): string {
+  let s = value;
+  for (const pat of KEY_PATTERNS) {
+    s = s.replace(pat, '[REDACTED]');
+  }
+  return s;
+}
+
+function redactData(data: unknown): unknown {
+  if (data === undefined || data === null) return data;
+  if (data instanceof Error) return data; // don't mangle Error objects
+  try {
+    const json = JSON.stringify(data);
+    const clean = redact(json);
+    return JSON.parse(clean);
+  } catch {
+    return data;
+  }
+}
 
 // ─── In-memory log buffer (last 200 entries) ──────────────────────────────────
 
@@ -53,8 +83,8 @@ function record(level: LogLevel, module: string, message: string, data?: unknown
     ts: new Date().toISOString(),
     level,
     module,
-    message,
-    data,
+    message: redact(message),
+    data: redactData(data),
   };
 
   _buffer.push(entry);
@@ -126,12 +156,14 @@ export const log = {
    * Useful for inspecting recent activity even when LOGGING_ENABLED = false.
    */
   dump() {
-    console.table(_buffer.map(e => ({
-      time: e.ts.slice(11, 23),
-      level: e.level,
-      module: e.module,
-      message: e.message,
-    })));
+    console.table(
+      _buffer.map((e) => ({
+        time: e.ts.slice(11, 23),
+        level: e.level,
+        module: e.module,
+        message: e.message,
+      })),
+    );
   },
 
   /** Returns a copy of the current log buffer */

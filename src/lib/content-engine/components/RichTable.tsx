@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { RichTableElement } from '../types';
 import { InlineMarkdown } from './InlineMarkdown';
-import { inlineToPlainText } from '../inline-md';
+import { inlineToPlainText } from '../../markdown/inline-md';
 
 interface RichTableProps {
   data: RichTableElement;
@@ -19,8 +19,8 @@ export function RichTable({ data, number }: RichTableProps) {
     // Filter — compare against plain text so markdown markers don't interfere.
     if (filterText) {
       const lower = filterText.toLowerCase();
-      rows = rows.filter(row =>
-        row.some(cell => inlineToPlainText(cell).toLowerCase().includes(lower)),
+      rows = rows.filter((row) =>
+        row.some((cell) => inlineToPlainText(cell).toLowerCase().includes(lower)),
       );
     }
 
@@ -39,7 +39,7 @@ export function RichTable({ data, number }: RichTableProps) {
 
   function toggleSort(colIndex: number) {
     if (sortColumn === colIndex) {
-      setSortAsc(v => !v);
+      setSortAsc((v) => !v);
     } else {
       setSortColumn(colIndex);
       setSortAsc(true);
@@ -50,7 +50,8 @@ export function RichTable({ data, number }: RichTableProps) {
     <div className="my-6" data-table-id={data.caption}>
       {data.caption && (
         <p className="text-[13px] text-[var(--color-ink-muted)] mb-2 font-medium">
-          {number ? `Table ${number}: ` : ''}<InlineMarkdown text={data.caption} />
+          {number ? `Table ${number}: ` : ''}
+          <InlineMarkdown text={data.caption} />
         </p>
       )}
 
@@ -60,7 +61,7 @@ export function RichTable({ data, number }: RichTableProps) {
             type="text"
             placeholder="Filter table..."
             value={filterText}
-            onChange={e => setFilterText(e.target.value)}
+            onChange={(e) => setFilterText(e.target.value)}
             className="notion-input text-[12px] w-full max-w-[240px]"
           />
         </div>
@@ -74,7 +75,9 @@ export function RichTable({ data, number }: RichTableProps) {
                 <th
                   key={i}
                   className={`px-4 py-2.5 text-[12px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide border-b border-[var(--color-hairline)] ${
-                    data.sortable ? 'cursor-pointer hover:bg-[var(--color-surface-hover)] select-none' : ''
+                    data.sortable
+                      ? 'cursor-pointer hover:bg-[var(--color-surface-hover)] select-none'
+                      : ''
                   }`}
                   style={{ textAlign: col.align }}
                   onClick={() => data.sortable && toggleSort(i)}

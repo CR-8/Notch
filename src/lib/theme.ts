@@ -11,11 +11,35 @@ export const APPEARANCE_STORAGE_KEY = 'notch:appearance';
 
 export function resolveTheme(theme: AppearanceSettings['theme']): ResolvedTheme {
   if (theme === 'system') {
-    return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches
+    return typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-color-scheme: dark)').matches
       ? 'dark'
       : 'light';
   }
   return theme;
+}
+
+/**
+ * Ink / black is treated as "monochrome" — the design system's default. In
+ * that case we leave `--accent-user` unset so the adaptive primary token
+ * (ink in light, cloud in dark, defined in tokens.css) drives the chrome and
+ * the primary pill inverts correctly per theme. Any other colour is an opt-in
+ * user accent that applies in both modes.
+ */
+function isMonochromeAccent(accent: string | undefined): boolean {
+  const c = accent?.trim().toLowerCase();
+  return (
+    !c ||
+    c === 'auto' ||
+    c === '#111111' ||
+    c === '#111' ||
+    c === '#000000' ||
+    c === '#000' ||
+    // Legacy default (Notion blue) — never an explicit choice, so let the
+    // monochrome ink system show through for upgrading installs.
+    c === '#0075de' ||
+    c === '#005bab'
+  );
 }
 
 /** Apply theme + accent to <html>/<body>. Returns the resolved theme. */
@@ -24,7 +48,11 @@ export function applyAppearance(a: AppearanceSettings): ResolvedTheme {
   if (typeof document !== 'undefined') {
     document.documentElement.dataset.theme = resolved;
     if (document.body) document.body.dataset.theme = resolved;
-    document.documentElement.style.setProperty('--color-primary', a.accentColor);
+    if (isMonochromeAccent(a.accentColor)) {
+      document.documentElement.style.removeProperty('--accent-user');
+    } else {
+      document.documentElement.style.setProperty('--accent-user', a.accentColor);
+    }
   }
   return resolved;
 }
@@ -36,7 +64,9 @@ export function applyAppearance(a: AppearanceSettings): ResolvedTheme {
  */
 type ChangeListener = (changes: Record<string, { newValue?: unknown }>, area: string) => void;
 interface StorageEventApi {
-  storage?: { onChanged?: { addListener(cb: ChangeListener): void; removeListener(cb: ChangeListener): void } };
+  storage?: {
+    onChanged?: { addListener(cb: ChangeListener): void; removeListener(cb: ChangeListener): void };
+  };
 }
 
 export function watchAppearance(onChange: (a: AppearanceSettings) => void): () => void {

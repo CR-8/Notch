@@ -1,4 +1,4 @@
-import type { ContentHierarchy, HeadingNode, NumberedItem, EnrichedBlock } from './types';
+import type { ContentHierarchy, HeadingNode, EnrichedBlock } from './types';
 
 export interface TOCItem {
   level: number;
@@ -10,7 +10,7 @@ export interface TOCItem {
 
 export function buildTOC(hierarchy: ContentHierarchy): TOCItem[] {
   function mapNodes(nodes: HeadingNode[]): TOCItem[] {
-    return nodes.map(n => ({
+    return nodes.map((n) => ({
       level: n.level,
       number: n.number,
       text: n.text,
@@ -48,12 +48,19 @@ export function generateTOCMarkdown(hierarchy: ContentHierarchy): string {
   return lines.join('\n');
 }
 
-export function generateFigureReference(type: 'figure' | 'table' | 'diagram' | 'code', num: number, id: string): string {
+export function generateFigureReference(
+  type: 'figure' | 'table' | 'diagram' | 'code',
+  num: number,
+  id: string,
+): string {
   const labels = { figure: 'Figure', table: 'Table', diagram: 'Diagram', code: 'Listing' };
   return `<span class="ref-link" data-ref="${id}">${labels[type]} ${num}</span>`;
 }
 
-export function findNearestHeading(blocks: EnrichedBlock[], index: number): { text: string; number: string } | null {
+export function findNearestHeading(
+  blocks: EnrichedBlock[],
+  index: number,
+): { text: string; number: string } | null {
   for (let i = index; i >= 0; i--) {
     const b = blocks[i];
     if (b.type === 'heading') {
