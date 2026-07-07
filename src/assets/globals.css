@@ -1,14 +1,17 @@
 @import 'tailwindcss';
 @import './tokens.css';
+
+@custom-variant dark (&:is(html[data-theme='dark'] *));
 @plugin "@tailwindcss/typography";
 
 /* ============================================================================
-   Notch global stylesheet — DESIGN.md "Nike editorial" system.
+   Notch global stylesheet — Notion × Apple system.
 
    All design tokens live in ./tokens.css (the single source of truth for the
    light + dark palettes). This file consumes those tokens for the base layer
-   (typography, links, focus), the `.notion-*` component vocabulary (pill CTAs,
-   flat square cards, hairline dividers), and the reader / content-engine prose.
+   (typography, links, focus), the `.notion-*` component vocabulary (blue pill
+   CTAs, 12px hairline cards, barely-there layered shadows), and the reader /
+   content-engine prose.
    ========================================================================== */
 
 @keyframes pulse-skeleton {
@@ -88,32 +91,32 @@
     color: var(--color-ink);
   }
 
-  /* Nike hierarchy: a heavy uppercase display tier at the top of every page,
-     dropping straight to a quiet medium-weight body — "billboard above,
-     catalog below". Letter-spacing tightened to mimic Futura's optical fit. */
+  /* Notion hierarchy: heavy 700 headlines with aggressive negative tracking
+     (more negative the larger the size) over a calm 400 body — headlines feel
+     set, not stretched. Sentence case throughout; no uppercase display tier. */
   h1 {
     font-size: 40px;
-    font-weight: 800;
-    line-height: 0.95;
-    letter-spacing: -0.02em;
-    text-transform: uppercase;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.025em;
   }
   h2 {
     font-size: 26px;
     font-weight: 700;
-    line-height: 1.2;
-    letter-spacing: -0.01em;
+    line-height: 1.23;
+    letter-spacing: -0.024em;
   }
   h3 {
     font-size: 22px;
-    font-weight: 600;
-    line-height: 1.25;
-    letter-spacing: -0.005em;
+    font-weight: 700;
+    line-height: 1.27;
+    letter-spacing: -0.011em;
   }
   h4,
   h5,
   h6 {
     font-weight: 600;
+    letter-spacing: -0.006em;
   }
 
   a {
@@ -131,37 +134,39 @@
     border-radius: var(--radius-xs);
   }
 
-  /* Selection: a soft ink wash rather than a chromatic tint. */
+  /* Selection: a soft wash of the one structural blue. */
   ::selection {
-    background: color-mix(in srgb, var(--color-ink) 16%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 18%, transparent);
   }
 }
 
 /* ── Component layer ─────────────────────────────────────────────────────── */
 @layer components {
-  /* Feature card — flat white surface, square (rounded-none), hairline only.
-     No drop shadow, no lift: the Nike system's only depth cue is the hairline. */
+  /* Feature card — white surface, friendly 12px corners, hairline edge.
+     Default elevation is flat; hover lifts with the barely-there shadow. */
   .notion-card {
     background: var(--color-surface);
     border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-none);
+    border-radius: var(--radius-lg);
     padding: 24px;
-    transition: border-color 0.2s;
+    transition:
+      box-shadow 0.2s,
+      border-color 0.2s;
   }
   .notion-card:hover {
-    border-color: var(--color-ink);
+    box-shadow: var(--shadow-level-1);
   }
 
-  /* Raised card — same flat language; a crisp hairline replaces the lift. */
+  /* Raised card — same chrome, carried by the soft layered shadow. */
   .notion-card-elevated {
     background: var(--color-surface);
     border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-none);
+    border-radius: var(--radius-lg);
     padding: 24px;
+    box-shadow: var(--shadow-level-1);
   }
 
-  /* Primary CTA — the universal ink pill (button-primary). Inverts to a
-     white pill in dark mode via the primary / primary-foreground tokens. */
+  /* Primary CTA — the single blue pill on any page (button-primary). */
   .notion-btn-primary {
     display: inline-flex;
     align-items: center;
@@ -184,12 +189,12 @@
   .notion-btn-primary:hover {
     background: var(--color-primary-active);
   }
-  /* Nike "tap collapse" pressed feedback. */
+  /* Apple's system-wide press micro-interaction. */
   .notion-btn-primary:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
-  /* Secondary CTA — soft-cloud pill, ink label (button-secondary). Flat. */
+  /* Secondary CTA — white pill, ink label, carried by the soft shadow. */
   .notion-btn-secondary {
     display: inline-flex;
     align-items: center;
@@ -203,7 +208,8 @@
     border-radius: var(--radius-full);
     background: var(--color-secondary);
     color: var(--color-secondary-foreground);
-    border: none;
+    border: 1px solid var(--color-hairline);
+    box-shadow: var(--shadow-level-1);
     cursor: pointer;
     transition:
       background 0.15s,
@@ -213,10 +219,10 @@
     background: var(--color-surface-hover);
   }
   .notion-btn-secondary:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
-  /* Utility button — compact hairline pill (Pill or icon-circular only). */
+  /* Utility button — compact 8px rect (nav / plan-select), never a pill. */
   .notion-btn-utility {
     display: inline-flex;
     align-items: center;
@@ -226,22 +232,26 @@
     font-size: 14px;
     font-weight: 500;
     line-height: 1.5;
-    padding: 6px 16px;
-    border-radius: var(--radius-full);
+    padding: 5px 14px;
+    border-radius: var(--radius-md);
     background: var(--color-surface);
     color: var(--color-ink);
     border: 1px solid var(--color-hairline);
     cursor: pointer;
     transition:
       border-color 0.15s,
-      background 0.15s;
+      background 0.15s,
+      transform 0.1s;
   }
   .notion-btn-utility:hover {
-    border-color: var(--color-ink);
+    border-color: var(--color-ink-faint);
     background: var(--color-surface-hover);
   }
+  .notion-btn-utility:active {
+    transform: scale(0.96);
+  }
 
-  /* Badge — promo pill (badge-promo): canvas fill, hairline, ink label. */
+  /* Badge — eyebrow pill: white fill, hairline, the one blue as label. */
   .notion-badge-pill {
     display: inline-flex;
     align-items: center;
@@ -253,18 +263,19 @@
     padding: 4px 12px;
     border-radius: var(--radius-full);
     background: var(--color-surface);
-    color: var(--color-ink);
+    color: var(--color-primary);
     border: 1px solid var(--color-hairline);
   }
 
-  /* Text input — search-pill chrome: hairline field, ink focus + soft glove. */
+  /* Text input — tight 4px corners (deliberately tighter than pill CTAs);
+     focus signals with the structural blue. */
   .notion-input {
     font-family: var(--font-sans);
     font-size: 15px;
     font-weight: 400;
     line-height: 1.4;
     padding: 8px 12px;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-xs);
     border: 1px solid var(--color-input);
     background: var(--color-surface);
     color: var(--color-ink);
@@ -278,8 +289,8 @@
     color: var(--color-ink-faint);
   }
   .notion-input:focus {
-    border-color: var(--color-ink);
-    box-shadow: 0 0 0 3px var(--color-soft-cloud);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 15%, transparent);
   }
 
   /* Hairline separator — the system's 1px divider. */
@@ -304,37 +315,35 @@
   }
 
   /* ── Type scale utilities ─────────────────────────────────────────────── */
-  /* Display / campaign lockup — uppercase Futura-substitute tier. */
+  /* Display tier — heavy 700 with the tight negative tracking. */
   .notion-display-1 {
     font-size: 40px;
-    font-weight: 800;
-    line-height: 0.95;
-    letter-spacing: -0.02em;
-    text-transform: uppercase;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.025em;
   }
 
-  /* True campaign hero size for editorial moments. */
+  /* Hero display for editorial moments (welcome page). */
   .display-campaign {
     font-family: var(--font-display);
-    font-size: clamp(48px, 8vw, 96px);
-    font-weight: 800;
-    line-height: 0.9;
-    letter-spacing: -0.02em;
-    text-transform: uppercase;
+    font-size: clamp(40px, 6vw, 64px);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.033em;
   }
 
   .notion-heading-2 {
     font-size: 26px;
     font-weight: 700;
-    line-height: 1.2;
-    letter-spacing: -0.01em;
+    line-height: 1.23;
+    letter-spacing: -0.024em;
   }
 
   .notion-heading-3 {
     font-size: 22px;
-    font-weight: 600;
-    line-height: 1.25;
-    letter-spacing: -0.005em;
+    font-weight: 700;
+    line-height: 1.27;
+    letter-spacing: -0.011em;
   }
 
   .notion-title {
@@ -682,6 +691,18 @@ html[data-theme='dark'] .notion-prose strong {
 [data-callout-kind='info'] {
   --callout-accent: var(--color-info);
 }
+[data-callout-kind='important'] {
+  --callout-accent: #e11d48;
+}
+[data-callout-kind='caution'] {
+  --callout-accent: #f59e0b;
+}
+[data-callout-kind='success'] {
+  --callout-accent: #22c55e;
+}
+[data-callout-kind='question'] {
+  --callout-accent: #8b5cf6;
+}
 
 /* Diagram styles */
 [data-diagram-status='loading'] {
@@ -770,3 +791,37 @@ html[data-theme='dark'] .notion-heading-level-2,
 html[data-theme='dark'] .notion-heading-level-3 {
   color: #ffffff;
 }
+
+/* Sidebar palette lives in tokens.css (`--color-sidebar-*`) so the floating
+   sidebar re-themes with the rest of the light/dark system. The shadcn
+   sidebar component also reads `--sidebar` / `--sidebar-*` directly in a few
+   inline styles, so alias them to the tokens here. */
+@theme inline {
+  --color-sidebar: var(--color-sidebar-bg);
+  --color-sidebar-foreground: var(--color-sidebar-foreground);
+  --color-sidebar-primary: var(--color-sidebar-primary);
+  --color-sidebar-primary-foreground: var(--color-sidebar-primary-foreground);
+  --color-sidebar-accent: var(--color-sidebar-accent);
+  --color-sidebar-accent-foreground: var(--color-sidebar-accent-foreground);
+  --color-sidebar-border: var(--color-sidebar-border);
+  --color-sidebar-ring: var(--color-sidebar-ring);
+}
+
+:root,
+html[data-theme='dark'] {
+  --sidebar: var(--color-sidebar-bg);
+  --sidebar-foreground: var(--color-sidebar-foreground);
+  --sidebar-primary: var(--color-sidebar-primary);
+  --sidebar-primary-foreground: var(--color-sidebar-primary-foreground);
+  --sidebar-accent: var(--color-sidebar-accent);
+  --sidebar-accent-foreground: var(--color-sidebar-accent-foreground);
+  --sidebar-border: var(--color-sidebar-border);
+  --sidebar-ring: var(--color-sidebar-ring);
+}
+/* Floating sidebar content offset — the sidebar panel uses `fixed` positioning
+   so SidebarInset needs padding on the side the sidebar sits on so content
+   doesn't flow underneath. Using `peer` / `group` + data-* selectors does
+   NOT work here because the data-* attrs live on the inner fixed panel, not
+   on the direct peer child of SidebarProvider. Instead we handle this via
+   `style` on the SidebarInset element itself (see App.tsx where we read the
+   sidebar state and set the padding dynamically). */

@@ -151,6 +151,8 @@ export interface DOMExtraction {
   }>;
   wordCount: number;
   metaDescription: string;
+  /** Number of heading elements (h1–h6) on the page — used by the popup page card */
+  headingCount?: number;
   /** CAP-7: set when the page appears to be paywalled or unreadable */
   isPaywalled?: boolean;
   /** CAP-7: signal that triggered paywall detection */
@@ -317,6 +319,7 @@ export type RuntimeMessage =
       payload: { documentId: string; query: string; readingLevel?: ReadingLevel };
     }
   | { type: 'RAG_RESPONSE'; payload: { answer: string; citations: Citation[] } }
+  | { type: 'RAG_CHUNK'; payload: { chunk: string; documentId: string } }
   | { type: 'RAG_ERROR'; payload: { error: string } }
   | { type: 'GENERATE_EMBEDDINGS'; payload: { documentId: string } }
   | { type: 'IMPORT_PDF'; payload: { fileName: string; bytes: number[]; tags: string[] } }
@@ -329,17 +332,4 @@ export type RuntimeMessage =
   | { type: 'TEST_CONNECTION'; payload: { providerId: string } }
   | { type: 'TEST_CONNECTION_RESULT'; payload: { providerId: string; result: TestResult } }
   | { type: 'RE_EMBED_ALL'; payload: { providerId: string; model: string } }
-  | { type: 'RE_EMBED_PROGRESS'; payload: { done: number; total: number } }
-  // MODEL-1..7: on-device model management
-  | { type: 'MODEL_DOWNLOAD_START'; payload: { modelId: string } }
-  | { type: 'MODEL_DOWNLOAD_PROGRESS'; payload: { modelId: string; pct: number } }
-  | { type: 'MODEL_DOWNLOAD_COMPLETE'; payload: { modelId: string } }
-  | { type: 'MODEL_DOWNLOAD_ERROR'; payload: { modelId: string; error: string } }
-  | { type: 'MODEL_SET_EMBEDDING'; payload: { modelId: string } }
-  | { type: 'MODEL_SET_CHAT'; payload: { modelId: string } }
-  | { type: 'MODEL_ENABLE_ON_DEVICE'; payload: { enabled: boolean } }
-  // TTS — text-to-speech
-  | { type: 'TTS_SPEAK'; payload: { text: string } }
-  | { type: 'TTS_RESULT'; payload: { audioBase64: string; sampleRate: number } }
-  | { type: 'TTS_ERROR'; payload: { error: string } }
-  | { type: 'TTS_STOP'; payload: Record<string, never> };
+  | { type: 'RE_EMBED_PROGRESS'; payload: { done: number; total: number } };

@@ -54,4 +54,44 @@ export default tsPlugin.config(
 
   // Prettier (must be last to override formatting rules)
   prettierConfig,
+
+  // Document system uses loose typing patterns — suppress no-unsafe-*
+  {
+    files: ['src/document-system/**', 'src/**/*.test.ts', 'src/**/*.spec.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+    },
+  },
+
+  // TipTap UI components — third-party patterns with loose typing
+  {
+    files: [
+      'src/components/tiptap-*/**',
+      'src/components/tiptap-ui/**',
+      'src/components/tiptap-ui-primitive/**',
+      'src/components/tiptap-node/**',
+    ],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+
+  // Reader components access refs during render for layout computation
+  {
+    files: ['src/components/reader/**'],
+    rules: {
+      'react-hooks/refs': 'off',
+    },
+  },
 );

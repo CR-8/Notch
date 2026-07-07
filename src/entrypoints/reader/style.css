@@ -1,1 +1,349 @@
-@import "../../assets/globals.css";
+@import '../../assets/globals.css';
+
+/* ── Reader Editorial Typography ─────────────────────────────────────────────
+   The reader-content div is the centered reading column where all document
+   content is rendered. This establishes a professional editorial typesetting
+   system optimized for long-form technical reading.
+   ========================================================================== */
+
+.reader-content {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--color-ink-secondary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-variant-ligatures: common-ligatures;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Font family overrides ──────────────────────────────────────────────── */
+html[data-font-family='serif'] .reader-content {
+  font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
+}
+
+html[data-font-family='mono'] .reader-content {
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+/* ── Font size overrides ────────────────────────────────────────────────── */
+html[data-font-size='sm'] .reader-content {
+  font-size: 14px;
+}
+
+html[data-font-size='lg'] .reader-content {
+  font-size: 17px;
+}
+
+/* ── Paragraphs ─────────────────────────────────────────────────────────── */
+.reader-content .reader-paragraph {
+  margin-top: 0;
+  margin-bottom: 0.875em;
+}
+
+.reader-content .reader-paragraph p {
+  margin: 0;
+}
+
+.reader-content .reader-paragraph + .reader-paragraph {
+  margin-top: -0.25em;
+}
+
+/* ── Links ─────────────────────────────────────────────────────────────── */
+.reader-content a {
+  color: var(--color-link);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-link) 30%, transparent);
+  transition: border-color 0.15s ease;
+}
+
+.reader-content a:hover {
+  border-bottom-color: var(--color-link);
+}
+
+.reader-content a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 2px;
+}
+
+/* ── Inline code ────────────────────────────────────────────────────────── */
+.reader-content :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  font-weight: 500;
+  background: var(--color-surface-hover);
+  border-radius: 4px;
+  padding: 0.15em 0.35em;
+  color: var(--color-ink);
+  border: 1px solid var(--color-hairline);
+}
+
+/* ── Strong / Emphasis ──────────────────────────────────────────────────── */
+.reader-content strong {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.reader-content em {
+  font-style: italic;
+  color: var(--color-ink);
+}
+
+/* ── Lists ──────────────────────────────────────────────────────────────── */
+.reader-content .reader-list ul,
+.reader-content .reader-list ol {
+  padding-left: 1.5rem;
+  margin-top: 0.5em;
+  margin-bottom: 0.75em;
+}
+
+.reader-content .reader-list ul {
+  list-style-type: disc;
+}
+
+.reader-content .reader-list ol {
+  list-style-type: decimal;
+}
+
+.reader-content .reader-list ul ul {
+  list-style-type: circle;
+}
+
+.reader-content .reader-list ul ul ul {
+  list-style-type: square;
+}
+
+.reader-content .reader-list ol ol {
+  list-style-type: lower-alpha;
+}
+
+.reader-content .reader-list li {
+  margin-top: 0.4em;
+  margin-bottom: 0.4em;
+  line-height: 1.7;
+  padding-left: 0.15em;
+}
+
+.reader-content .reader-list li::marker {
+  color: var(--color-ink-muted);
+}
+
+/* ── Blockquotes ────────────────────────────────────────────────────────── */
+.reader-content blockquote {
+  border-left: 2px solid var(--color-hairline);
+  padding-left: 1.25rem;
+  margin: 1.5em 0;
+  color: var(--color-ink-muted);
+  font-style: normal;
+}
+
+.reader-content blockquote p {
+  margin: 0.5em 0;
+}
+
+/* ── Horizontal rules ───────────────────────────────────────────────────── */
+.reader-content hr {
+  border: none;
+  border-top: 1px solid var(--color-hairline);
+  margin: 2.5em 0;
+}
+
+/* ── Images ─────────────────────────────────────────────────────────────── */
+.reader-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 1.5em auto;
+  display: block;
+  border: 1px solid var(--color-hairline);
+}
+
+.reader-content figure {
+  margin: 1.5em 0;
+}
+
+.reader-content figcaption {
+  font-size: 13px;
+  color: var(--color-ink-muted);
+  text-align: center;
+  margin-top: 0.5em;
+  font-style: italic;
+}
+
+/* ── Diagrams (Mermaid / PlantUML) — responsive, auto-fit width ─────────────
+   Mermaid emits an SVG with an inline max-width that pins it small; override so
+   diagrams scale to the reading column while preserving aspect ratio. */
+.reader-content figure[data-diagram-type] svg {
+  width: 100% !important;
+  height: auto !important;
+  max-width: 100% !important;
+  display: block;
+  margin-inline: auto;
+}
+
+/* ── Callouts / admonitions — consistent block rhythm ───────────────────── */
+.reader-content .reader-callout {
+  margin: 1.5rem 0;
+}
+
+/* Hint that diagrams/images can be enlarged. */
+.reader-content figure[data-diagram-type] [data-zoomable],
+.reader-content figure[data-image-kind] [data-zoomable] {
+  cursor: zoom-in;
+}
+
+/* ── Figure lightbox (portaled, outside .reader-content) ────────────────── */
+.reader-lightbox svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: none;
+}
+
+.reader-lightbox img {
+  display: block;
+  max-height: 84vh;
+  width: auto;
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+.reader-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5em 0;
+  font-size: 0.9em;
+}
+
+.reader-content th {
+  background: var(--color-soft-cloud);
+  border: 1px solid var(--color-hairline);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.reader-content td {
+  border: 1px solid var(--color-hairline);
+  padding: 8px 12px;
+}
+
+.reader-content tr:hover {
+  background: var(--color-surface-hover);
+}
+
+/* ── Task lists ─────────────────────────────────────────────────────────── */
+.reader-content ul:has(input[type='checkbox']) {
+  list-style: none;
+  padding-left: 0;
+}
+
+.reader-content input[type='checkbox'] {
+  margin-right: 0.5em;
+  accent-color: var(--color-primary);
+}
+
+/* ── Selection ──────────────────────────────────────────────────────────── */
+.reader-content ::selection {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+/* ── Scrollbar styling ──────────────────────────────────────────────────── */
+#reader-document::-webkit-scrollbar {
+  width: 0;
+}
+
+#reader-document {
+  scrollbar-width: none;
+}
+
+/* ── Focus styles ────────────────────────────────────────────────────────── */
+.reader-content *:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 2px;
+}
+
+/* ── Floating glass chrome ───────────────────────────────────────────────────
+   Shared material for the header, progress dock, selection toolbar, and search
+   overlay. Falls back to a solid fill when the viewer has reduced-transparency.
+   ========================================================================== */
+.reader-glass,
+.reader-glass-strong {
+  background: color-mix(in srgb, var(--color-canvas) 74%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid color-mix(in srgb, var(--color-hairline) 80%, transparent);
+  box-shadow: var(--shadow-level-2);
+}
+
+.reader-glass-strong {
+  background: color-mix(in srgb, var(--color-canvas) 90%, transparent);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .reader-glass,
+  .reader-glass-strong {
+    background: var(--color-canvas);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* Brief tint when jumping to a bookmarked passage. */
+.reader-flash {
+  animation: reader-flash 1.4s ease-out;
+  border-radius: 4px;
+}
+
+@keyframes reader-flash {
+  0%,
+  100% {
+    background-color: transparent;
+  }
+  18% {
+    background-color: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  }
+}
+
+/* The reading column hides its native scrollbar in favor of the progress dock. */
+.reader-scroll::-webkit-scrollbar {
+  width: 0;
+}
+.reader-scroll {
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader-scroll {
+    scroll-behavior: auto;
+  }
+  .reader-flash {
+    animation: none;
+  }
+}
+
+/* ── Print styles ────────────────────────────────────────────────────────── */
+@media print {
+  .reader-shell nav,
+  .reader-shell header,
+  .reader-shell [role='scrollbar'],
+  .reader-shell .fixed {
+    display: none !important;
+  }
+
+  #reader-document {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  .reader-content {
+    max-width: none !important;
+    font-size: 12pt !important;
+  }
+}

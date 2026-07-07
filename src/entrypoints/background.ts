@@ -13,8 +13,6 @@ import {
   generateEmbeddingsForDocument,
   translateText,
 } from '../lib/pipeline';
-// on-device.ts (+ @huggingface/transformers) is loaded lazily — only when the user
-// triggers on-device AI. This keeps background.js small for all other users.
 import { importNotchPDF } from '../lib/import';
 import { findDuplicateId } from '../lib/dedupe';
 import { log } from '../lib/logger';
@@ -36,12 +34,6 @@ function trySendToPopup(msg: RuntimeMessage): void {
 }
 
 export default defineBackground({
-  // ESM service worker. Without this WXT builds the SW as an IIFE, which cannot
-  // use native dynamic import(), so Vite inlines @huggingface/transformers +
-  // kokoro-js (and their wasm) straight into background.js — bloating it to
-  // ~122 MB. As a module worker those `await import()` calls code-split into
-  // lazily-fetched chunks, keeping background.js small.
-  type: 'module',
   main() {
     log.info('background', '=== Notch service worker started ===');
 
@@ -130,107 +122,20 @@ export default defineBackground({
       }
     })();
 
-    // TTS streaming via port (Kokoro native streaming)
-    browser.runtime.onConnect.addListener((port) => {
-      if (port.name !== 'tts-stream') return;
-      let cancelled = false;
-      port.onDisconnect.addListener(() => {
-        cancelled = true;
-      });
-
-      port.onMessage.addListener((msg: { type: string; text: string; voice?: string }) => {
-        if (msg.type !== 'SPEAK' || cancelled) return;
-
-        void (async () => {
-          const { ensurePipeline, createStream } = await import('../lib/tts');
-          await ensurePipeline();
-
-          try {
-            const stream = await createStream(
-              msg.text,
-              (msg.voice ?? 'af_heart') as Parameters<typeof createStream>[1],
-            );
-            let index = 0;
-            for await (const chunk of stream) {
-              if (cancelled) break;
-              const ab = chunk.audio.buffer.slice(
-                chunk.audio.byteOffset,
-                chunk.audio.byteOffset + chunk.audio.byteLength,
-              );
-              port.postMessage({
-                type: 'chunk',
-                index: index++,
-                audio: ab,
-                sampleRate: chunk.sampleRate,
-              });
-            }
-            if (!cancelled) port.postMessage({ type: 'done' });
-          } catch (err) {
-            port.postMessage({
-              type: 'error',
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        })();
-      });
-    });
-
     browser.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
       void handleRuntimeMessage(message)
         .then(sendResponse)
         .catch(() => {});
       return true;
     });
+
+    browser.runtime.onMessage.addListener((message: { type: string }) => {
+      if (message.type === 'ABORT_RAG') {
+        import('../lib/pipeline').then((mod) => mod.abortRAG()).catch(() => {});
+      }
+    });
   },
 });
-
-// MODEL-1..7: download a local model in background and broadcast progress.
-// Lazily imports on-device.ts so @huggingface/transformers is NOT bundled
-// into background.js until the user actually requests a model download.
-async function handleModelDownload(modelId: string): Promise<void> {
-  try {
-    const { downloadModel: dm } = await import('../lib/on-device');
-    await dm(modelId, (pct) => {
-      trySendToPopup({ type: 'MODEL_DOWNLOAD_PROGRESS', payload: { modelId, pct } });
-    });
-    trySendToPopup({ type: 'MODEL_DOWNLOAD_COMPLETE', payload: { modelId } });
-    log.success('background', `On-device model downloaded: ${modelId}`);
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    trySendToPopup({ type: 'MODEL_DOWNLOAD_ERROR', payload: { modelId, error } });
-    log.error('background', `Model download failed: ${modelId}`, err);
-  }
-}
-
-// ── Legacy TTS handlers (kept for backward compat) ────────────────────────────
-
-async function handleTtsSpeak(text: string): Promise<RuntimeMessage> {
-  try {
-    const { synthesize, ensurePipeline } = await import('../lib/tts');
-    await ensurePipeline();
-    const wavBytes = await synthesize(text);
-    const ab = wavBytes.buffer.slice(
-      wavBytes.byteOffset,
-      wavBytes.byteOffset + wavBytes.byteLength,
-    );
-    const base64 = arrayBufferToBase64(ab);
-    return { type: 'TTS_RESULT', payload: { audioBase64: base64, sampleRate: 24000 } };
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    return { type: 'TTS_ERROR', payload: { error } };
-  }
-}
-
-function handleTtsStop(): RuntimeMessage {
-  return { type: 'TTS_STOP', payload: {} };
-}
-
-function arrayBufferToBase64(buffer: ArrayBufferLike): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
-}
 
 async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeMessage | undefined> {
   try {
@@ -265,40 +170,6 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeMes
         return handleImportPDF(message.payload.fileName, message.payload.bytes);
       case 'TRANSLATE':
         return handleTranslate(message.payload.text, message.payload.targetLanguage);
-      case 'MODEL_DOWNLOAD_START':
-        void handleModelDownload(message.payload.modelId);
-        return {
-          type: 'MODEL_DOWNLOAD_PROGRESS',
-          payload: { modelId: message.payload.modelId, pct: 0 },
-        };
-      case 'MODEL_SET_EMBEDDING':
-        void (async () => {
-          const { getOnDeviceConfig, saveOnDeviceConfig } = await import('../lib/on-device');
-          const cfg = await getOnDeviceConfig();
-          cfg.embeddingModelId = message.payload.modelId;
-          await saveOnDeviceConfig(cfg);
-        })();
-        return;
-      case 'MODEL_SET_CHAT':
-        void (async () => {
-          const { getOnDeviceConfig, saveOnDeviceConfig } = await import('../lib/on-device');
-          const cfg = await getOnDeviceConfig();
-          cfg.chatModelId = message.payload.modelId;
-          await saveOnDeviceConfig(cfg);
-        })();
-        return;
-      case 'MODEL_ENABLE_ON_DEVICE':
-        void (async () => {
-          const { getOnDeviceConfig, saveOnDeviceConfig } = await import('../lib/on-device');
-          const cfg = await getOnDeviceConfig();
-          cfg.enabled = message.payload.enabled;
-          await saveOnDeviceConfig(cfg);
-        })();
-        return;
-      case 'TTS_SPEAK':
-        return handleTtsSpeak(message.payload.text);
-      case 'TTS_STOP':
-        return handleTtsStop();
       default:
         return;
     }
@@ -314,7 +185,16 @@ async function handleRAG(
   readingLevel?: ReadingLevel,
 ): Promise<RuntimeMessage> {
   try {
-    const { answer, citations } = await runRAGPipeline(query, documentId, undefined, readingLevel);
+    let accumulated = '';
+    const { answer, citations } = await runRAGPipeline(
+      query,
+      documentId,
+      (chunk) => {
+        accumulated += chunk;
+        trySendToPopup({ type: 'RAG_CHUNK', payload: { chunk: accumulated, documentId } });
+      },
+      readingLevel,
+    );
     return { type: 'RAG_RESPONSE', payload: { answer, citations } };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

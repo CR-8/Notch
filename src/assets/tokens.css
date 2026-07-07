@@ -1,122 +1,131 @@
 /* ============================================================================
    Notch — Design Tokens (single source of truth)
    ----------------------------------------------------------------------------
-   Implements the DESIGN.md "Nike editorial" system: a near-monochrome
-   ink / canvas / soft-cloud chrome where all chromatic energy is reserved for
-   semantic signals (sale red, success green, the rare info blue). Photography-
-   grade flatness — no decorative drop shadows, hairline dividers only, pill
-   geometry on every CTA, square flat cards.
+   Notion × Apple system: a warm paper-soft canvas (#f6f5f4) with pure-white
+   card surfaces, a near-black ink ramp in warm grays, and exactly ONE
+   structural accent — Notion blue (#0075de) — reserved for primary actions,
+   links, and the focus signal. The decorative "sticker" palette (purple, pink,
+   orange, teal, green, sky) exists only for illustration, category dots and
+   callouts — it never paints a CTA or structural fill.
+
+   Elevation is barely-there: hairline borders (#e6e6e6) plus layered
+   near-transparent shadows. CTAs are full pills; utility buttons round at 8px;
+   cards at 12px; inputs stay tight at 4px.
 
    Everything visual in the workspace resolves through the custom properties
-   declared here. Tailwind utilities (`bg-canvas`, `text-ink`, `rounded-full`,
+   declared here. Tailwind utilities (`bg-canvas`, `text-ink`, `rounded-lg`,
    `shadow-level-1`, …) and the `.notion-*` component classes in globals.css
    both read these tokens, so the entire light/dark system is controlled from
-   this one file.
-
-   This file is @import-ed by globals.css right after `@import "tailwindcss"`,
-   so Tailwind processes the `@theme` block below and regenerates utilities
-   from the Nike palette. The `html[data-theme="dark"]` block at the bottom
-   re-points the same custom properties for the night palette.
+   this one file. The `html[data-theme="dark"]` block at the bottom re-points
+   the same custom properties for the night palette.
    ========================================================================== */
 
 @theme {
-  /* ── Surface · ink / canvas / soft-cloud ──────────────────────────────
-     soft-cloud (#f5f5f5) is the "studio stage" every product/card sits on;
-     canvas (#ffffff) is the card itself. hairline carries the only dividers. */
+  /* ── Surface · warm paper canvas / white cards ────────────────────────
+     canvas-soft (#f6f5f4) is the warm document-like page stage; canvas /
+     surface (#ffffff) is the card itself. hairline carries the dividers. */
   --color-canvas: #ffffff;
-  --color-canvas-soft: #f5f5f5; /* soft-cloud — page stage */
-  --color-soft-cloud: #f5f5f5;
+  --color-canvas-soft: #f6f5f4; /* warm paper — page stage */
+  --color-soft-cloud: #f1efee; /* recessed wells, code blocks */
   --color-surface: #ffffff;
-  --color-surface-hover: #f5f5f5;
-  --color-hairline: #cacacb; /* 1px dividers */
-  --color-hairline-soft: #e5e5e5; /* inset hairline under sticky bars */
+  --color-surface-hover: #f6f5f4;
+  --color-hairline: #e6e6e6; /* 1px dividers */
+  --color-hairline-soft: #f0f0f0; /* inset hairline under sticky bars */
 
-  /* ── Brand · ink is the only "color" ──────────────────────────────────
-     The primary CTA, active chip, headline and body text. Adaptive across
-     themes (ink in light, cloud in dark) so it works as both a fill and a
-     readable accent/link color. `--accent-user`, when set by the appearance
-     settings, overrides it; default leaves it monochrome. */
-  --color-primary: var(--accent-user, #111111);
-  --color-primary-active: var(--accent-user, #000000);
+  /* ── Brand · one dependable blue ──────────────────────────────────────
+     Notion blue is the single structural accent: primary CTA fill, inline
+     links, active nav, focus ring. `--accent-user`, when set by appearance
+     settings, overrides it. Deep indigo is the "night band" hero surface. */
+  --color-primary: var(--accent-user, #0075de);
+  --color-primary-active: var(--accent-user, #005bab);
   --color-primary-foreground: #ffffff;
-  --color-secondary: #f5f5f5; /* soft-cloud secondary pill */
-  --color-secondary-foreground: #111111;
+  --color-secondary: #ffffff; /* secondary pill: white + soft shadow */
+  --color-secondary-foreground: #1d1d1f;
   --color-on-primary: #ffffff;
+  --color-indigo-night: #213183; /* single dark hero band */
 
-  /* ── Text ramp ────────────────────────────────────────────────────────
-     ink → charcoal → mute → stone, mapped onto the structural names the
-     components already consume. */
-  --color-ink: #111111;
-  --color-ink-secondary: #39393b; /* charcoal */
-  --color-ink-muted: #707072; /* mute */
-  --color-ink-faint: #9e9ea0; /* stone */
-  --color-charcoal: #39393b;
-  --color-ash: #4b4b4d;
-  --color-mute: #707072;
-  --color-stone: #9e9ea0;
-  --color-link: var(--color-primary);
+  /* ── Text ramp · warm near-black ink ──────────────────────────────────
+     ink → warm charcoal → stone → ash. Warm grays to match the paper. */
+  --color-ink: #1d1d1f;
+  --color-ink-secondary: #31302e; /* warm charcoal */
+  --color-ink-muted: #615d59; /* stone */
+  --color-ink-faint: #a39e98; /* ash */
+  --color-charcoal: #31302e;
+  --color-ash: #4b4945;
+  --color-mute: #615d59;
+  --color-stone: #a39e98;
+  --color-link: #0075de;
 
-  /* ── Semantic · the only non-neutral chrome ───────────────────────────
-     sale red is the lone red in retail chrome; success/info appear sparingly. */
-  --color-sale: #d30005;
-  --color-sale-deep: #780700;
-  --color-success: #007d48;
-  --color-success-bright: #1eaa52;
-  --color-info: #1151ff;
-  --color-info-deep: #0034e3;
+  /* ── Semantic ─────────────────────────────────────────────────────────
+     Status leans on the sticker palette: green ticks, orange cautions. */
+  --color-sale: #e03e3e;
+  --color-sale-deep: #a32c2c;
+  --color-success: #1aae39;
+  --color-success-bright: #2fc352;
+  --color-info: #0075de;
+  --color-info-deep: #005bab;
 
-  /* ── Category / editorial accents (illustration only, never chrome) ─── */
-  --color-accent-pink: #ed1aa0;
+  /* ── Sticker palette (decoration only, never chrome) ──────────────────── */
+  --color-accent-pink: #ff64c8;
   --color-accent-pink-soft: #ffb0dd;
   --color-accent-pink-deep: #4c012d;
-  --color-accent-purple: #beaffd;
-  --color-accent-purple-soft: #beaffd;
-  --color-accent-purple-pale: #d6d1ff;
+  --color-accent-purple: #9065b0;
+  --color-accent-purple-soft: #d6b6f6;
+  --color-accent-purple-pale: #ece2f7;
   --color-accent-purple-deep: #391c57;
-  --color-accent-teal: #0a7281;
-  /* legacy decorative names kept so callouts / diagrams keep resolving */
-  --color-accent-sky: #1151ff;
-  --color-accent-green: #007d48;
+  --color-accent-teal: #2a9d99;
+  --color-accent-sky: #62aef0;
+  --color-accent-green: #1aae39;
   --color-accent-orange: #dd5b00;
   --color-accent-orange-deep: #793400;
   --color-accent-brown: #523410;
 
   /* ── shadcn / structural aliases ──────────────────────────────────────
-     Body sits on the soft-cloud stage; cards/popovers on canvas white. */
-  --color-background: #f5f5f5;
-  --color-foreground: #111111;
+     Body sits on warm paper; cards/popovers on white. */
+  --color-background: #f6f5f4;
+  --color-foreground: #1d1d1f;
   --color-card: #ffffff;
-  --color-card-foreground: #111111;
+  --color-card-foreground: #1d1d1f;
   --color-popover: #ffffff;
-  --color-popover-foreground: #111111;
-  --color-muted: #707072;
-  --color-muted-foreground: #707072;
-  --color-accent: #f5f5f5;
-  --color-accent-foreground: #111111;
-  --color-destructive: #d30005; /* sale red */
+  --color-popover-foreground: #1d1d1f;
+  --color-muted: #f1efee;
+  --color-muted-foreground: #615d59;
+  --color-accent: #f1efee;
+  --color-accent-foreground: #1d1d1f;
+  --color-destructive: #e03e3e;
   --color-destructive-foreground: #ffffff;
-  --color-border: #cacacb;
-  --color-input: #cacacb;
-  --color-ring: #111111;
+  --color-border: #e6e6e6;
+  --color-input: #dddddd;
+  --color-ring: #0075de;
+
+  /* ── shadcn sidebar (floating) ────────────────────────────────────────── */
+  --color-sidebar-bg: #ffffff;
+  --color-sidebar-foreground: #31302e;
+  --color-sidebar-primary: #0075de;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-accent: #f6f5f4;
+  --color-sidebar-accent-foreground: #1d1d1f;
+  --color-sidebar-border: #e6e6e6;
+  --color-sidebar-ring: #0075de;
 
   /* ── Typography ───────────────────────────────────────────────────────
-     Inter substitutes Helvetica Now (DESIGN.md substitution path); the
-     display tier leans on heavy weight + uppercase + 0.9 line-height to
-     approximate the Futura ND campaign lockup without a font dependency. */
-  --font-sans: Inter, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
-  --font-display: Inter, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+     Inter substitutes both NotionInter and SF Pro. Display sizes apply
+     explicit negative tracking to recreate the tight headline cadence. */
+  --font-sans:
+    Inter, -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-display:
+    Inter, -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
   --font-mono: 'IBM Plex Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
 
-  /* ── Spacing · 8px base, 48px section rhythm ─────────────────────────── */
-  --spacing-section: 48px;
+  /* ── Spacing · 8px base, 80px section rhythm ─────────────────────────── */
+  --spacing-section: 80px;
 
-  /* ── Border radius · square containers / pill CTAs ────────────────────
-     Containers stay crisp (0–16px); the pill geometry comes from
-     --radius-full. --radius-pill-* mirror DESIGN.md's 24/30px CTA pills. */
+  /* ── Border radius · friendly cards / pill CTAs / tight inputs ────────
+     Inputs 4px · utility buttons 8px · cards 12px · wells 16px · CTAs pill. */
   --radius: 8px;
   --radius-none: 0px;
-  --radius-xs: 2px;
-  --radius-sm: 4px;
+  --radius-xs: 4px;
+  --radius-sm: 5px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
@@ -125,87 +134,134 @@
   --radius-pill-md: 24px;
   --radius-pill-lg: 30px;
 
-  /* ── Elevation · FLAT. Hairlines and inset lines only, no soft lifts ──
-     The Nike system has no drop-shadow elevation; the only depth cue is the
-     1px inset hairline on sticky strips. "level" shadows become crisp rings. */
+  /* ── Elevation · hairline + barely-there layered shadows ──────────────
+     Level 0: hairline only. Level 1: soft layered micro-shadow for raised
+     cards. Level 2: deeper stack for modals/popovers/floating bars. */
   --shadow-level-0: 0 0 0 1px var(--color-hairline);
-  --shadow-level-1: 0 0 0 1px var(--color-hairline);
-  --shadow-level-2: inset 0 -1px 0 var(--color-hairline-soft);
+  --shadow-level-1:
+    0 0.175px 1.041px rgba(0, 0, 0, 0.012), 0 0.8px 2.925px rgba(0, 0, 0, 0.02),
+    0 2.025px 7.847px rgba(0, 0, 0, 0.027), 0 4px 18px rgba(0, 0, 0, 0.04);
+  --shadow-level-2:
+    0 0.8px 2px rgba(0, 0, 0, 0.02), 0 2.7px 6.7px rgba(0, 0, 0, 0.03),
+    0 8px 18px rgba(0, 0, 0, 0.04), 0 23px 52px rgba(0, 0, 0, 0.05);
 
-  /* ── Focus ring · the soft-cloud "glove" (2px ink + canvas gap) ──────── */
-  --focus-ring: 0 0 0 2px var(--color-canvas), 0 0 0 4px var(--color-ink);
+  /* ── Focus ring · the blue signal (2px canvas gap + 2px blue) ─────────── */
+  --focus-ring: 0 0 0 2px var(--color-canvas), 0 0 0 4px #0071e3;
 
   /* ── Animations ──────────────────────────────────────────────────────── */
   --animate-pulse-skeleton: pulse-skeleton 1.5s ease-in-out infinite;
   --animate-blink: blink 1s step-end infinite;
   --animate-capture-pulse: capture-pulse 1.5s ease-in-out infinite;
   --animate-page-enter: page-enter 300ms ease-out both;
+
+  /* ── Apple-specific enhancements ───────────────────────────────────────── */
+  --backdrop-blur-menu: saturate(180%) blur(20px);
+  --backdrop-blur-bar: saturate(180%) blur(12px);
+  --shadow-product: 3px 5px 30px rgba(0, 0, 0, 0.22);
+  --color-surface-pearl: #fafafc;
+  --color-divider-soft: #f0f0f0;
+
+  /* ── Apple section-alternation tokens ─────────────────────────────────── */
+  --color-tile-light: #ffffff;
+  --color-tile-parchment: #f5f5f7;
+  --color-tile-dark: #272729;
+  --color-tile-dark-2: #2a2a2c;
 }
 
 /* ============================================================================
-   Dark theme — "Nike night"
+   Dark theme — "night shift"
    ----------------------------------------------------------------------------
-   Near-black canvas, dark soft-cloud stage, cloud-white ink ramp. The ink
-   accent flips to cloud so it stays a readable link/accent and inverts the
-   primary pill to white-on-ink. Activated by [data-theme="dark"] on <html>.
+   Apple near-black tiles with warm-neutral ink ramp. The blue accent brightens
+   to the dark-surface link blue so it stays readable; cards micro-step lighter
+   than the page the way Apple's dark tiles do. Activated by
+   [data-theme="dark"] on <html>.
    ========================================================================== */
 html[data-theme='dark'] {
   color-scheme: dark;
 
-  /* Surfaces */
-  --color-canvas: #1b1b1b;
-  --color-canvas-soft: #121212;
-  --color-soft-cloud: #242424;
-  --color-surface: #1f1f1f;
-  --color-surface-hover: #2a2a2a;
-  --color-hairline: #343436;
-  --color-hairline-soft: #2a2a2a;
+  /* Surfaces — near-black tile stack */
+  --color-canvas: #272729;
+  --color-canvas-soft: #1d1d1f;
+  --color-soft-cloud: #2a2a2c;
+  --color-surface: #252527;
+  --color-surface-hover: #2f2f31;
+  --color-hairline: #3a3a3c;
+  --color-hairline-soft: #313133;
 
-  /* Brand — ink flips to cloud; primary pill becomes white-on-ink */
-  --color-primary: var(--accent-user, #f5f5f5);
-  --color-primary-active: var(--accent-user, #ffffff);
-  --color-primary-foreground: #111111;
-  --color-secondary: #2a2a2a;
-  --color-secondary-foreground: #f5f5f5;
-  --color-on-primary: #111111;
+  /* Brand — iOS dark blue for fills, sky blue for links */
+  --color-primary: var(--accent-user, #0a84ff);
+  --color-primary-active: var(--accent-user, #409cff);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #2f2f31;
+  --color-secondary-foreground: #f5f5f7;
+  --color-on-primary: #ffffff;
+  --color-link: #2997ff;
 
   /* Text ramp */
-  --color-ink: #f5f5f5;
-  --color-ink-secondary: #cacacb;
-  --color-ink-muted: #9e9ea0;
-  --color-ink-faint: #707072;
-  --color-charcoal: #cacacb;
-  --color-ash: #9e9ea0;
-  --color-mute: #9e9ea0;
-  --color-stone: #707072;
+  --color-ink: #f5f5f7;
+  --color-ink-secondary: #d5d5d7;
+  --color-ink-muted: #a1a1a6;
+  --color-ink-faint: #6e6e73;
+  --color-charcoal: #d5d5d7;
+  --color-ash: #a1a1a6;
+  --color-mute: #a1a1a6;
+  --color-stone: #6e6e73;
 
-  /* Semantic — brightened so they read on the dark stage */
-  --color-sale: #ff5a5f;
-  --color-sale-deep: #d30005;
-  --color-success: #1eaa52;
-  --color-success-bright: #3ecf7a;
-  --color-info: #4d7dff;
-  --color-info-deep: #1151ff;
+  /* Semantic — brightened for the dark stage */
+  --color-sale: #ff6b6b;
+  --color-sale-deep: #e03e3e;
+  --color-success: #30d158;
+  --color-success-bright: #4ade80;
+  --color-info: #2997ff;
+  --color-info-deep: #0a84ff;
 
-  /* Editorial accents */
-  --color-accent-sky: #4d7dff;
-  --color-accent-green: #1eaa52;
-  --color-accent-orange: #ff7a33;
+  /* Sticker palette — lifted for dark surfaces */
+  --color-accent-sky: #64b5f6;
+  --color-accent-green: #30d158;
+  --color-accent-orange: #ff9f40;
+  --color-accent-purple: #bf94e4;
+  --color-accent-teal: #40c8c2;
 
   /* shadcn / structural aliases */
-  --color-background: #121212;
-  --color-foreground: #f5f5f5;
-  --color-card: #1f1f1f;
-  --color-card-foreground: #f5f5f5;
-  --color-popover: #1f1f1f;
-  --color-popover-foreground: #f5f5f5;
-  --color-muted: #9e9ea0;
-  --color-muted-foreground: #9e9ea0;
-  --color-accent: #2a2a2a;
-  --color-accent-foreground: #f5f5f5;
-  --color-destructive: #ff5a5f;
-  --color-destructive-foreground: #111111;
-  --color-border: #343436;
-  --color-input: #343436;
-  --color-ring: #f5f5f5;
+  --color-background: #1d1d1f;
+  --color-foreground: #f5f5f7;
+  --color-card: #252527;
+  --color-card-foreground: #f5f5f7;
+  --color-popover: #252527;
+  --color-popover-foreground: #f5f5f7;
+  --color-muted: #2a2a2c;
+  --color-muted-foreground: #a1a1a6;
+  --color-accent: #2f2f31;
+  --color-accent-foreground: #f5f5f7;
+  --color-destructive: #ff6b6b;
+  --color-destructive-foreground: #1d1d1f;
+  --color-border: #3a3a3c;
+  --color-input: #3a3a3c;
+  --color-ring: #2997ff;
+
+  /* shadcn sidebar */
+  --color-sidebar-bg: #252527;
+  --color-sidebar-foreground: #d5d5d7;
+  --color-sidebar-primary: #2997ff;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-accent: #2f2f31;
+  --color-sidebar-accent-foreground: #f5f5f7;
+  --color-sidebar-border: #3a3a3c;
+  --color-sidebar-ring: #2997ff;
+
+  /* Focus ring flips to the dark canvas gap */
+  --focus-ring: 0 0 0 2px var(--color-canvas-soft), 0 0 0 4px #2997ff;
+
+  /* Apple-specific — dark mode variants */
+  --color-surface-pearl: #2f2f31;
+  --color-divider-soft: #3a3a3c;
+  --shadow-product: 3px 5px 30px rgba(0, 0, 0, 0.5);
+
+  /* Shadows deepen slightly so lift still reads on near-black */
+  --shadow-level-1:
+    0 0.175px 1.041px rgba(0, 0, 0, 0.08), 0 0.8px 2.925px rgba(0, 0, 0, 0.12),
+    0 2.025px 7.847px rgba(0, 0, 0, 0.16), 0 4px 18px rgba(0, 0, 0, 0.2);
+  --shadow-level-2:
+    0 0.8px 2px rgba(0, 0, 0, 0.14), 0 2.7px 6.7px rgba(0, 0, 0, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.22), 0 23px 52px rgba(0, 0, 0, 0.28);
 }

@@ -11,7 +11,15 @@ import {
   rankChunksByKeywords,
   answerWithOfflineNLP,
 } from './nlp-fallback';
-import { normalise, parseCitations, retrieveTopK, buildRAGPrompt } from './retrieval';
+import {
+  normalise,
+  parseCitations,
+  retrieveTopK as _retrieveTopK,
+  retrieveHybridTopK,
+  buildRAGPrompt,
+  expandQueryWithHistory,
+  expandContext,
+} from './retrieval';
 import { chunkDocument } from './chunker';
 import { db } from './db';
 import type {
@@ -25,68 +33,57 @@ import type {
 } from './types';
 import type { RetrievedChunk } from './retrieval';
 
-// ── Engine imports ──────────────────────────────────────────────────────
 import { runCaptureEngine } from './capture/engine';
 import { runContentEngine } from './content/engine';
 import { runLayoutEngine } from './layout/engine';
 import type { CompleteFn } from './content/types';
 
-function extractFrontmatter(md: string): {
-  title: string;
-  summary: string;
-  keyPoints: string[];
-  entities: Document['entities'];
-  timeline: Document['timeline'];
-  concepts: Document['concepts'];
-} {
-  const titleMatch = md.match(/^#\s+(.+)$/m);
-  const summaryMatch = md.match(/^##\s+(?:SUMMARY|Summary)\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
+/* ── Helpers ─────────────────────────────────────────────────────────── */
 
+function extractTitle(md: string): string {
+  return md.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? '';
+}
+
+function extractSummaryAndKeyPoints(md: string): { summary: string; keyPoints: string[] } {
+  const lines = md.split('\n');
+  let inHeading = false;
+  let summary = '';
   const keyPoints: string[] = [];
-  const kpMatch = md.match(/^##\s+Key Points\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
-  if (kpMatch) {
-    for (const line of kpMatch[1].split('\n')) {
-      const m = line.match(/^\s*[*-]\s+(.*)/);
-      if (m?.[1]?.trim()) keyPoints.push(m[1].trim());
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+
+    if (line.startsWith('# ')) {
+      inHeading = true;
+      continue;
+    }
+
+    if (inHeading && line.length > 0 && !line.startsWith('#')) {
+      inHeading = false;
+      summary = line.replace(/^[>\s]*/, '').trim();
+      if (summary) break;
     }
   }
 
-  const entities: Document['entities'] = [];
-  const entMatch = md.match(/^##\s+Key Entities\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
-  if (entMatch) {
-    entMatch[1].split('\n').forEach((line, i) => {
-      const m = line.match(/^\s*[*-]\s+\*\*([^*:]+?)\*\*\s*(?:\(([^)]*)\))?\s*[:—–-]?\s*(.*)/);
-      if (m?.[1]?.trim())
-        entities.push({ name: m[1].trim(), type: m[2]?.trim() || 'other', paragraphIndex: i });
-    });
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('- ') && !trimmed.startsWith('- [') && trimmed.length > 3) {
+      keyPoints.push(trimmed.slice(2).trim());
+    }
   }
 
-  const timeline: Document['timeline'] = [];
-  const tlMatch = md.match(/^##\s+Timeline\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
-  if (tlMatch) {
-    tlMatch[1].split('\n').forEach((line, i) => {
-      const m = line.match(/^\s*[*-]\s+\*\*([^*]+)\*\*:?\s+(.*)/);
-      if (m) timeline.push({ date: m[1].trim(), description: m[2].trim(), paragraphIndex: i });
-    });
+  // Fallback: use first substantial paragraph if no heading content found
+  if (!summary) {
+    for (const line of lines) {
+      const t = line.trim();
+      if (t.length > 40 && !t.startsWith('#') && !t.startsWith('-') && !t.startsWith('>')) {
+        summary = t;
+        break;
+      }
+    }
   }
 
-  const concepts: Document['concepts'] = [];
-  const concMatch = md.match(/^##\s+Concepts\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
-  if (concMatch) {
-    concMatch[1].split('\n').forEach((line, i) => {
-      const m = line.match(/^\s*[*-]\s+\*\*([^*:]+):?\*\*:?\s+(.*)/);
-      if (m) concepts.push({ term: m[1].trim(), definition: m[2].trim(), paragraphIndex: i });
-    });
-  }
-
-  return {
-    title: titleMatch?.[1]?.trim() ?? '',
-    summary: summaryMatch?.[1]?.trim() ?? '',
-    keyPoints,
-    entities,
-    timeline,
-    concepts,
-  };
+  return { summary, keyPoints: keyPoints.slice(0, 8) };
 }
 
 function normalizeModelId(model: string | undefined, baseUrl?: string): string {
@@ -132,7 +129,7 @@ function resolveChatModel(settings: Settings, mode: GenerationMode): string {
   return normalizeModelId(settings.modelId, settings.baseUrl) || 'gpt-4o-mini';
 }
 
-// ── Main capture pipeline ───────────────────────────────────────────────
+/* ── Main capture pipeline ───────────────────────────────────────────── */
 
 export async function runCapturePipeline(
   extraction: DOMExtraction,
@@ -143,11 +140,10 @@ export async function runCapturePipeline(
   const settings = await getSettings();
   const docId = crypto.randomUUID();
 
-  // Engine 1: Capture
   onProgress?.('Extracting content...', 10);
   const capture = runCaptureEngine(extraction);
 
-  // Save base document immediately
+  // Build the document
   const doc: Document = {
     id: docId,
     title: capture.metadata.title,
@@ -157,11 +153,25 @@ export async function runCapturePipeline(
     wordCount: capture.metadata.wordCount,
     cleanedHtml: extraction.cleanedHtml,
     textContent: capture.rawContent,
+    content: '',
     summary: '',
     keyPoints: [],
-    entities: [],
-    timeline: [],
-    concepts: [],
+    entities: capture.entities.map((e, i) => ({ name: e.name, type: e.type, paragraphIndex: i })),
+    timeline: capture.timeline.map((t, i) => ({
+      date: t.year,
+      description: t.event,
+      significance: t.significance,
+      paragraphIndex: i,
+    })),
+    concepts: capture.concepts.map((c, i) => ({
+      term: c.concept,
+      definition: c.definition,
+      paragraphIndex: i,
+    })),
+    relationships: capture.relationships,
+    topics: capture.topics,
+    complexity: capture.complexity,
+    documentType: capture.documentClass,
     tags,
     images: capture.images.map((i) => ({
       url: i.url,
@@ -183,15 +193,13 @@ export async function runCapturePipeline(
     updatedAt: new Date().toISOString(),
   };
   await saveDocument(doc);
-  onProgress?.('Saved base document', 20);
 
-  // Engine 2: Content (if online)
-  let structuredContent: string;
-  doc.status = 'structuring';
-  await saveDocument(doc);
+  // Generate content (AI or offline)
+  onProgress?.('Generating document...', 20);
+  let content: string;
 
   if (shouldRunOffline(settings)) {
-    structuredContent = buildOfflineCaptureMarkdown(capture.metadata.title, capture.rawContent);
+    content = buildOfflineCaptureMarkdown(capture.metadata.title, capture.rawContent);
   } else {
     const provider = await resolveChatProvider(settings);
     const model = resolveChatModel(settings, mode);
@@ -220,26 +228,22 @@ export async function runCapturePipeline(
       );
 
     try {
-      const contentResult = await runContentEngine({ capture, mode, complete });
-      structuredContent = contentResult.markdown;
-      log.info('pipeline', `Content engine: ${contentResult.wordCount} words`);
+      const result = await runContentEngine({ capture, mode, complete });
+      content = result.markdown;
+      log.info('pipeline', `Content generated: ${result.wordCount} words`);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      log.warn(
-        'pipeline',
-        `AI structuring failed (${reason}) — saving raw text. Check the active provider's model id and API key.`,
-        err,
-      );
-      onProgress?.(`AI structuring unavailable — saved raw text (${reason})`, 60);
-      structuredContent = buildOfflineCaptureMarkdown(capture.metadata.title, capture.rawContent);
+      log.warn('pipeline', `AI generation failed (${reason}) — using raw text`, err);
+      onProgress?.(`AI unavailable — saved raw text (${reason})`, 60);
+      content = buildOfflineCaptureMarkdown(capture.metadata.title, capture.rawContent);
     }
   }
 
-  onProgress?.('Content generation complete', 60);
+  onProgress?.('Content generated', 60);
 
-  // Engine 3: Layout — enrich content with images, tables, diagrams, callouts
+  // Enrich: inject images, tables, diagrams, callouts, knowledge graphs
   const { enrichedMarkdown } = runLayoutEngine({
-    markdown: structuredContent,
+    markdown: content,
     title: capture.metadata.title,
     images: capture.images,
     tables: capture.tables,
@@ -250,47 +254,22 @@ export async function runCapturePipeline(
     complexity: capture.complexity,
     isPdf: capture.metadata.isPdf,
   });
-  structuredContent = enrichedMarkdown;
+  content = enrichedMarkdown;
 
-  onProgress?.('Layout complete', 75);
-
-  // Parse frontmatter from generated content for metadata
-  const frontmatter = extractFrontmatter(structuredContent);
-  doc.title = frontmatter.title || doc.title;
-  doc.summary = frontmatter.summary;
-  doc.keyPoints = frontmatter.keyPoints;
-  doc.entities = frontmatter.entities.length
-    ? frontmatter.entities
-    : capture.entities.map((e, i) => ({ name: e.name, type: e.type, paragraphIndex: i }));
-  doc.timeline = frontmatter.timeline.length
-    ? frontmatter.timeline
-    : capture.timeline.map((t, i) => ({
-        date: t.year,
-        description: t.event,
-        significance: t.significance,
-        paragraphIndex: i,
-      }));
-  doc.concepts = frontmatter.concepts.length
-    ? frontmatter.concepts
-    : capture.concepts.map((c, i) => ({
-        term: c.concept,
-        definition: c.definition,
-        paragraphIndex: i,
-      }));
-  doc.relationships = capture.relationships;
-  doc.topics = capture.topics;
-  doc.complexity = capture.complexity;
-  doc.documentType = capture.documentClass;
-
-  doc.content = structuredContent;
-  doc.wordCount = Math.max(structuredContent.split(/\s+/).filter(Boolean).length, doc.wordCount);
+  // Update document with generated content
+  doc.title = extractTitle(content) || doc.title;
+  doc.content = content;
+  doc.wordCount = Math.max(content.split(/\s+/).filter(Boolean).length, doc.wordCount);
   doc.readingTimeMinutes = Math.max(1, Math.round(doc.wordCount / 220));
+  doc.diagramCount = (content.match(/```mermaid/g) ?? []).length;
+  doc.calloutCount = (content.match(/\[!(NOTE|WARNING|TIP|INFO)\]/g) ?? []).length;
 
-  doc.enrichedContent = structuredContent;
-  doc.diagramCount = (structuredContent.match(/```mermaid/g) ?? []).length;
-  doc.calloutCount = (structuredContent.match(/\[!(NOTE|WARNING|TIP|INFO)\]/g) ?? []).length;
+  // Extract summary and key points from generated content
+  const extracted = extractSummaryAndKeyPoints(content);
+  if (extracted.summary) doc.summary = extracted.summary;
+  if (extracted.keyPoints.length > 0) doc.keyPoints = extracted.keyPoints;
 
-  // Auto-tag from extracted entities
+  // Auto-tag
   doc.tags = mergeTags(
     tags,
     deriveAutoTags({
@@ -300,105 +279,33 @@ export async function runCapturePipeline(
     }),
   );
 
-  onProgress?.('Parsing structured data', 80);
-
-  // Engine 4: Storage + Search
+  // Chunk and save
+  onProgress?.('Chunking...', 80);
   doc.status = 'chunked';
+  doc.updatedAt = new Date().toISOString();
   await saveDocument(doc);
-  const chunks = chunkDocument(docId, structuredContent, extraction.cleanedHtml);
+
+  const chunks = chunkDocument(docId, content, extraction.cleanedHtml);
   await saveChunks(chunks);
-  log.info('pipeline', `Created ${chunks.length} chunks for ${docId}`);
-
-  onProgress?.('Chunked content', 85);
-
-  // Generate embeddings (on-device or cloud). Never fatal: the document is
-  // already chunked and usable, so an embedding failure (including loading the
-  // on-device runtime in a context without a DOM) only disables semantic search
-  // rather than aborting the whole capture.
-  try {
-    const { getOnDeviceConfig, embedOnDevice } = await import('./on-device');
-    const onDeviceCfg = await getOnDeviceConfig();
-    const hasOnDeviceEmbedding =
-      onDeviceCfg.enabled &&
-      onDeviceCfg.embeddingModelId &&
-      onDeviceCfg.status[onDeviceCfg.embeddingModelId] === 'ready';
-    const {
-      providerId: embedProviderId,
-      model: embedModel,
-      version: embedVersion,
-    } = settings.runtime.embedding;
-
-    if (hasOnDeviceEmbedding && (!embedProviderId || !embedModel)) {
-      doc.status = 'embedding';
-      await saveDocument(doc);
-      try {
-        const texts = chunks.map((c) => c.text);
-        const batchSize = 8;
-        const modelId = onDeviceCfg.embeddingModelId!;
-        for (let i = 0; i < texts.length; i += batchSize) {
-          const batch = texts.slice(i, i + batchSize);
-          const vectors = await embedOnDevice(batch, modelId);
-          for (let j = 0; j < batch.length; j++) {
-            await db.vectors.put({
-              chunkId: chunks[i + j].id,
-              embedding: normalise(vectors[j]),
-              providerId: `local:${modelId}`,
-              embeddingModel: modelId,
-              dimensions: vectors[j].length,
-              embeddingVersion: 1,
-            });
-          }
-        }
-        doc.embeddingsGenerated = true;
-      } catch (err) {
-        log.warn('pipeline', 'On-device embedding failed', err);
-      }
-    } else if (embedProviderId && embedModel) {
-      doc.status = 'embedding';
-      await saveDocument(doc);
-      try {
-        const embedProvider = await getProvider(embedProviderId);
-        if (embedProvider) {
-          const embedder = getEmbeddingProvider(embedProvider);
-          if (embedder.dimensions > 0) {
-            const texts = chunks.map((c) => c.text);
-            const batchSize = 10;
-            for (let i = 0; i < texts.length; i += batchSize) {
-              const batch = texts.slice(i, i + batchSize);
-              const vectors = await withRetry(() => embedder.embed(batch));
-              for (let j = 0; j < batch.length; j++) {
-                await db.vectors.put({
-                  chunkId: chunks[i + j].id,
-                  embedding: normalise(vectors[j]),
-                  providerId: embedProviderId,
-                  embeddingModel: embedModel,
-                  dimensions: embedder.dimensions,
-                  embeddingVersion: embedVersion,
-                });
-              }
-            }
-            doc.embeddingsGenerated = true;
-          }
-        }
-      } catch (err) {
-        log.warn('pipeline', 'Cloud embedding failed', err);
-      }
-    }
-  } catch (err) {
-    log.warn('pipeline', 'Embedding generation skipped (non-fatal)', err);
-  }
+  log.info('pipeline', `Created ${chunks.length} chunks`);
 
   doc.status = 'ready';
   doc.updatedAt = new Date().toISOString();
   await saveDocument(doc);
 
-  onProgress?.('Capture complete', 100);
-  log.success('pipeline', `Capture complete: ${docId} - "${doc.title}"`);
+  onProgress?.('Complete', 100);
+  log.success('pipeline', `Captured: ${docId} — "${doc.title}"`);
 
   return docId;
 }
 
-// ── RAG pipeline ───────────────────────────────────────────────────────
+/* ── RAG pipeline ─────────────────────────────────────────────────────── */
+
+let abortController: AbortController | null = null;
+
+export function abortRAG(): void {
+  abortController?.abort();
+}
 
 export async function runRAGPipeline(
   query: string,
@@ -413,25 +320,27 @@ export async function runRAGPipeline(
   priorMessages.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const recentHistory = priorMessages.slice(-6).map((m) => ({ role: m.role, content: m.text }));
 
+  const expandedQuery = expandQueryWithHistory(query, recentHistory);
+
   if (shouldRunOffline(settings)) {
     const docChunks = await db.chunks.where('noteId').equals(documentId).toArray();
     const ranked = rankChunksByKeywords(
-      query,
+      expandedQuery,
       docChunks.map((c) => ({ text: c.text, paragraphIndex: c.paragraphIndex })),
       6,
     );
-    const answer = answerWithOfflineNLP(query, ranked);
+    const answer = answerWithOfflineNLP(expandedQuery, ranked);
     onChunk?.(answer);
     const citations = parseCitations(
       answer,
-      ranked.map((r, _i) => {
+      ranked.map((r) => {
         const orig =
           docChunks.find((c) => c.paragraphIndex === r.paragraphIndex && c.text === r.text) ??
           docChunks[0];
-        return { ...orig, score: r.score };
+        return { ...orig, score: r.score, source: 'keyword' as const };
       }),
     );
-    await persistConversationTurn(documentId, query, answer, citations);
+    await persistConversationTurn(documentId, expandedQuery, answer, citations);
     return { answer, citations };
   }
 
@@ -439,24 +348,31 @@ export async function runRAGPipeline(
   const model = resolveChatModel(settings, 'BALANCED');
   const chat = getChatProvider(provider);
 
-  let chunks: RetrievedChunk[] = [];
+  let queryEmbedding: Float32Array | null = null;
   if (embedProviderId && embedVersion > 0) {
     try {
       const embedProvider = await getProvider(embedProviderId);
       if (embedProvider) {
         const embedder = getEmbeddingProvider(embedProvider);
-        const [queryVec] = await embedder.embed([query]);
-        chunks = await retrieveTopK(normalise(queryVec), embedVersion, 6, documentId);
+        const [queryVec] = await embedder.embed([expandedQuery]);
+        queryEmbedding = normalise(queryVec);
       }
     } catch {
-      log.warn('pipeline', 'Vector search failed, falling back to keyword');
+      log.warn('pipeline', 'Vector embedding failed, using keyword-only search');
     }
+  }
+
+  let chunks: RetrievedChunk[] = [];
+  try {
+    chunks = await retrieveHybridTopK(expandedQuery, queryEmbedding, embedVersion, 6, documentId);
+  } catch {
+    log.warn('pipeline', 'Hybrid search failed, falling back to keyword');
   }
 
   if (chunks.length === 0) {
     const docChunks = await db.chunks.where('noteId').equals(documentId).toArray();
     const ranked = rankChunksByKeywords(
-      query,
+      expandedQuery,
       docChunks.map((c) => ({ text: c.text, paragraphIndex: c.paragraphIndex })),
       6,
     );
@@ -465,12 +381,17 @@ export async function runRAGPipeline(
         const orig =
           docChunks.find((c) => c.paragraphIndex === r.paragraphIndex && c.text === r.text) ??
           docChunks[0];
-        return { ...orig, score: r.score };
+        return { ...orig, score: r.score, source: 'keyword' as const };
       })
       .filter((c) => c != null);
   }
 
-  const prompt = buildRAGPrompt(query, chunks, recentHistory, readingLevel);
+  chunks = await expandContext(chunks, 1, documentId);
+
+  const prompt = buildRAGPrompt(expandedQuery, chunks, recentHistory, readingLevel);
+
+  abortController = new AbortController();
+  const signal = abortController.signal;
 
   let answer = '';
   try {
@@ -481,6 +402,7 @@ export async function runRAGPipeline(
         { role: 'user', content: prompt },
       ],
     })) {
+      if (signal.aborted) break;
       if (chunk.type === 'text' && chunk.text) {
         answer += chunk.text;
         onChunk?.(chunk.text);
@@ -488,35 +410,29 @@ export async function runRAGPipeline(
       if (chunk.type === 'error') throw new AIClientError(chunk.error ?? 'RAG failed');
     }
   } catch {
-    const { getOnDeviceConfig, generateOnDevice } = await import('./on-device');
-    const onDevCfg = await getOnDeviceConfig();
-    const readyChatId =
-      onDevCfg.chatModelId && onDevCfg.status[onDevCfg.chatModelId] === 'ready'
-        ? onDevCfg.chatModelId
-        : null;
-    if (readyChatId) {
-      for await (const t of generateOnDevice(
-        'You are a precise question-answering assistant.',
-        prompt,
-        readyChatId,
-      )) {
-        answer += t;
-        onChunk?.(t);
-      }
-    } else {
-      const docChunks = await db.chunks.where('noteId').equals(documentId).toArray();
-      const ranked = rankChunksByKeywords(
-        query,
-        docChunks.map((c) => ({ text: c.text, paragraphIndex: c.paragraphIndex })),
-        6,
+    if (signal.aborted) {
+      await persistConversationTurn(
+        documentId,
+        expandedQuery,
+        answer,
+        parseCitations(answer, chunks),
       );
-      answer = answerWithOfflineNLP(query, ranked);
-      onChunk?.(answer);
+      return { answer, citations: parseCitations(answer, chunks) };
     }
+    const docChunks = await db.chunks.where('noteId').equals(documentId).toArray();
+    const ranked = rankChunksByKeywords(
+      expandedQuery,
+      docChunks.map((c) => ({ text: c.text, paragraphIndex: c.paragraphIndex })),
+      6,
+    );
+    answer = answerWithOfflineNLP(expandedQuery, ranked);
+    onChunk?.(answer);
+  } finally {
+    abortController = null;
   }
 
   const citations = parseCitations(answer, chunks);
-  await persistConversationTurn(documentId, query, answer, citations);
+  await persistConversationTurn(documentId, expandedQuery, answer, citations);
   return { answer, citations };
 }
 

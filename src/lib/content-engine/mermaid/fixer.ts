@@ -110,10 +110,9 @@ function fixDirectionSyntax(code: string): string {
   const lines = code.split('\n');
   if (lines.length > 0) {
     const first = lines[0].trim();
-    // Auto-correct common direction typos
     lines[0] = first
-      .replace(/\b(?:graph|flowchart)\s+(Td|T D)\b/i, '$1 LR')
-      .replace(/\b(?:graph|flowchart)\s+(Lr)\b/i, '$1 LR');
+      .replace(/\b(graph|flowchart)\s+(Td|T D)\b/i, '$1 LR')
+      .replace(/\b(graph|flowchart)\s+(Lr)\b/i, '$1 LR');
   }
   return lines.join('\n');
 }

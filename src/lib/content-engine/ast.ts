@@ -52,14 +52,63 @@ function hashText(text: string): string {
   return h.toString(16).padStart(8, '0');
 }
 
+const DIAGRAM_FIRST_LINE =
+  /^(graph\s+(TB|TD|BT|RL|LR)|flowchart\s+(TB|TD|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|mindmap|timeline|gitGraph|architecture)\b/i;
+
+const DIAGRAM_KIND_MAP: Record<string, DiagramKind> = {
+  graph: 'flowchart',
+  flowchart: 'flowchart',
+  sequencediagram: 'sequenceDiagram',
+  classdiagram: 'classDiagram',
+  statediagram: 'stateDiagram',
+  erdiagram: 'erDiagram',
+  journey: 'journey',
+  gantt: 'gantt',
+  pie: 'pie',
+  mindmap: 'mindmap',
+  timeline: 'timeline',
+  gitgraph: 'gitGraph',
+  architecture: 'architecture',
+};
+
+function detectInlineDiagram(
+  content: string,
+): { code: string; kind: DiagramKind; remaining: string } | null {
+  const lines = content.split('\n');
+  const first = lines[0]?.trim() ?? '';
+  if (!DIAGRAM_FIRST_LINE.test(first)) return null;
+  let end = 1;
+  while (end < lines.length) {
+    const l = lines[end];
+    if (l.trim() === '' || l[0] === ' ' || l[0] === '\t') {
+      end++;
+      continue;
+    }
+    break;
+  }
+  if (end === 1) return null;
+  const typeKey = first.replace(/[\s].*$/, '').toLowerCase();
+  const kind = DIAGRAM_KIND_MAP[typeKey] ?? 'flowchart';
+  const code = lines.slice(0, end).join('\n');
+  const remaining = lines.slice(end).join('\n').trim();
+  return { code, kind, remaining };
+}
+
 function detectCallout(raw: string): { kind: string; title: string; content: string } | null {
-  const lines = raw.split('\n');
+  const lines = raw.split('\n').map((l) => l.replace(/^>\s*/, ''));
   const first = lines[0]?.trim();
-  const match = first?.match(/^\[!(NOTE|WARNING|TIP|DANGER|INFO)\]\s*(.*)?$/i);
+  if (!first) return null;
+  const match = first.match(
+    /^\[!(NOTE|WARNING|TIP|DANGER|INFO|IMPORTANT|CAUTION|SUCCESS|QUESTION)\]\s*(.*)?$/i,
+  );
   if (!match) return null;
   const kind = match[1].toLowerCase();
   const title = match[2]?.trim() ?? '';
-  const content = lines.slice(1).join('\n').trim();
+  const content = lines
+    .slice(1)
+    .map((l) => l.replace(/^>\s*/, ''))
+    .join('\n')
+    .trim();
   return { kind, title, content };
 }
 
@@ -252,7 +301,25 @@ function tokenToEnriched(
       }
 
       case 'blockquote': {
-        return { type: 'blockquote', raw: (token as Tokens.Blockquote).raw };
+        const raw = (token as Tokens.Blockquote).raw;
+        // GitHub / Obsidian admonitions (`> [!NOTE]`) arrive as blockquotes, so
+        // detect them here too — not just in the paragraph branch.
+        if (options.detectCallouts) {
+          const callout = detectCallout(raw);
+          if (callout) {
+            return {
+              type: 'callout',
+              raw,
+              data: {
+                type: 'callout',
+                kind: callout.kind as CalloutKind,
+                content: callout.content,
+                title: callout.title,
+              },
+            };
+          }
+        }
+        return { type: 'blockquote', raw };
       }
 
       case 'space':
@@ -293,9 +360,46 @@ export function parseToEnrichedAST(
     if (block) blocks.push(block);
   }
 
-  const hierarchy = buildHierarchy(blocks, state);
+  const expanded: EnrichedBlock[] = [];
+  for (const block of blocks) {
+    if (
+      block.type === 'callout' &&
+      block.data &&
+      'content' in block.data &&
+      options.detectDiagrams
+    ) {
+      const calloutData = block.data as CalloutElement;
+      const diagram = detectInlineDiagram(calloutData.content);
+      if (diagram) {
+        state.diagramCount++;
+        const dId = `diagram-${state.diagramCount}`;
+        expanded.push({
+          type: 'diagram',
+          raw: '```mermaid\n' + diagram.code + '\n```',
+          id: dId,
+          data: {
+            type: 'diagram',
+            kind: diagram.kind,
+            label: `Diagram ${state.diagramCount}`,
+            content: diagram.code,
+            caption: '',
+            altText: '',
+            placement: -1,
+            id: dId,
+          },
+        });
+        if (diagram.remaining) {
+          expanded.push({ ...block, data: { ...calloutData, content: diagram.remaining } });
+        }
+        continue;
+      }
+    }
+    expanded.push(block);
+  }
 
-  return { blocks, hierarchy, warnings };
+  const hierarchy = buildHierarchy(expanded, state);
+
+  return { blocks: expanded, hierarchy, warnings };
 }
 
 export function buildHierarchy(

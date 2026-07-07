@@ -53,6 +53,8 @@ interface CitationChipProps {
 
 function CitationChip({ n, citation, leftPaneRef }: CitationChipProps) {
   const highlightedElRef = useRef<HTMLElement | null>(null);
+  const [showTooltip, setShowTooltip] = useState(false);
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
   function handleClick() {
     clearCitationHighlight(highlightedElRef.current);
@@ -73,23 +75,43 @@ function CitationChip({ n, citation, leftPaneRef }: CitationChipProps) {
   function handleMouseEnter() {
     const el = scrollToAndHighlightCitation(leftPaneRef, citation.paragraphIndex, false);
     highlightedElRef.current = el ?? null;
+    setShowTooltip(true);
   }
 
   function handleMouseLeave() {
     clearCitationHighlight(highlightedElRef.current);
     highlightedElRef.current = null;
+    setShowTooltip(false);
   }
 
+  const previewText =
+    citation.text.length > 150 ? citation.text.slice(0, 150) + '\u2026' : citation.text;
+
   return (
-    <button
-      onClick={handleClick}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      className="inline text-[11px] font-semibold text-[var(--color-primary)] hover:opacity-70 transition-opacity cursor-pointer px-0.5"
-      title={`Go to source paragraph ${citation.paragraphIndex}`}
-    >
-      [{n}]
-    </button>
+    <span className="relative inline">
+      <button
+        onClick={handleClick}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        className="inline text-[11px] font-semibold text-[var(--color-primary)] hover:opacity-70 transition-opacity cursor-pointer px-0.5"
+        title={`Go to source paragraph ${citation.paragraphIndex}`}
+      >
+        [{n}]
+      </button>
+      {showTooltip && (
+        <div
+          ref={tooltipRef}
+          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-50 pointer-events-none"
+        >
+          <div className="bg-[var(--color-ink)] text-[var(--color-ink-opposite)] text-[12px] leading-relaxed rounded-lg px-3 py-2 shadow-lg max-w-[280px] whitespace-normal break-words">
+            <p className="text-[10px] font-semibold opacity-60 mb-0.5">
+              Source paragraph {citation.paragraphIndex}
+            </p>
+            {previewText}
+          </div>
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -492,6 +514,7 @@ interface NotchBubbleProps {
   text: string;
   citations?: Citation[];
   isError?: boolean;
+  isStreaming?: boolean;
   translated?: string;
   isTranslating?: boolean;
   showLanguageInput?: boolean;
@@ -499,6 +522,7 @@ interface NotchBubbleProps {
   onTranslate?: () => void;
   onTranslateSubmit?: (language: string) => void;
   onPin?: () => void;
+  onStop?: () => void;
   isPinned?: boolean;
 }
 
@@ -506,6 +530,7 @@ function NotchBubble({
   text,
   citations,
   isError,
+  isStreaming,
   translated,
   isTranslating,
   showLanguageInput,
@@ -513,6 +538,7 @@ function NotchBubble({
   onTranslate,
   onTranslateSubmit,
   onPin,
+  onStop,
   isPinned,
 }: NotchBubbleProps) {
   const { speaking, speak } = useTtsSpeak();
@@ -579,6 +605,17 @@ function NotchBubble({
           >
             {speaking ? 'Stop' : 'Read aloud'}
           </button>
+          {isStreaming && onStop && (
+            <button
+              onClick={onStop}
+              className="text-[11px] font-semibold text-[var(--color-destructive)] hover:opacity-80 transition-opacity flex items-center gap-1"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="1" />
+              </svg>
+              Stop
+            </button>
+          )}
           {showLanguageInput ? (
             <input
               ref={langInputRef}
@@ -640,17 +677,20 @@ function ThinkingIndicator() {
 interface MessageListProps {
   messages: Message[];
   isThinking: boolean;
+  isStreaming: boolean;
   leftPaneRef: React.RefObject<HTMLDivElement | null>;
   starters: string[];
   onAsk: (question: string) => void;
   onTranslate: (index: number) => void;
   onTranslateSubmit: (index: number, language: string) => void;
   languageInputIndex: number | null;
+  onStop?: () => void;
 }
 
 function MessageList({
   messages,
   isThinking,
+  isStreaming,
   leftPaneRef,
   starters,
   onAsk,
@@ -658,12 +698,45 @@ function MessageList({
   onTranslateSubmit,
   languageInputIndex,
   onPin,
-}: MessageListProps & { onPin: (id: string) => void }) {
+  onStop,
+}: MessageListProps & { onPin: (id: string) => void; onStop?: () => void }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isThinking]);
+  }, [messages, isThinking, isStreaming]);
+
+  const buildFollowUps = useCallback((lastAnswer: string): string[] => {
+    const lines = lastAnswer.split('\n').filter(Boolean);
+    const lastLine = lines[lines.length - 1] ?? '';
+    const hasBullet = lastAnswer.includes('- ') || lastAnswer.includes('* ');
+    const hasNumber = /^\d+\./.test(lastLine);
+    const hasCode = lastAnswer.includes('`');
+    const mentionsConcept = /concept|theory|approach|method/i.test(lastAnswer);
+    const isDefinition = /is\s+(a|an|the)\s/i.test(lastAnswer.slice(0, 60));
+
+    const suggestions: string[] = [];
+    if (hasBullet) suggestions.push('Expand on the last point');
+    if (mentionsConcept) suggestions.push('Give a concrete example of this');
+    if (isDefinition) suggestions.push('Why is this important?');
+    if (hasCode) suggestions.push('Walk through this step by step');
+    if (hasNumber) suggestions.push('Summarize these points');
+    suggestions.push('Go deeper on that');
+    suggestions.push('What are the implications?');
+
+    return [...new Set(suggestions)].slice(0, 4);
+  }, []);
+
+  const followUps =
+    !isThinking && !isStreaming && messages.length > 0
+      ? (() => {
+          const last = messages[messages.length - 1];
+          if (last.role === 'assistant' && !last.isError) {
+            return buildFollowUps(last.text);
+          }
+          return null;
+        })()
+      : null;
 
   return (
     <div className="flex flex-col gap-3 flex-1 overflow-y-auto py-2">
@@ -687,8 +760,10 @@ function MessageList({
           )}
         </div>
       )}
-      {messages.map((msg, i) =>
-        msg.role === 'user' ? (
+      {messages.map((msg, i) => {
+        const isLastAssistant =
+          i === messages.length - 1 && msg.role === 'assistant' && isStreaming;
+        return msg.role === 'user' ? (
           <UserBubble key={msg.id} text={msg.text} />
         ) : (
           <NotchBubble
@@ -696,6 +771,7 @@ function MessageList({
             text={msg.text}
             citations={msg.citations}
             isError={msg.isError}
+            isStreaming={isLastAssistant}
             translated={msg.translated}
             isTranslating={msg.isTranslating}
             leftPaneRef={leftPaneRef}
@@ -703,32 +779,25 @@ function MessageList({
             onTranslate={() => onTranslate(i)}
             onTranslateSubmit={(language) => onTranslateSubmit(i, language)}
             onPin={() => onPin(msg.id)}
+            onStop={isLastAssistant ? onStop : undefined}
             isPinned={msg.pinned}
           />
-        ),
+        );
+      })}
+      {isThinking && !isStreaming && <ThinkingIndicator />}
+      {followUps && (
+        <div className="flex flex-wrap gap-1.5">
+          {followUps.map((q) => (
+            <button
+              key={q}
+              onClick={() => onAsk(q)}
+              className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] transition-all hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
       )}
-      {isThinking && <ThinkingIndicator />}
-      {!isThinking &&
-        messages.length > 0 &&
-        messages[messages.length - 1].role === 'assistant' &&
-        !messages[messages.length - 1].isError && (
-          <div className="flex flex-wrap gap-1.5">
-            {[
-              'Go deeper on that',
-              'Give a concrete example',
-              'Why does this matter?',
-              'Summarize that in one line',
-            ].map((q) => (
-              <button
-                key={q}
-                onClick={() => onAsk(q)}
-                className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[var(--color-ink-muted)] transition-all hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-        )}
       <div ref={bottomRef} />
     </div>
   );
@@ -936,6 +1005,7 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isThinking, setIsThinking] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [readingLevel, setReadingLevel] = useState<ReadingLevel>('simple');
   // CHAT-1: library vs page scope
   const [scope, setScope] = useState<'page' | 'library'>('page');
@@ -989,14 +1059,27 @@ export function ChatPanel({
   const handleSubmit = useCallback(
     (query: string) => {
       const userMsgId = `user-${Date.now()}`;
-      setMessages((prev) => [...prev, { id: userMsgId, role: 'user', text: query }]);
+      const assistantId = `asst-${Date.now()}`;
+      setMessages((prev) => [
+        ...prev,
+        { id: userMsgId, role: 'user', text: query },
+        { id: assistantId, role: 'assistant', text: '' },
+      ]);
       setIsThinking(true);
+      setIsStreaming(true);
 
-      // CHAT-1: for library scope, run against all docs (send first doc for now, repeat per doc)
       const targetDocId =
-        scope === 'library' && allDocIds && allDocIds.length > 0
-          ? allDocIds[0] // TODO: multi-doc RAG — for now query the first note
-          : doc.id;
+        scope === 'library' && allDocIds && allDocIds.length > 0 ? allDocIds[0] : doc.id;
+
+      // Listen for streaming chunks
+      function handleChunk(msg: { type: string; payload?: { chunk?: string } }) {
+        if (msg.type === 'RAG_CHUNK' && msg.payload?.chunk) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, text: msg.payload!.chunk! } : m)),
+          );
+        }
+      }
+      browser.runtime.onMessage.addListener(handleChunk);
 
       browser.runtime
         .sendMessage({
@@ -1008,32 +1091,35 @@ export function ChatPanel({
             type: string;
             payload?: { answer?: string; citations?: Citation[]; error?: string };
           }) => {
+            browser.runtime.onMessage.removeListener(handleChunk);
             setIsThinking(false);
-            const assistantId = `asst-${Date.now()}`;
+            setIsStreaming(false);
             if (response.type === 'RAG_ERROR') {
-              setMessages((prev) => [
-                ...prev,
-                { id: assistantId, role: 'assistant', text: '', isError: true },
-              ]);
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, text: '', isError: true } : m)),
+              );
             } else {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: assistantId,
-                  role: 'assistant',
-                  text: response.payload?.answer ?? '',
-                  citations: response.payload?.citations,
-                },
-              ]);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        text: response.payload?.answer ?? m.text,
+                        citations: response.payload?.citations,
+                      }
+                    : m,
+                ),
+              );
             }
           },
         )
         .catch(() => {
+          browser.runtime.onMessage.removeListener(handleChunk);
           setIsThinking(false);
-          setMessages((prev) => [
-            ...prev,
-            { id: `err-${Date.now()}`, role: 'assistant', text: '', isError: true },
-          ]);
+          setIsStreaming(false);
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, text: '', isError: true } : m)),
+          );
         });
     },
     [doc.id, readingLevel, scope, allDocIds],
@@ -1092,6 +1178,12 @@ export function ChatPanel({
   // CHAT-13: toggle pin on a message by id
   const handlePin = useCallback((id: string) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, pinned: !m.pinned } : m)));
+  }, []);
+
+  const handleStop = useCallback(() => {
+    browser.runtime.sendMessage({ type: 'ABORT_RAG' }).catch(() => {});
+    setIsThinking(false);
+    setIsStreaming(false);
   }, []);
 
   // CHAT-9: double-click to define a term
@@ -1179,6 +1271,7 @@ export function ChatPanel({
         <MessageList
           messages={messages}
           isThinking={isThinking}
+          isStreaming={isStreaming}
           leftPaneRef={leftPaneRef}
           starters={starters}
           onAsk={handleSubmit}
@@ -1186,6 +1279,7 @@ export function ChatPanel({
           onTranslateSubmit={(index, language) => handleTranslate(index, language)}
           languageInputIndex={languageInputIndex}
           onPin={handlePin}
+          onStop={handleStop}
         />
       </div>
       <ChatInput onSubmit={handleSubmit} disabled={isThinking} initialValue={prefillQuery} />

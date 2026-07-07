@@ -27,10 +27,9 @@ import { Input } from '@/components/ui/input';
 import { ModelCombobox } from '@/components/ModelCombobox';
 import { fetchAvailableModels, type ModelOption } from '@/lib/models-api';
 import { detectLocalServers, type LocalServerResult } from '@/lib/local-servers';
-import { LOCAL_MODELS, getOnDeviceConfig, type ModelStatus } from '@/lib/on-device';
 import { log } from '@/lib/logger';
 
-type Tab = 'providers' | 'general' | 'on-device' | 'appearance';
+type Tab = 'providers' | 'general' | 'appearance';
 
 function genId(): string {
   return crypto.randomUUID();
@@ -57,30 +56,38 @@ function ProviderForm({
   onTest,
   testResult,
   testing,
+  models,
+  modelsLoading,
+  modelsError,
+  onRefreshModels,
 }: {
   cfg: ProviderConfig;
   onChange: (c: ProviderConfig) => void;
   onTest: () => void;
   testResult: TestResult | null;
   testing: boolean;
+  models: ModelOption[];
+  modelsLoading: boolean;
+  modelsError: string | undefined;
+  onRefreshModels: () => void;
 }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
-        <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">
-          Label
+        <label className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide block mb-1.5">
+          Provider label
         </label>
         <input
           value={cfg.label}
           onChange={(e) => onChange({ ...cfg, label: e.target.value })}
           className="notion-input"
-          placeholder="My API Key"
+          placeholder="e.g. My OpenAI key"
         />
       </div>
 
       <div>
-        <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">
-          Protocol
+        <label className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide block mb-1.5">
+          API protocol
         </label>
         <select
           value={cfg.protocol}
@@ -88,13 +95,13 @@ function ProviderForm({
           className="notion-input cursor-pointer"
         >
           <option value="openai">OpenAI-compatible</option>
-          <option value="anthropic">Anthropic (native)</option>
-          <option value="gemini">Gemini (native)</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="gemini">Gemini</option>
         </select>
       </div>
 
       <div>
-        <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">
+        <label className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide block mb-1.5">
           Base URL
         </label>
         <input
@@ -106,8 +113,8 @@ function ProviderForm({
       </div>
 
       <div>
-        <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">
-          API Key
+        <label className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide block mb-1.5">
+          API key
         </label>
         <input
           type="password"
@@ -116,63 +123,76 @@ function ProviderForm({
           className="notion-input"
           placeholder="sk-..."
         />
-        <p className="text-[11px] text-[var(--color-ink-muted)] leading-relaxed mt-1.5">
-          Stored only on this device in the browser's local database. It is sent solely to the
-          provider endpoint above when you capture or chat — never to Notch. Remove it anytime with
-          Delete, or clear every key at the bottom of this page.
+        <p className="text-[11px] text-ink-muted leading-relaxed mt-1.5">
+          Stored only on this device. Sent solely to the provider endpoint above when you capture or
+          chat. Removable at any time.
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">
-            Chat Model
-          </label>
-          <input
-            value={cfg.chatModel}
-            onChange={(e) => onChange({ ...cfg, chatModel: e.target.value })}
-            className="notion-input"
-            placeholder="gpt-4o-mini"
-          />
-        </div>
-        <div>
-          <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-1">
-            Embedding Model
-          </label>
-          <input
-            value={cfg.embeddingModel}
-            onChange={(e) => onChange({ ...cfg, embeddingModel: e.target.value })}
-            className="notion-input"
-            placeholder="text-embedding-3-small"
-          />
-        </div>
+      <div>
+        <label className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide block mb-1.5">
+          Chat model
+        </label>
+        <ModelCombobox
+          value={cfg.chatModel}
+          onChange={(v) => onChange({ ...cfg, chatModel: v })}
+          options={models}
+          loading={modelsLoading}
+          error={modelsError}
+          onRefresh={onRefreshModels}
+          placeholder="Search or type a model name..."
+        />
+        <p className="text-[11px] text-ink-muted mt-1">
+          Used for summarisation, chat, and AI processing.
+        </p>
       </div>
 
-      <button
-        onClick={onTest}
-        disabled={testing}
-        className={cn(
-          'w-full py-2.5 text-[13px] font-medium rounded-full border transition-all',
-          testing
-            ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-            : 'notion-btn-utility w-full justify-center',
-        )}
-      >
-        {testing ? 'Testing...' : 'Test Connection'}
-      </button>
+      <div>
+        <label className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide block mb-1.5">
+          Embedding model
+        </label>
+        <ModelCombobox
+          value={cfg.embeddingModel}
+          onChange={(v) => onChange({ ...cfg, embeddingModel: v })}
+          options={models}
+          loading={modelsLoading}
+          error={modelsError}
+          onRefresh={onRefreshModels}
+          placeholder="Search or type a model name..."
+        />
+        <p className="text-[11px] text-ink-muted mt-1">
+          Used for semantic search. Must be a text-embedding model. If left empty, the chat model is
+          used instead (may reduce search quality).
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3 pt-2">
+        <button
+          onClick={onTest}
+          disabled={testing}
+          className={cn(
+            'flex-1 py-2.5 text-[13px] font-medium rounded-lg border transition-all',
+            testing
+              ? 'border-primary text-primary bg-primary/5'
+              : 'border-hairline text-ink-muted hover:text-ink hover:border-ink-faint',
+          )}
+        >
+          {testing ? 'Testing…' : 'Test connection'}
+        </button>
+      </div>
 
       {testResult && (
         <div
           className={cn(
             'text-[12px] p-3 rounded-lg border',
             testResult.success
-              ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-              : 'border-[var(--color-destructive)] text-[var(--color-destructive)] bg-[var(--color-destructive)]/5',
+              ? 'border-success/30 text-success bg-success/5'
+              : 'border-destructive/30 text-destructive bg-destructive/5',
           )}
         >
           {testResult.success
-            ? `Connected (${testResult.latencyMs}ms)${testResult.model ? ` — ${testResult.model}` : ''}${testResult.dimensions ? `, ${testResult.dimensions}d embedding` : ''}`
-            : `${testResult.error ?? 'Connection failed'}`}
+            ? `Connected (${testResult.latencyMs}ms)${testResult.model ? ` — ${testResult.model}` : ''}${testResult.dimensions ? `, ${testResult.dimensions}d` : ''}`
+            : `Failed: ${testResult.error ?? 'Connection failed'}`}
         </div>
       )}
     </div>
@@ -182,7 +202,7 @@ function ProviderForm({
 function PresetSelector({ onSelect }: { onSelect: (preset: (typeof PRESETS)[number]) => void }) {
   return (
     <div>
-      <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-2">
+      <p className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide mb-2">
         Quick Add Provider
       </p>
       <div className="grid grid-cols-2 gap-2">
@@ -190,7 +210,7 @@ function PresetSelector({ onSelect }: { onSelect: (preset: (typeof PRESETS)[numb
           <button
             key={p.label}
             onClick={() => onSelect(p)}
-            className="text-left text-[12px] font-medium border border-[var(--color-hairline)] rounded-lg px-3 py-2.5 text-[var(--color-ink)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 transition-all"
+            className="text-left text-[12px] font-medium border border-hairline rounded-lg px-3 py-2.5 text-ink hover:border-primary hover:bg-primary/5 transition-all"
           >
             {p.label}
           </button>
@@ -216,22 +236,18 @@ function ProviderCard({
   return (
     <div
       className={cn(
-        'rounded-xl border p-4 space-y-2 bg-white transition-all',
-        active
-          ? 'border-[var(--color-primary)] ring-1 ring-[var(--color-primary)]'
-          : 'border-[var(--color-hairline)] hover:border-[var(--color-primary)]',
+        'rounded-xl border p-4 space-y-2 bg-surface transition-all',
+        active ? 'border-primary ring-1 ring-primary' : 'border-hairline hover:border-primary',
       )}
     >
       <div className="flex items-center justify-between">
-        <span className="text-[14px] font-semibold text-[var(--color-ink)]">
-          {provider.label || 'Unnamed'}
-        </span>
-        <span className="text-[11px] font-medium text-[var(--color-ink-muted)] bg-[var(--color-canvas-soft)] px-2 py-0.5 rounded-full">
+        <span className="text-[14px] font-semibold text-ink">{provider.label || 'Unnamed'}</span>
+        <span className="text-[11px] font-medium text-ink-muted bg-canvas-soft px-2 py-0.5 rounded-full">
           {provider.protocol}
         </span>
       </div>
-      <p className="text-[12px] text-[var(--color-ink-muted)] truncate">{provider.baseUrl}</p>
-      <p className="text-[11px] text-[var(--color-ink-faint)] truncate">
+      <p className="text-[12px] text-ink-muted truncate">{provider.baseUrl}</p>
+      <p className="text-[11px] text-ink-faint truncate">
         Chat: {provider.chatModel || '\u2014'} / Embed: {provider.embeddingModel || '\u2014'}
       </p>
       <div className="flex gap-2 mt-2">
@@ -241,7 +257,7 @@ function ProviderCard({
           </button>
         )}
         {active && (
-          <span className="text-[12px] font-medium text-[var(--color-primary)] px-3 py-1.5 rounded-full bg-[var(--color-primary)]/5">
+          <span className="text-[12px] font-medium text-primary px-3 py-1.5 rounded-full bg-primary/5">
             Active
           </span>
         )}
@@ -250,7 +266,7 @@ function ProviderCard({
         </button>
         <button
           onClick={onDelete}
-          className="notion-btn-utility text-[12px] text-[var(--color-destructive)] border-[var(--color-destructive)] hover:bg-[var(--color-destructive)]/5"
+          className="notion-btn-utility text-[12px] text-destructive border-destructive hover:bg-destructive/5"
         >
           Delete
         </button>
@@ -289,15 +305,6 @@ export default function SettingsApp() {
   const [reEmbedStatus, setReEmbedStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [reEmbedProgress, setReEmbedProgress] = useState({ done: 0, total: 0 });
 
-  const [onDeviceModelStatuses, setOnDeviceModelStatuses] = useState<Record<string, ModelStatus>>(
-    {},
-  );
-  const [onDeviceProgress, setOnDeviceProgress] = useState<Record<string, number>>({});
-  const [onDeviceEmbedId, setOnDeviceEmbedId] = useState<string | null>(null);
-  const [onDeviceChatId, setOnDeviceChatId] = useState<string | null>(null);
-  const [onDeviceEnabled, setOnDeviceEnabled] = useState(false);
-  const [gpuAvailable, setGpuAvailable] = useState(false);
-
   const [logEntries, setLogEntries] = useState<ReturnType<typeof log.getBuffer>>([]);
   const [showLog, setShowLog] = useState(false);
   const [logFilter, setLogFilter] = useState<'all' | 'error' | 'warn' | 'info' | 'success'>('all');
@@ -312,12 +319,7 @@ export default function SettingsApp() {
   const [serverDetectError, setServerDetectError] = useState<string | undefined>();
 
   async function loadAll() {
-    const [provs, s, a, od] = await Promise.all([
-      getAllProviders(),
-      getSettings(),
-      getAppearance(),
-      getOnDeviceConfig(),
-    ]);
+    const [provs, s, a] = await Promise.all([getAllProviders(), getSettings(), getAppearance()]);
     setProviders(provs);
     setSettingsState(s);
     setTheme(a.theme);
@@ -340,12 +342,6 @@ export default function SettingsApp() {
       setEmbeddingModel(emb.model || '');
       setEmbeddingDimensions(emb.dimensions || 0);
     }
-
-    setOnDeviceModelStatuses(od.status);
-    setOnDeviceProgress(od.progress);
-    setOnDeviceEmbedId(od.embeddingModelId);
-    setOnDeviceChatId(od.chatModelId);
-    setOnDeviceEnabled(od.enabled);
   }
 
   useEffect(() => {
@@ -363,40 +359,11 @@ export default function SettingsApp() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      try {
-        if ('gpu' in navigator) {
-          const adapter = await (
-            navigator as unknown as { gpu?: { requestAdapter: () => Promise<unknown> } }
-          ).gpu?.requestAdapter();
-          setGpuAvailable(adapter != null);
-        }
-      } catch {
-        setGpuAvailable(false);
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
     function onMsg(msg: unknown) {
       const m = msg as { type?: string; payload?: Record<string, number | string> };
       const payload = m?.payload;
       if (!payload) return;
-      if (m?.type === 'MODEL_DOWNLOAD_PROGRESS') {
-        setOnDeviceProgress((prev) => ({
-          ...prev,
-          [String(payload.modelId ?? '')]: Number(payload.pct ?? 0),
-        }));
-        setOnDeviceModelStatuses((prev) => ({
-          ...prev,
-          [String(payload.modelId ?? '')]: 'downloading',
-        }));
-      } else if (m?.type === 'MODEL_DOWNLOAD_COMPLETE') {
-        setOnDeviceModelStatuses((prev) => ({ ...prev, [String(payload.modelId ?? '')]: 'ready' }));
-        setOnDeviceProgress((prev) => ({ ...prev, [String(payload.modelId ?? '')]: 100 }));
-      } else if (m?.type === 'MODEL_DOWNLOAD_ERROR') {
-        setOnDeviceModelStatuses((prev) => ({ ...prev, [String(payload.modelId ?? '')]: 'error' }));
-      } else if (m?.type === 'RE_EMBED_PROGRESS') {
+      if (m?.type === 'RE_EMBED_PROGRESS') {
         setReEmbedProgress({ done: Number(payload.done ?? 0), total: Number(payload.total ?? 0) });
       }
     }
@@ -611,51 +578,21 @@ export default function SettingsApp() {
     }
   }
 
-  function installOnDeviceModel(modelId: string) {
-    setOnDeviceModelStatuses((prev) => ({ ...prev, [modelId]: 'downloading' }));
-    setOnDeviceProgress((prev) => ({ ...prev, [modelId]: 0 }));
-    browser.runtime
-      .sendMessage({ type: 'MODEL_DOWNLOAD_START', payload: { modelId } })
-      .catch(() => {});
-  }
-
-  async function handleSetOnDeviceEmbedding(modelId: string) {
-    setOnDeviceEmbedId(modelId);
-    await browser.runtime
-      .sendMessage({ type: 'MODEL_SET_EMBEDDING', payload: { modelId } })
-      .catch(() => {});
-  }
-
-  async function handleSetOnDeviceChat(modelId: string) {
-    setOnDeviceChatId(modelId);
-    await browser.runtime
-      .sendMessage({ type: 'MODEL_SET_CHAT', payload: { modelId } })
-      .catch(() => {});
-  }
-
-  async function handleToggleOnDevice(enabled: boolean) {
-    setOnDeviceEnabled(enabled);
-    await browser.runtime
-      .sendMessage({ type: 'MODEL_ENABLE_ON_DEVICE', payload: { enabled } })
-      .catch(() => {});
-  }
-
   const activeProvider = providers.find((p) => p.enabled);
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'providers', label: 'Providers' },
     { id: 'general', label: 'General' },
-    { id: 'on-device', label: 'On-Device' },
     { id: 'appearance', label: 'Appearance' },
   ];
 
   return (
-    <div className="min-h-screen bg-[var(--color-canvas-soft)] text-[var(--color-ink)]">
-      <header className="sticky top-0 z-10 bg-[var(--color-canvas)] border-b border-[var(--color-hairline)]">
+    <div className="min-h-screen bg-canvas-soft text-ink">
+      <header className="sticky top-0 z-10 bg-canvas border-b border-hairline">
         <div className="max-w-3xl mx-auto flex items-center justify-between px-8 h-14">
           <button
             onClick={goToLibrary}
-            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] transition-colors"
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ink-muted hover:text-ink transition-colors"
           >
             <span aria-hidden="true" className="text-[16px] leading-none">
               &larr;
@@ -670,16 +607,14 @@ export default function SettingsApp() {
       <div className="p-8 max-w-3xl mx-auto">
         <h1 className="text-[26px] font-bold tracking-tight mb-8">Settings</h1>
 
-        <div className="flex gap-1 mb-8 bg-white rounded-lg border border-[var(--color-hairline)] p-1">
+        <div className="flex gap-0.5 mb-8 bg-muted rounded-lg p-0.5">
           {tabs.map(({ id, label }) => (
             <button
               key={id}
               onClick={() => setTab(id)}
               className={cn(
                 'flex-1 py-2 text-[13px] font-medium rounded-md transition-all',
-                tab === id
-                  ? 'bg-[var(--color-primary)] text-[var(--color-primary-foreground)]'
-                  : 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]',
+                tab === id ? 'bg-surface text-ink shadow-level-1' : 'text-ink-muted hover:text-ink',
               )}
             >
               {label}
@@ -691,22 +626,20 @@ export default function SettingsApp() {
         {tab === 'providers' && (
           <div className="space-y-6">
             {activeProvider && (
-              <div className="rounded-xl border border-[var(--color-primary)] bg-white p-5">
-                <p className="text-[11px] font-semibold text-[var(--color-primary)] uppercase tracking-wide mb-1">
+              <div className="rounded-xl border border-primary bg-surface p-5">
+                <p className="text-[11px] font-semibold text-primary uppercase tracking-wide mb-1">
                   Active Provider
                 </p>
-                <p className="text-[16px] font-semibold text-[var(--color-ink)]">
-                  {activeProvider.label}
-                </p>
-                <p className="text-[12px] text-[var(--color-ink-muted)]">
+                <p className="text-[16px] font-semibold text-ink">{activeProvider.label}</p>
+                <p className="text-[12px] text-ink-muted">
                   {activeProvider.baseUrl} &mdash; chat: {activeProvider.chatModel}
                 </p>
               </div>
             )}
 
             {!activeProvider && (
-              <div className="rounded-xl border border-[var(--color-destructive)] bg-white p-5">
-                <p className="text-[13px] font-medium text-[var(--color-destructive)]">
+              <div className="rounded-xl border border-destructive bg-surface p-5">
+                <p className="text-[13px] font-medium text-destructive">
                   No active provider configured. Add one below.
                 </p>
               </div>
@@ -715,9 +648,7 @@ export default function SettingsApp() {
             <div>
               <h2 className="text-[15px] font-semibold mb-3">Configured Providers</h2>
               {providers.length === 0 && (
-                <p className="text-[13px] text-[var(--color-ink-muted)]">
-                  No providers configured yet.
-                </p>
+                <p className="text-[13px] text-ink-muted">No providers configured yet.</p>
               )}
               <div className="space-y-3">
                 {providers.map((p) => (
@@ -740,7 +671,7 @@ export default function SettingsApp() {
             </div>
 
             {editing && (
-              <div className="rounded-xl border border-[var(--color-hairline)] bg-white p-6 space-y-5">
+              <div className="rounded-xl border border-hairline bg-surface p-6 space-y-5">
                 <h2 className="text-[15px] font-semibold">
                   {providers.find((p) => p.id === editing.id) ? 'Edit Provider' : 'New Provider'}
                 </h2>
@@ -752,6 +683,10 @@ export default function SettingsApp() {
                   }}
                   testResult={testResult}
                   testing={testing}
+                  models={models}
+                  modelsLoading={modelsLoading}
+                  modelsError={modelsError}
+                  onRefreshModels={() => setModelReloadKey((k) => k + 1)}
                 />
                 <div className="flex gap-3 pt-2">
                   <button
@@ -779,18 +714,18 @@ export default function SettingsApp() {
                 onClick={() => {
                   handleNewProvider();
                 }}
-                className="w-full py-3 text-[13px] font-medium rounded-xl border-2 border-dashed border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-all"
+                className="w-full py-3 text-[13px] font-medium rounded-xl border-2 border-dashed border-hairline text-ink-muted hover:text-primary hover:border-primary transition-all"
               >
                 + Add Custom Provider
               </button>
             )}
 
             {/* Key storage disclosure + clear-all control */}
-            <div className="rounded-xl border border-[var(--color-hairline)] bg-[var(--color-canvas-soft)] p-5">
-              <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-2">
+            <div className="rounded-xl border border-hairline bg-canvas-soft p-5">
+              <p className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide mb-2">
                 Where your keys live
               </p>
-              <p className="text-[12px] text-[var(--color-ink-muted)] leading-relaxed">
+              <p className="text-[12px] text-ink-muted leading-relaxed">
                 Notch is bring-your-own-key. API keys are stored unencrypted in this browser's local
                 database (IndexedDB) on your device. They are sent only to the provider endpoints
                 you configure above — never to any Notch server. Anyone with access to this browser
@@ -798,27 +733,25 @@ export default function SettingsApp() {
                 device.
               </p>
               {clearKeysNotice && (
-                <p className="text-[12px] font-medium text-[var(--color-primary)] mt-3">
-                  {clearKeysNotice}
-                </p>
+                <p className="text-[12px] font-medium text-primary mt-3">{clearKeysNotice}</p>
               )}
               {!clearKeysConfirm ? (
                 <button
                   onClick={() => setClearKeysConfirm(true)}
-                  className="mt-3 notion-btn-utility text-[12px] text-[var(--color-destructive)] border-[var(--color-destructive)] hover:bg-[var(--color-destructive)]/5"
+                  className="mt-3 notion-btn-utility text-[12px] text-destructive border-destructive hover:bg-destructive/5"
                 >
                   Clear all API keys
                 </button>
               ) : (
                 <div className="mt-3 flex items-center gap-3">
-                  <span className="text-[12px] text-[var(--color-ink)]">
+                  <span className="text-[12px] text-ink">
                     Clear every stored key? Provider settings stay; only the secrets are removed.
                   </span>
                   <button
                     onClick={() => {
                       handleClearAllKeys().catch(() => {});
                     }}
-                    className="notion-btn-utility text-[12px] text-[var(--color-destructive)] border-[var(--color-destructive)] hover:bg-[var(--color-destructive)]/5"
+                    className="notion-btn-utility text-[12px] text-destructive border-destructive hover:bg-destructive/5"
                   >
                     Confirm
                   </button>
@@ -837,10 +770,10 @@ export default function SettingsApp() {
         {/* ── GENERAL TAB ───────────────────────────────────────────────── */}
         {tab === 'general' && (
           <div className="space-y-6">
-            <div className="bg-white rounded-xl border border-[var(--color-hairline)] p-5 flex items-start justify-between gap-4">
+            <div className="bg-surface rounded-xl border border-hairline p-5 flex items-start justify-between gap-4">
               <div>
-                <p className="text-[14px] font-semibold text-[var(--color-ink)]">Local-only lock</p>
-                <p className="text-[12px] text-[var(--color-ink-muted)] leading-relaxed mt-0.5">
+                <p className="text-[14px] font-semibold text-ink">Local-only lock</p>
+                <p className="text-[12px] text-ink-muted leading-relaxed mt-0.5">
                   Guarantees nothing ever leaves this device. Capture and chat use the built-in
                   offline NLP — no network calls, regardless of the provider configured.
                 </p>
@@ -852,24 +785,22 @@ export default function SettingsApp() {
                 onClick={() => setLocalOnly((v) => !v)}
                 className={cn(
                   'shrink-0 mt-0.5 w-10 h-6 rounded-full transition-colors relative',
-                  localOnly ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-hairline)]',
+                  localOnly ? 'bg-primary' : 'bg-hairline',
                 )}
               >
                 <span
                   className={cn(
-                    'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform',
+                    'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-surface transition-transform',
                     localOnly && 'translate-x-4',
                   )}
                 />
               </button>
             </div>
 
-            <div className="bg-white rounded-xl border border-[var(--color-hairline)] p-5 flex items-start justify-between gap-4">
+            <div className="bg-surface rounded-xl border border-hairline p-5 flex items-start justify-between gap-4">
               <div>
-                <p className="text-[14px] font-semibold text-[var(--color-ink)]">
-                  Remote PlantUML diagrams
-                </p>
-                <p className="text-[12px] text-[var(--color-ink-muted)] leading-relaxed mt-0.5">
+                <p className="text-[14px] font-semibold text-ink">Remote PlantUML diagrams</p>
+                <p className="text-[12px] text-ink-muted leading-relaxed mt-0.5">
                   PlantUML diagrams can only be rendered by sending their source text to the public
                   plantuml.com service. Off by default to keep content on-device; turn this on to
                   render them. Ignored while the local-only lock is enabled.
@@ -884,22 +815,20 @@ export default function SettingsApp() {
                 className={cn(
                   'shrink-0 mt-0.5 w-10 h-6 rounded-full transition-colors relative',
                   localOnly && 'opacity-40 cursor-not-allowed',
-                  allowRemotePlantUml && !localOnly
-                    ? 'bg-[var(--color-primary)]'
-                    : 'bg-[var(--color-hairline)]',
+                  allowRemotePlantUml && !localOnly ? 'bg-primary' : 'bg-hairline',
                 )}
               >
                 <span
                   className={cn(
-                    'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform',
+                    'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-surface transition-transform',
                     allowRemotePlantUml && !localOnly && 'translate-x-4',
                   )}
                 />
               </button>
             </div>
 
-            <div className="bg-white rounded-xl border border-[var(--color-hairline)] p-5">
-              <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide mb-3">
+            <div className="bg-surface rounded-xl border border-hairline p-5">
+              <p className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide mb-3">
                 Default Capture Mode
               </p>
               <div className="flex gap-3">
@@ -908,23 +837,19 @@ export default function SettingsApp() {
                     key={m}
                     onClick={() => setDefaultMode(m)}
                     className={cn(
-                      'flex-1 rounded-lg border p-3 text-left transition-all hover:border-[var(--color-primary)]',
-                      defaultMode === m
-                        ? 'border-[var(--color-primary)] ring-1 ring-[var(--color-primary)]'
-                        : 'border-[var(--color-hairline)]',
+                      'flex-1 rounded-lg border p-3 text-left transition-all hover:border-primary',
+                      defaultMode === m ? 'border-primary ring-1 ring-primary' : 'border-hairline',
                     )}
                   >
                     <p
                       className={cn(
                         'text-[13px] font-semibold',
-                        defaultMode === m
-                          ? 'text-[var(--color-primary)]'
-                          : 'text-[var(--color-ink)]',
+                        defaultMode === m ? 'text-primary' : 'text-ink',
                       )}
                     >
                       {m.charAt(0) + m.slice(1).toLowerCase()}
                     </p>
-                    <p className="text-[11px] text-[var(--color-ink-muted)] mt-0.5">
+                    <p className="text-[11px] text-ink-muted mt-0.5">
                       {m === 'FAST'
                         ? 'Quick, lower cost'
                         : m === 'BALANCED'
@@ -938,11 +863,11 @@ export default function SettingsApp() {
 
             {activeProvider && (
               <>
-                <div className="bg-white rounded-xl border border-[var(--color-hairline)] p-5 space-y-4">
-                  <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide">
+                <div className="bg-surface rounded-xl border border-hairline p-5 space-y-4">
+                  <p className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide">
                     Per-Mode Model Override
                   </p>
-                  <p className="text-[12px] text-[var(--color-ink-muted)]">
+                  <p className="text-[12px] text-ink-muted">
                     Assign different models per capture mode. Leave blank to use the active
                     provider's default.
                   </p>
@@ -957,7 +882,7 @@ export default function SettingsApp() {
                           : setDeepModel;
                     return (
                       <div key={mode}>
-                        <p className="text-[11px] font-medium text-[var(--color-ink-muted)] mb-1">
+                        <p className="text-[11px] font-medium text-ink-muted mb-1">
                           {mode.charAt(0) + mode.slice(1).toLowerCase()}
                         </p>
                         <Input
@@ -971,19 +896,17 @@ export default function SettingsApp() {
                   })}
                 </div>
 
-                <div className="bg-white rounded-xl border border-[var(--color-hairline)] p-5 space-y-4">
-                  <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide">
+                <div className="bg-surface rounded-xl border border-hairline p-5 space-y-4">
+                  <p className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide">
                     Embedding Model
                   </p>
-                  <p className="text-[12px] text-[var(--color-ink-muted)]">
+                  <p className="text-[12px] text-ink-muted">
                     Used for semantic search. Must match the model that generated your existing
                     vectors. Changing this requires re-embedding all documents.
                   </p>
                   <div className="flex items-center gap-3">
                     <div className="flex-1">
-                      <p className="text-[11px] font-medium text-[var(--color-ink-muted)] mb-1">
-                        Model
-                      </p>
+                      <p className="text-[11px] font-medium text-ink-muted mb-1">Model</p>
                       <Input
                         value={embeddingModel}
                         onChange={(e) => setEmbeddingModel(e.target.value)}
@@ -992,9 +915,7 @@ export default function SettingsApp() {
                       />
                     </div>
                     <div className="w-24">
-                      <p className="text-[11px] font-medium text-[var(--color-ink-muted)] mb-1">
-                        Dimensions
-                      </p>
+                      <p className="text-[11px] font-medium text-ink-muted mb-1">Dimensions</p>
                       <Input
                         type="number"
                         value={embeddingDimensions || ''}
@@ -1012,8 +933,8 @@ export default function SettingsApp() {
                         className={cn(
                           'text-[11px] font-medium px-3 py-2 rounded-lg border transition-all whitespace-nowrap',
                           reEmbedStatus === 'running'
-                            ? 'border-[var(--color-hairline)] text-[var(--color-ink-faint)] cursor-not-allowed'
-                            : 'border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5',
+                            ? 'border-hairline text-ink-faint cursor-not-allowed'
+                            : 'border-primary text-primary hover:bg-primary/5',
                         )}
                       >
                         {reEmbedStatus === 'running'
@@ -1027,9 +948,9 @@ export default function SettingsApp() {
                     </div>
                   </div>
                   {reEmbedStatus === 'running' && reEmbedProgress.total > 0 && (
-                    <div className="h-1.5 bg-[var(--color-canvas-soft)] rounded-full overflow-hidden">
+                    <div className="h-1.5 bg-canvas-soft rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300"
+                        className="h-full bg-primary rounded-full transition-all duration-300"
                         style={{
                           width: `${Math.round((reEmbedProgress.done / reEmbedProgress.total) * 100)}%`,
                         }}
@@ -1038,10 +959,10 @@ export default function SettingsApp() {
                   )}
                 </div>
 
-                <div className="bg-white rounded-xl border border-[var(--color-hairline)] p-5 space-y-4">
+                <div className="bg-surface rounded-xl border border-hairline p-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <p className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide">
-                      Endpoint &amp; Model Discovery
+                    <p className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide">
+                      Local server detection
                     </p>
                     <button
                       onClick={() => {
@@ -1051,44 +972,29 @@ export default function SettingsApp() {
                       className={cn(
                         'text-[11px] font-medium px-3 py-1 rounded-full border transition-all',
                         detectingServers
-                          ? 'border-[var(--color-hairline)] text-[var(--color-ink-faint)] cursor-not-allowed'
-                          : 'border-[var(--color-primary)] text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5',
+                          ? 'border-hairline text-ink-faint cursor-not-allowed'
+                          : 'border-hairline text-ink-muted hover:text-ink hover:border-ink-faint',
                       )}
                     >
-                      {detectingServers ? 'Scanning…' : 'Detect local servers'}
+                      {detectingServers ? 'Scanning…' : 'Scan'}
                     </button>
                   </div>
-                  <p className="text-[12px] text-[var(--color-ink-muted)]">
-                    {activeProvider.baseUrl}
+                  <p className="text-[12px] text-ink-muted">
+                    Attempts to find local AI servers (Ollama, LM Studio, etc.) on your machine.
                   </p>
-                  <div className="flex items-center gap-2">
-                    <ModelCombobox
-                      value={activeProvider.chatModel}
-                      onChange={() => {}}
-                      options={models}
-                      loading={modelsLoading}
-                      error={modelsError}
-                      onRefresh={() => setModelReloadKey((k) => k + 1)}
-                      placeholder="Search available models…"
-                    />
-                  </div>
                   {serverDetectError && (
-                    <p className="text-[11px] text-[var(--color-ink-faint)]">{serverDetectError}</p>
+                    <p className="text-[11px] text-ink-faint">{serverDetectError}</p>
                   )}
                   {detectedServers.length > 0 && (
                     <div className="flex flex-col gap-2">
                       {detectedServers.map((srv) => (
                         <div
                           key={srv.baseUrl}
-                          className="flex items-center justify-between gap-3 bg-[var(--color-canvas-soft)] rounded-lg p-3 border border-[var(--color-hairline)]"
+                          className="flex items-center justify-between gap-3 bg-canvas-soft rounded-lg p-3 border border-hairline"
                         >
                           <div className="min-w-0">
-                            <p className="text-[13px] font-semibold text-[var(--color-ink)]">
-                              {srv.label}
-                            </p>
-                            <p className="text-[11px] text-[var(--color-ink-muted)] truncate">
-                              {srv.baseUrl}
-                            </p>
+                            <p className="text-[13px] font-semibold text-ink">{srv.label}</p>
+                            <p className="text-[11px] text-ink-muted truncate">{srv.baseUrl}</p>
                           </div>
                         </div>
                       ))}
@@ -1109,164 +1015,11 @@ export default function SettingsApp() {
           </div>
         )}
 
-        {/* ── ON-DEVICE TAB ─────────────────────────────────────────────── */}
-        {tab === 'on-device' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl border border-[var(--color-hairline)] p-5">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <p className="text-[14px] font-semibold text-[var(--color-ink)]">On-Device AI</p>
-                  <p className="text-[12px] text-[var(--color-ink-muted)] mt-0.5">
-                    Run embeddings and chat locally in your browser — no API key needed, full
-                    privacy.
-                    {gpuAvailable
-                      ? ' ✓ WebGPU detected — large models available.'
-                      : ' WebGPU not detected — only WASM models available.'}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={onDeviceEnabled}
-                  onClick={() => {
-                    handleToggleOnDevice(!onDeviceEnabled).catch(() => {});
-                  }}
-                  className={cn(
-                    'shrink-0 w-10 h-6 rounded-full transition-colors relative',
-                    onDeviceEnabled ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-hairline)]',
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform',
-                      onDeviceEnabled && 'translate-x-4',
-                    )}
-                  />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              {LOCAL_MODELS.map((m) => {
-                const status = onDeviceModelStatuses[m.id] ?? 'not-installed';
-                const pct = onDeviceProgress[m.id] ?? 0;
-                const isReady = status === 'ready';
-                const isDownloading = status === 'downloading';
-                const isUnavailable = m.backend === 'webgpu' && !gpuAvailable;
-                return (
-                  <div
-                    key={m.id}
-                    className={cn(
-                      'bg-white rounded-xl border p-4 flex flex-col gap-2 transition-all',
-                      isUnavailable
-                        ? 'opacity-50 border-[var(--color-hairline)]'
-                        : 'border-[var(--color-hairline)]',
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                          <span className="text-[13px] font-semibold text-[var(--color-ink)]">
-                            {m.label}
-                          </span>
-                          <span
-                            className={cn(
-                              'text-[9px] font-semibold px-1.5 py-0.5 rounded-full',
-                              m.backend === 'webgpu'
-                                ? 'bg-purple-100 text-purple-700'
-                                : 'bg-green-100 text-green-700',
-                            )}
-                          >
-                            {m.backend === 'webgpu' ? 'WebGPU' : 'WASM'}
-                          </span>
-                          <span className="text-[10px] text-[var(--color-ink-faint)]">
-                            {m.sizeLabel}
-                          </span>
-                          {isReady && (
-                            <span className="text-[10px] text-green-600 font-medium">
-                              ✓ Installed
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-[var(--color-ink-muted)] leading-snug">
-                          {m.description}
-                        </p>
-                      </div>
-                      <div className="shrink-0">
-                        {isReady ? null : isDownloading ? (
-                          <span className="text-[11px] text-[var(--color-primary)]">{pct}%</span>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              installOnDeviceModel(m.id);
-                            }}
-                            disabled={isUnavailable}
-                            className="text-[11px] font-medium px-3 py-1.5 rounded-full bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:bg-[var(--color-primary-active)] transition-colors disabled:opacity-40"
-                          >
-                            Install
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    {isDownloading && (
-                      <div className="h-1 bg-[var(--color-canvas-soft)] rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    )}
-                    {isReady && (
-                      <div className="flex gap-2 flex-wrap">
-                        {(m.capability === 'embedding' || m.capability === 'both') && (
-                          <button
-                            onClick={() => {
-                              handleSetOnDeviceEmbedding(m.id).catch(() => {});
-                            }}
-                            className={cn(
-                              'text-[10px] font-medium px-2.5 py-1 rounded-full border transition-all',
-                              onDeviceEmbedId === m.id
-                                ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                                : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)]',
-                            )}
-                          >
-                            {onDeviceEmbedId === m.id ? '✓ Embeddings' : 'Set as embedding model'}
-                          </button>
-                        )}
-                        {(m.capability === 'chat' || m.capability === 'both') && (
-                          <button
-                            onClick={() => {
-                              handleSetOnDeviceChat(m.id).catch(() => {});
-                            }}
-                            className={cn(
-                              'text-[10px] font-medium px-2.5 py-1 rounded-full border transition-all',
-                              onDeviceChatId === m.id
-                                ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                                : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)]',
-                            )}
-                          >
-                            {onDeviceChatId === m.id ? '✓ Chat model' : 'Set as chat model'}
-                          </button>
-                        )}
-                        {m.capability === 'tts' && (
-                          <span className="text-[10px] font-medium px-2.5 py-1 rounded-full border border-green-200 text-green-700 bg-green-50">
-                            ✓ Installed
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {/* ── APPEARANCE TAB ────────────────────────────────────────────── */}
         {tab === 'appearance' && (
-          <div className="bg-white rounded-xl border border-[var(--color-hairline)] p-6 space-y-5">
+          <div className="bg-surface rounded-xl border border-hairline p-6 space-y-5">
             <div>
-              <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-2">
+              <label className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide block mb-2">
                 Theme
               </label>
               <div className="flex gap-2">
@@ -1277,8 +1030,8 @@ export default function SettingsApp() {
                     className={cn(
                       'flex-1 py-2 text-[13px] font-medium rounded-md border transition-all',
                       theme === t
-                        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 text-[var(--color-primary)]'
-                        : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]',
+                        ? 'border-primary bg-primary/5 text-primary'
+                        : 'border-hairline text-ink-muted hover:text-ink',
                     )}
                   >
                     {t.charAt(0).toUpperCase() + t.slice(1)}
@@ -1288,7 +1041,7 @@ export default function SettingsApp() {
             </div>
 
             <div>
-              <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-2">
+              <label className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide block mb-2">
                 Font
               </label>
               <div className="flex gap-2">
@@ -1299,8 +1052,8 @@ export default function SettingsApp() {
                     className={cn(
                       'flex-1 py-2 text-[13px] font-medium rounded-md border transition-all',
                       fontFamily === f
-                        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 text-[var(--color-primary)]'
-                        : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]',
+                        ? 'border-primary bg-primary/5 text-primary'
+                        : 'border-hairline text-ink-muted hover:text-ink',
                     )}
                   >
                     {f.charAt(0).toUpperCase() + f.slice(1)}
@@ -1310,7 +1063,7 @@ export default function SettingsApp() {
             </div>
 
             <div>
-              <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-2">
+              <label className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide block mb-2">
                 Font Size
               </label>
               <div className="flex gap-2">
@@ -1321,8 +1074,8 @@ export default function SettingsApp() {
                     className={cn(
                       'flex-1 py-2 font-medium rounded-md border transition-all',
                       fontSize === s
-                        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 text-[var(--color-primary)]'
-                        : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]',
+                        ? 'border-primary bg-primary/5 text-primary'
+                        : 'border-hairline text-ink-muted hover:text-ink',
                       s === 'sm' && 'text-[12px]',
                       s === 'md' && 'text-[14px]',
                       s === 'lg' && 'text-[16px]',
@@ -1335,7 +1088,7 @@ export default function SettingsApp() {
             </div>
 
             <div>
-              <label className="text-[11px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide block mb-2">
+              <label className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide block mb-2">
                 Accent Color
               </label>
               <div className="flex gap-3 items-center">
@@ -1343,7 +1096,7 @@ export default function SettingsApp() {
                   type="color"
                   value={accentColor}
                   onChange={(e) => setAccentColor(e.target.value)}
-                  className="w-10 h-10 p-0.5 border border-[var(--color-hairline)] rounded-md cursor-pointer bg-transparent"
+                  className="w-10 h-10 p-0.5 border border-hairline rounded-md cursor-pointer bg-transparent"
                 />
                 <input
                   value={accentColor}
@@ -1351,7 +1104,7 @@ export default function SettingsApp() {
                   className="notion-input w-28"
                 />
                 <span
-                  className="w-8 h-8 rounded-md border border-[var(--color-hairline)]"
+                  className="w-8 h-8 rounded-md border border-hairline"
                   style={{ backgroundColor: accentColor }}
                 />
               </div>
@@ -1378,14 +1131,12 @@ export default function SettingsApp() {
             }}
           >
             <div>
-              <h2 className="text-[16px] font-semibold text-[var(--color-ink)]">Activity Log</h2>
-              <p className="text-[12px] text-[var(--color-ink-muted)] mt-0.5">
+              <h2 className="text-[16px] font-semibold text-ink">Activity Log</h2>
+              <p className="text-[12px] text-ink-muted mt-0.5">
                 Last {log.getBuffer().length} events in memory
               </p>
             </div>
-            <span className="text-[12px] text-[var(--color-ink-faint)]">
-              {showLog ? '▲ Hide' : '▼ Show'}
-            </span>
+            <span className="text-[12px] text-ink-faint">{showLog ? '▲ Hide' : '▼ Show'}</span>
           </div>
           {showLog && (
             <div className="space-y-2">
@@ -1397,8 +1148,8 @@ export default function SettingsApp() {
                     className={cn(
                       'text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all capitalize',
                       logFilter === f
-                        ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                        : 'border-[var(--color-hairline)] text-[var(--color-ink-muted)] hover:border-[var(--color-primary)]',
+                        ? 'border-primary text-primary bg-primary/5'
+                        : 'border-hairline text-ink-muted hover:border-primary',
                     )}
                   >
                     {f === 'all'
@@ -1408,7 +1159,7 @@ export default function SettingsApp() {
                 ))}
                 <button
                   onClick={() => setLogEntries([...log.getBuffer()])}
-                  className="ml-auto text-[10px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors"
+                  className="ml-auto text-[10px] font-medium text-ink-muted hover:text-primary transition-colors"
                 >
                   Refresh
                 </button>
@@ -1423,12 +1174,12 @@ export default function SettingsApp() {
                     a.click();
                     URL.revokeObjectURL(url);
                   }}
-                  className="text-[10px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] transition-colors"
+                  className="text-[10px] font-medium text-ink-muted hover:text-primary transition-colors"
                 >
                   Export JSON
                 </button>
               </div>
-              <div className="max-h-64 overflow-y-auto rounded-lg border border-[var(--color-hairline)] bg-[var(--color-surface)] text-[11px] font-mono">
+              <div className="max-h-64 overflow-y-auto rounded-lg border border-hairline bg-surface text-[11px] font-mono">
                 {logEntries
                   .filter((e) => logFilter === 'all' || e.level === logFilter)
                   .slice()
@@ -1437,38 +1188,30 @@ export default function SettingsApp() {
                     <div
                       key={i}
                       className={cn(
-                        'flex items-start gap-2 px-3 py-1.5 border-b border-[var(--color-hairline)] last:border-0 hover:bg-[var(--color-surface-hover)] transition-colors',
+                        'flex items-start gap-2 px-3 py-1.5 border-b border-hairline last:border-0 hover:bg-surface-hover transition-colors',
                       )}
                     >
                       <span
                         className={cn(
                           'shrink-0 font-bold w-12 text-[10px]',
                           entry.level === 'error'
-                            ? 'text-[var(--color-destructive)]'
+                            ? 'text-destructive'
                             : entry.level === 'warn'
-                              ? 'text-amber-500'
+                              ? 'text-accent-orange'
                               : entry.level === 'success'
-                                ? 'text-emerald-500'
-                                : 'text-[var(--color-primary)]',
+                                ? 'text-success'
+                                : 'text-primary',
                         )}
                       >
                         {entry.level.slice(0, 4).toUpperCase()}
                       </span>
-                      <span className="text-[var(--color-ink-faint)] shrink-0 w-20">
-                        {entry.ts.slice(11, 19)}
-                      </span>
-                      <span className="text-[var(--color-ink-muted)] shrink-0 w-20 truncate">
-                        {entry.module}
-                      </span>
-                      <span className="text-[var(--color-ink)] flex-1 truncate">
-                        {entry.message}
-                      </span>
+                      <span className="text-ink-faint shrink-0 w-20">{entry.ts.slice(11, 19)}</span>
+                      <span className="text-ink-muted shrink-0 w-20 truncate">{entry.module}</span>
+                      <span className="text-ink flex-1 truncate">{entry.message}</span>
                     </div>
                   ))}
                 {logEntries.filter((e) => logFilter === 'all' || e.level === logFilter).length ===
-                  0 && (
-                  <p className="text-center text-[var(--color-ink-faint)] py-4">No log entries</p>
-                )}
+                  0 && <p className="text-center text-ink-faint py-4">No log entries</p>}
               </div>
             </div>
           )}

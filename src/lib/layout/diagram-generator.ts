@@ -34,7 +34,13 @@ function detectDiagramType(text: string): string | null {
 }
 
 function sanitizeLabel(s: string): string {
-  return s.replace(/["\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+  return s
+    .replace(/["\n\r]/g, ' ')
+    .replace(/[<>[\]{}()|]/g, '')
+    .replace(/[\x00-\x1f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40);
 }
 
 function buildFlowchart(input: LayoutInput): string {

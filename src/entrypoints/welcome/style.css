@@ -91,17 +91,19 @@ html[data-theme='dark'] .welcome-glass {
   background-clip: text;
 }
 
-/* ── Simulated Terminal for Live Capture ─────────────────────────────────── */
+/* ── Simulated Terminal for Live Capture ─────────────────────────────────
+   The single dark "night band" moment of the onboarding: deep indigo, white
+   type — the one inverted island in an otherwise daylight page. */
 .welcome-terminal {
-  background: #111111;
-  color: #a4a4a4;
-  border: 1px solid #222222;
+  background: var(--color-indigo-night, #213183);
+  color: rgba(255, 255, 255, 0.72);
+  border: 1px solid color-mix(in srgb, var(--color-indigo-night, #213183) 60%, #ffffff 8%);
   border-radius: 12px;
   font-family: var(--font-mono);
   font-size: 12px;
   padding: 16px;
   text-align: left;
-  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.8);
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.25);
   width: 100%;
 }
 
@@ -144,4 +146,52 @@ html[data-theme='dark'] .welcome-glass {
     transform: scale(2.5);
     opacity: 0;
   }
+}
+
+/* ── Onboarding shared animations ────────────────────────────────────────── */
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.onboarding-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+.onboarding-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-primary) 20%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* ── Choice card selected glow ───────────────────────────────────────────── */
+.choice-glow {
+  box-shadow:
+    0 0 0 1px var(--color-primary),
+    0 0 20px -5px color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+
+/* ── Processing pulse ────────────────────────────────────────────────────── */
+.processing-pulse {
+  animation: capture-pulse 2s ease-in-out infinite;
 }

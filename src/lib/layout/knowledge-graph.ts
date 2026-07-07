@@ -1,7 +1,13 @@
 import type { LayoutInput } from './types';
 
 function sanitizeLabel(s: string): string {
-  return s.replace(/["\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 32);
+  return s
+    .replace(/["\n\r]/g, ' ')
+    .replace(/[<>[\]{}()|]/g, '')
+    .replace(/[\x00-\x1f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 32);
 }
 
 export function buildKnowledgeGraph(md: string, input: LayoutInput): string {

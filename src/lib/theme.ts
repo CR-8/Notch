@@ -42,7 +42,7 @@ function isMonochromeAccent(accent: string | undefined): boolean {
   );
 }
 
-/** Apply theme + accent to <html>/<body>. Returns the resolved theme. */
+/** Apply theme, accent, fontFamily, and fontSize to <html>/<body>. */
 export function applyAppearance(a: AppearanceSettings): ResolvedTheme {
   const resolved = resolveTheme(a.theme);
   if (typeof document !== 'undefined') {
@@ -53,6 +53,8 @@ export function applyAppearance(a: AppearanceSettings): ResolvedTheme {
     } else {
       document.documentElement.style.setProperty('--accent-user', a.accentColor);
     }
+    document.documentElement.dataset.fontFamily = a.fontFamily ?? 'sans';
+    document.documentElement.dataset.fontSize = a.fontSize ?? 'md';
   }
   return resolved;
 }

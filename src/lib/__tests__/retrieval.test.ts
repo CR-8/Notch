@@ -12,6 +12,7 @@ function chunk(partial: Partial<RetrievedChunk>): RetrievedChunk {
     charEnd: 10,
     heading: partial.heading ?? '',
     score: partial.score ?? 0,
+    source: partial.source ?? 'vector',
   };
 }
 
@@ -42,13 +43,10 @@ describe('normalise', () => {
 
 describe('parseCitations', () => {
   it('maps [N] markers to chunks and de-duplicates', () => {
-    const chunks = [
-      chunk({ id: 'a', paragraphIndex: 1 }),
-      chunk({ id: 'b', paragraphIndex: 2 }),
-    ];
+    const chunks = [chunk({ id: 'a', paragraphIndex: 1 }), chunk({ id: 'b', paragraphIndex: 2 })];
     const citations = parseCitations('Fact one [1] and two [2], and again [1].', chunks);
     expect(citations).toHaveLength(2);
-    expect(citations.map(c => c.chunkId)).toEqual(['a', 'b']);
+    expect(citations.map((c) => c.chunkId)).toEqual(['a', 'b']);
   });
 
   it('ignores out-of-range markers', () => {

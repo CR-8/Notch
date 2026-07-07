@@ -41,6 +41,30 @@ const CALLOUT_STYLES: Record<
     border: 'border-[var(--color-info)]/30',
     text: 'text-[var(--color-info)]',
   },
+  important: {
+    icon: '❗',
+    bg: 'bg-[#e11d48]/5',
+    border: 'border-[#e11d48]/30',
+    text: 'text-[#e11d48]',
+  },
+  caution: {
+    icon: '🚧',
+    bg: 'bg-[#f59e0b]/5',
+    border: 'border-[#f59e0b]/30',
+    text: 'text-[#f59e0b]',
+  },
+  success: {
+    icon: '✅',
+    bg: 'bg-[#22c55e]/5',
+    border: 'border-[#22c55e]/30',
+    text: 'text-[#22c55e]',
+  },
+  question: {
+    icon: '❓',
+    bg: 'bg-[#8b5cf6]/5',
+    border: 'border-[#8b5cf6]/30',
+    text: 'text-[#8b5cf6]',
+  },
 };
 
 export function CalloutBlock({ data }: CalloutBlockProps) {

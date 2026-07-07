@@ -388,6 +388,7 @@ export default defineContentScript({
 
         const finalText = article?.textContent ?? readableText;
         const wordCount = finalText.split(/\s+/).filter(Boolean).length;
+        const headingCount = document.querySelectorAll('h1, h2, h3, h4, h5, h6').length;
 
         // CAP-7: detect paywall before handing off to background
         const { isPaywalled, signal: paywallSignal } = detectPaywall(body, wordCount);
@@ -401,6 +402,7 @@ export default defineContentScript({
           images,
           videos,
           wordCount,
+          headingCount,
           metaDescription:
             document.querySelector('meta[name="description"]')?.getAttribute('content') ?? '',
           isPaywalled,

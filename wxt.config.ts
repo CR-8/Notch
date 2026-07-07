@@ -5,31 +5,8 @@ import path from 'path';
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   srcDir: 'src',
-  hooks: {
-    // ── Firefox MV2: module background page ──────────────────────────────────
-    // WXT deletes the background `type: 'module'` for MV2 (manifest.mjs), so the
-    // background is bundled as a single IIFE and every dynamic import() —
-    // @huggingface/transformers, kokoro-js and their base64 wasm — gets inlined,
-    // producing a ~116MB background.js. We re-inject the module type after WXT
-    // strips it (so grouping builds the background as code-split ESM), then point
-    // the manifest at a module background *page* that Firefox can load as ESM.
-    'entrypoints:resolved': (wxt, entrypoints) => {
-      if (wxt.config.browser !== 'firefox') return;
-      const bg = entrypoints.find((e) => e.type === 'background');
-      if (bg) (bg.options as { type?: string }).type = 'module';
-    },
-    'build:manifestGenerated': (wxt, manifest) => {
-      if (wxt.config.browser !== 'firefox') return;
-      (manifest as { background?: unknown }).background = { page: 'background.html' };
-    },
-    'build:done': async (wxt) => {
-      if (wxt.config.browser !== 'firefox') return;
-      const fs = await import('node:fs/promises');
-      const html =
-        '<!doctype html><html><head><meta charset="utf-8"></head>' +
-        '<body><script type="module" src="./background.js"></script></body></html>';
-      await fs.writeFile(path.resolve(wxt.config.outDir, 'background.html'), html, 'utf8');
-    },
+  suppressWarnings: {
+    firefoxDataCollection: true,
   },
   vite: () => ({
     plugins: [tailwindcss()],
@@ -38,12 +15,18 @@ export default defineConfig({
         '@': path.resolve(__dirname, 'src'),
       },
     },
+    server: {
+      fs: {
+        allow: [__dirname],
+        strict: false,
+      },
+    },
     build: {
       assetsInlineLimit: 0,
       chunkSizeWarningLimit: 1500,
     },
     optimizeDeps: {
-      exclude: ['@huggingface/transformers', 'mermaid'],
+      exclude: ['mermaid'],
     },
   }),
   manifest: ({ browser }) => ({
@@ -79,9 +62,9 @@ export default defineConfig({
         description: 'Capture this page with Notch',
       },
     },
-    // No sandboxed pages are declared (no `sandbox.pages`), so a sandbox CSP
-    // with 'unsafe-eval'/'unsafe-inline' would be dead config and a needless
-    // review flag. Only the strict extension-pages policy is set.
+    // WXT auto-relaxes CSP in dev mode to allow the Vite dev server.
+    // No manual extension_pages override needed — it will be set by WXT's
+    // addDevModeCsp when running `wxt serve`/`wxt -b firefox`.
     content_security_policy: {
       extension_pages: "script-src 'self'; object-src 'self'",
     },
@@ -89,6 +72,10 @@ export default defineConfig({
       gecko: {
         id: 'notch@notch-extension',
         strict_min_version: '109.0',
+        data_collection_permissions: {
+          required: ['websiteContent'],
+          optional: [],
+        },
       },
     },
   }),

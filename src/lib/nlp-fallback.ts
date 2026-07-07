@@ -199,7 +199,7 @@ export function buildOfflineCaptureMarkdown(title: string, content: string): str
     .split(/\n\n+/)
     .map((p) => p.trim())
     .filter(Boolean)
-    .slice(0, 40);
+    .slice(0, 200);
 
   const summarySentences = splitSentences(clean).slice(0, 3);
   const summary = summarySentences.join(' ').trim() || clean.slice(0, 450);

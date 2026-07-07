@@ -1,4 +1,4 @@
-import { useEffect, useState, useId } from 'react';
+import { useEffect, useState, useId, useRef } from 'react';
 import type { DiagramElement } from '../types';
 import { autoFixMermaid } from '../mermaid/fixer';
 import { validateMermaidCode } from '../mermaid/validator';
@@ -6,6 +6,7 @@ import { getMermaidConfig } from '../mermaid/themes';
 import { Skeleton } from '@/components/ui/skeleton';
 import { sanitizeSvg } from '@/lib/sanitize';
 import { getSettings } from '@/lib/storage';
+import { Lightbox } from '@/components/reader/renderers/Lightbox';
 
 interface DiagramBlockProps {
   data: DiagramElement;
@@ -13,117 +14,125 @@ interface DiagramBlockProps {
   number?: number;
 }
 
+const svgCache = new Map<string, string>();
+
+let mermaidModule: {
+  render: (id: string, text: string) => Promise<{ svg: string }>;
+  initialize: (config: Record<string, unknown>) => void;
+} | null = null;
+let mermaidLoadPromise: Promise<void> | null = null;
+
+function loadMermaid(): Promise<void> {
+  if (mermaidModule) return Promise.resolve();
+  if (mermaidLoadPromise) return mermaidLoadPromise;
+  mermaidLoadPromise = import('mermaid').then((mod) => {
+    mermaidModule = mod.default;
+  });
+  return mermaidLoadPromise;
+}
+
+function initMermaid(theme: 'light' | 'dark'): void {
+  if (!mermaidModule) return;
+  const config = getMermaidConfig(theme);
+  mermaidModule.initialize({ ...config, securityLevel: 'strict', startOnLoad: false });
+}
+
 export function DiagramBlock({ data, theme, number }: DiagramBlockProps) {
   const rawId = useId();
   const id = 'dgm-' + rawId.replace(/[^a-zA-Z0-9]/g, '');
   const [status, setStatus] = useState<
-    'loading' | 'rendered' | 'error' | 'unavailable' | 'validating' | 'disabled'
+    'loading' | 'validating' | 'rendered' | 'error' | 'unavailable' | 'disabled'
   >('loading');
   const [_errorMessage, setErrorMessage] = useState('');
   const [svgContent, setSvgContent] = useState<string | null>(null);
-  const [mermaidReady, setMermaidReady] = useState(false);
+  const [zoom, setZoom] = useState(false);
+  const cancelledRef = useRef(false);
 
   const isPlantUML = data.kind === 'plantuml';
   const isMermaid = !isPlantUML;
+  const cacheKey = isMermaid ? `m:${data.content}` : `p:${data.content}`;
 
   useEffect(() => {
-    let cancelled = false;
-    void Promise.resolve().then(() => {
-      if (!cancelled) {
-        setStatus('loading');
-        setSvgContent(null);
-        setErrorMessage('');
-      }
-    });
+    cancelledRef.current = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setStatus('loading');
+    setSvgContent(null);
+    setErrorMessage('');
+    /* eslint-enable react-hooks/set-state-in-effect */
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
     };
   }, [data.content]);
 
   useEffect(() => {
-    if (!isMermaid) return;
-    let cancelled = false;
-    void import('mermaid')
-      .then((mod) => {
-        if (cancelled) return;
-        const config = getMermaidConfig(theme);
-        mod.default.initialize({ ...config, securityLevel: 'strict', startOnLoad: false });
-        setMermaidReady(true);
-      })
-      .catch(() => {
-        if (!cancelled) setStatus('unavailable');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isMermaid, theme]);
-
-  useEffect(() => {
-    const cancelledRef = { current: false };
     if (isPlantUML) {
-      void (async (cRef: { current: boolean }) => {
+      void (async () => {
         try {
           const settings = await getSettings();
-          if (cRef.current) return;
+          if (cancelledRef.current) return;
           if (!settings.allowRemotePlantUml || settings.localOnly) {
             setStatus('disabled');
             return;
           }
-          // @ts-expect-error - plantuml-encoder has no types
           const encoder = (await import('plantuml-encoder')) as {
             default: { encode: (s: string) => string };
           };
-          if (cRef.current) return;
+          if (cancelledRef.current) return;
           const encoded = encoder.default.encode(data.content);
           const url = `https://www.plantuml.com/plantuml/svg/${encoded}`;
           const res = await fetch(url);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const rawSvg = await res.text();
-          if (cRef.current) return;
+          if (cancelledRef.current) return;
           setSvgContent(sanitizeSvg(rawSvg));
           setErrorMessage('');
           setStatus('rendered');
         } catch (err) {
-          if (cRef.current) return;
+          if (cancelledRef.current) return;
           setSvgContent(null);
           setErrorMessage(err instanceof Error ? err.message : 'PlantUML failed');
           setStatus('error');
         }
-      })(cancelledRef);
-      return () => {
-        cancelledRef.current = true;
-      };
+      })();
+      return;
     }
-    if (!mermaidReady) return;
+
+    const cached = svgCache.get(cacheKey);
+    if (cached) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSvgContent(cached);
+      setStatus('rendered');
+      return;
+    }
 
     const validation = validateMermaidCode(data.content);
     const fixed = !validation.valid ? autoFixMermaid(data.content, validation).fixed : data.content;
 
-    void (async () => {
-      await Promise.resolve();
+    void loadMermaid().then(() => {
+      if (cancelledRef.current) return;
+      initMermaid(theme);
       setStatus('validating');
-      try {
-        const { default: mermaid } = await import('mermaid');
-        if (cancelledRef.current) return;
-        const config = getMermaidConfig(theme);
-        mermaid.initialize({ ...config, securityLevel: 'strict', startOnLoad: false });
-        const { svg } = await mermaid.render(id, fixed);
-        if (cancelledRef.current) return;
-        setSvgContent(svg);
-        setErrorMessage('');
-        setStatus('rendered');
-      } catch (err) {
-        if (cancelledRef.current) return;
-        setSvgContent(null);
-        setErrorMessage(err instanceof Error ? err.message : 'Rendering failed');
-        setStatus('error');
+      if (!mermaidModule) {
+        setStatus('unavailable');
+        return;
       }
-    })();
-
-    return () => {
-      cancelledRef.current = true;
-    };
-  }, [data.content, id, mermaidReady, isPlantUML, theme]);
+      mermaidModule
+        .render(id, fixed)
+        .then(({ svg }) => {
+          if (cancelledRef.current) return;
+          svgCache.set(cacheKey, svg);
+          setSvgContent(svg);
+          setErrorMessage('');
+          setStatus('rendered');
+        })
+        .catch((err: Error) => {
+          if (cancelledRef.current) return;
+          setSvgContent(null);
+          setErrorMessage(err.message);
+          setStatus('error');
+        });
+    });
+  }, [data.content, id, isPlantUML, theme, cacheKey]);
 
   if (status === 'error' || status === 'unavailable') return null;
 
@@ -163,9 +172,27 @@ export function DiagramBlock({ data, theme, number }: DiagramBlockProps) {
         {status === 'loading' && <Skeleton className="h-32 w-full" />}
         {status === 'validating' && <Skeleton className="h-24 w-3/4" />}
         {status === 'rendered' && svgContent && (
-          <div dangerouslySetInnerHTML={{ __html: svgContent }} className="w-full" />
+          <button
+            type="button"
+            data-zoomable
+            onClick={() => setZoom(true)}
+            aria-label="Enlarge diagram"
+            title="Click to enlarge"
+            className="w-full"
+          >
+            <div dangerouslySetInnerHTML={{ __html: svgContent }} className="w-full" />
+          </button>
         )}
       </div>
+
+      {svgContent && (
+        <Lightbox open={zoom} onClose={() => setZoom(false)} label={data.caption || 'Diagram'}>
+          <div
+            style={{ width: 'min(1100px, 92vw)' }}
+            dangerouslySetInnerHTML={{ __html: svgContent }}
+          />
+        </Lightbox>
+      )}
 
       {(data.caption || number) && (
         <figcaption className="text-[13px] text-[var(--color-ink-muted)] text-center mt-2">
