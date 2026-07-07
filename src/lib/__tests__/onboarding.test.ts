@@ -7,19 +7,16 @@ import {
 } from '../onboarding';
 
 describe('ONBOARDING_PROVIDERS', () => {
-  it('offers anthropic, gemini and openrouter with https key links', () => {
-    const ids = ONBOARDING_PROVIDERS.map(p => p.id);
-    expect(ids).toContain('anthropic');
-    expect(ids).toContain('gemini');
+  it('offers openrouter and anthropic with https key links', () => {
+    const ids = ONBOARDING_PROVIDERS.map((p) => p.id);
     expect(ids).toContain('openrouter');
+    expect(ids).toContain('anthropic');
     for (const p of ONBOARDING_PROVIDERS) {
       expect(p.keyUrl).toMatch(/^https:\/\//);
     }
   });
 
   it('uses openai-compatible base URLs that already include the version segment', () => {
-    const gemini = getOnboardingProvider('gemini')!;
-    expect(gemini.baseUrl).toContain('/openai');
     const openrouter = getOnboardingProvider('openrouter')!;
     expect(openrouter.baseUrl).toMatch(/\/v1$/);
   });

@@ -20,6 +20,15 @@ export interface OnboardingProvider {
 
 export const ONBOARDING_PROVIDERS: OnboardingProvider[] = [
   {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    keyUrl: 'https://openrouter.ai/keys',
+    keyHint: 'sk-or-...',
+    provider: 'openai-compatible',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    modelId: 'openrouter/free',
+  },
+  {
     id: 'anthropic',
     label: 'Anthropic (Claude)',
     keyUrl: 'https://console.anthropic.com/settings/keys',
@@ -28,28 +37,10 @@ export const ONBOARDING_PROVIDERS: OnboardingProvider[] = [
     baseUrl: '',
     modelId: 'claude-sonnet-4-20250514',
   },
-  {
-    id: 'gemini',
-    label: 'Google Gemini',
-    keyUrl: 'https://aistudio.google.com/app/apikey',
-    keyHint: 'AIza...',
-    provider: 'openai-compatible',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    modelId: 'gemini-2.0-flash',
-  },
-  {
-    id: 'openrouter',
-    label: 'OpenRouter',
-    keyUrl: 'https://openrouter.ai/keys',
-    keyHint: 'sk-or-...',
-    provider: 'openai-compatible',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    modelId: 'google/gemini-2.0-flash-exp:free',
-  },
 ];
 
 export function getOnboardingProvider(id: string): OnboardingProvider | undefined {
-  return ONBOARDING_PROVIDERS.find(p => p.id === id);
+  return ONBOARDING_PROVIDERS.find((p) => p.id === id);
 }
 
 /** Settings patch for a chosen cloud provider + pasted key. */

@@ -10,10 +10,10 @@ export function ensureRuntimePolyfills(): void {
   if (applied) return;
   applied = true;
 
+  // Promise.withResolvers — available from Chrome 119+
   const p = Promise as PromiseConstructor & {
     withResolvers?: <T>() => PromiseResolvers<T>;
   };
-
   if (typeof p.withResolvers !== 'function') {
     p.withResolvers = <T>(): PromiseResolvers<T> => {
       let resolve!: (value: T | PromiseLike<T>) => void;
@@ -26,10 +26,10 @@ export function ensureRuntimePolyfills(): void {
     };
   }
 
+  // URL.parse — available from Chrome 120+
   const urlCtor = URL as unknown as {
     parse?: (input: string, base?: string | URL) => URL | null;
   };
-
   if (typeof urlCtor.parse !== 'function') {
     urlCtor.parse = (input: string, base?: string | URL) => {
       try {

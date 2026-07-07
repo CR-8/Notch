@@ -1,7 +1,15 @@
-import { Lexer, Parser } from 'marked';
+import { Lexer } from 'marked';
 import type { Token, Tokens } from 'marked';
-import type { EnrichedBlock, ContentHierarchy, HeadingNode, NumberedItem } from './types';
-import { escapeHtmlFull } from '../sanitize';
+import type {
+  EnrichedBlock,
+  ContentHierarchy,
+  HeadingNode,
+  NumberedItem,
+  CalloutElement,
+  DiagramElement,
+  CalloutKind,
+  DiagramKind,
+} from './types';
 
 export interface ASTParseOptions {
   detectCallouts?: boolean;
@@ -15,15 +23,21 @@ const DEFAULT_OPTIONS: ASTParseOptions = {
   numberingEnabled: true,
 };
 
-const CALLOUT_PATTERN = /^\[!(NOTE|WARNING|TIP|DANGER|INFO)\](.*)?$/im;
-const MERMAID_FENCE = /^```mermaid\s*$/im;
-const PLANTUML_FENCE = /^```plantuml\s*$/im;
-
 function isMermaidBlock(language: string): boolean {
   const mermaidLangs = new Set([
-    'mermaid', 'flowchart', 'sequencediagram', 'classdiagram',
-    'statediagram', 'erdiagram', 'journey', 'gantt',
-    'pie', 'mindmap', 'timeline', 'gitgraph', 'architecture',
+    'mermaid',
+    'flowchart',
+    'sequencediagram',
+    'classdiagram',
+    'statediagram',
+    'erdiagram',
+    'journey',
+    'gantt',
+    'pie',
+    'mindmap',
+    'timeline',
+    'gitgraph',
+    'architecture',
   ]);
   return mermaidLangs.has(language.toLowerCase());
 }
@@ -38,14 +52,63 @@ function hashText(text: string): string {
   return h.toString(16).padStart(8, '0');
 }
 
+const DIAGRAM_FIRST_LINE =
+  /^(graph\s+(TB|TD|BT|RL|LR)|flowchart\s+(TB|TD|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|mindmap|timeline|gitGraph|architecture)\b/i;
+
+const DIAGRAM_KIND_MAP: Record<string, DiagramKind> = {
+  graph: 'flowchart',
+  flowchart: 'flowchart',
+  sequencediagram: 'sequenceDiagram',
+  classdiagram: 'classDiagram',
+  statediagram: 'stateDiagram',
+  erdiagram: 'erDiagram',
+  journey: 'journey',
+  gantt: 'gantt',
+  pie: 'pie',
+  mindmap: 'mindmap',
+  timeline: 'timeline',
+  gitgraph: 'gitGraph',
+  architecture: 'architecture',
+};
+
+function detectInlineDiagram(
+  content: string,
+): { code: string; kind: DiagramKind; remaining: string } | null {
+  const lines = content.split('\n');
+  const first = lines[0]?.trim() ?? '';
+  if (!DIAGRAM_FIRST_LINE.test(first)) return null;
+  let end = 1;
+  while (end < lines.length) {
+    const l = lines[end];
+    if (l.trim() === '' || l[0] === ' ' || l[0] === '\t') {
+      end++;
+      continue;
+    }
+    break;
+  }
+  if (end === 1) return null;
+  const typeKey = first.replace(/[\s].*$/, '').toLowerCase();
+  const kind = DIAGRAM_KIND_MAP[typeKey] ?? 'flowchart';
+  const code = lines.slice(0, end).join('\n');
+  const remaining = lines.slice(end).join('\n').trim();
+  return { code, kind, remaining };
+}
+
 function detectCallout(raw: string): { kind: string; title: string; content: string } | null {
-  const lines = raw.split('\n');
+  const lines = raw.split('\n').map((l) => l.replace(/^>\s*/, ''));
   const first = lines[0]?.trim();
-  const match = first?.match(/^\[!(NOTE|WARNING|TIP|DANGER|INFO)\]\s*(.*)?$/i);
+  if (!first) return null;
+  const match = first.match(
+    /^\[!(NOTE|WARNING|TIP|DANGER|INFO|IMPORTANT|CAUTION|SUCCESS|QUESTION)\]\s*(.*)?$/i,
+  );
   if (!match) return null;
   const kind = match[1].toLowerCase();
   const title = match[2]?.trim() ?? '';
-  const content = lines.slice(1).join('\n').trim();
+  const content = lines
+    .slice(1)
+    .map((l) => l.replace(/^>\s*/, ''))
+    .join('\n')
+    .trim();
   return { kind, title, content };
 }
 
@@ -85,12 +148,35 @@ function tokenToEnriched(
               raw,
               data: {
                 type: 'callout',
-                kind: callout.kind as any,
+                kind: callout.kind as CalloutKind,
                 content: callout.content,
                 title: callout.title,
               },
             };
           }
+        }
+
+        // Extract standalone image paragraphs as dedicated image blocks.
+        const imgMatch = raw.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+        if (imgMatch) {
+          const alt = imgMatch[1];
+          const url = imgMatch[2];
+          state.figureCount++;
+          return {
+            type: 'image',
+            raw,
+            id: `img-${state.figureCount}`,
+            data: {
+              type: 'image',
+              kind: 'generic',
+              prompt: '',
+              caption: alt,
+              altText: alt,
+              placement: -1,
+              id: `img-${state.figureCount}`,
+              url,
+            },
+          };
         }
 
         return { type: 'paragraph', raw };
@@ -143,12 +229,18 @@ function tokenToEnriched(
         if (options.detectDiagrams && isMermaidBlock(lang)) {
           state.diagramCount++;
           const id = `diagram-${state.diagramCount}`;
-          const kind = lang === 'sequencediagram' ? 'sequenceDiagram'
-            : lang === 'classdiagram' ? 'classDiagram'
-            : lang === 'statediagram' ? 'stateDiagram'
-            : lang === 'erdiagram' ? 'erDiagram'
-            : lang === 'gitgraph' ? 'gitGraph'
-            : lang as any;
+          const kind =
+            lang === 'sequencediagram'
+              ? ('sequenceDiagram' as DiagramKind)
+              : lang === 'classdiagram'
+                ? ('classDiagram' as DiagramKind)
+                : lang === 'statediagram'
+                  ? ('stateDiagram' as DiagramKind)
+                  : lang === 'erdiagram'
+                    ? ('erDiagram' as DiagramKind)
+                    : lang === 'gitgraph'
+                      ? ('gitGraph' as DiagramKind)
+                      : (lang as DiagramKind);
           return {
             type: 'diagram',
             raw: t.raw,
@@ -191,11 +283,9 @@ function tokenToEnriched(
         const tableId = `table-${state.tableCount}`;
         const columns = (t.header ?? []).map((h, i) => ({
           header: h.text ?? '',
-          align: (t.align[i] ?? 'left') as 'left' | 'center' | 'right',
+          align: t.align[i] ?? 'left',
         }));
-        const rows = (t.rows ?? []).map(row =>
-          row.map(cell => cell.text ?? ''),
-        );
+        const rows = (t.rows ?? []).map((row) => row.map((cell) => cell.text ?? ''));
         return {
           type: 'rich_table',
           raw: t.raw,
@@ -211,17 +301,35 @@ function tokenToEnriched(
       }
 
       case 'blockquote': {
-        return { type: 'blockquote', raw: (token as Tokens.Blockquote).raw };
+        const raw = (token as Tokens.Blockquote).raw;
+        // GitHub / Obsidian admonitions (`> [!NOTE]`) arrive as blockquotes, so
+        // detect them here too — not just in the paragraph branch.
+        if (options.detectCallouts) {
+          const callout = detectCallout(raw);
+          if (callout) {
+            return {
+              type: 'callout',
+              raw,
+              data: {
+                type: 'callout',
+                kind: callout.kind as CalloutKind,
+                content: callout.content,
+                title: callout.title,
+              },
+            };
+          }
+        }
+        return { type: 'blockquote', raw };
       }
 
       case 'space':
         return null;
 
       default:
-        return { type: 'paragraph', raw: (token as any).raw ?? '' };
+        return { type: 'paragraph', raw: (token as { raw: string }).raw ?? '' };
     }
   } catch (err) {
-    const raw = (token as any).raw ?? '';
+    const raw = (token as { raw: string }).raw ?? '';
     warnings.push(err instanceof Error ? err.message : String(err));
     return { type: 'paragraph', raw };
   }
@@ -237,7 +345,7 @@ export function parseToEnrichedAST(
   let tokens: Token[];
   try {
     tokens = Lexer.lex(md);
-  } catch (err) {
+  } catch {
     warnings.push('Failed to lex markdown');
     return {
       blocks: [{ type: 'paragraph', raw: md }],
@@ -252,14 +360,51 @@ export function parseToEnrichedAST(
     if (block) blocks.push(block);
   }
 
-  const hierarchy = buildHierarchy(blocks, state);
+  const expanded: EnrichedBlock[] = [];
+  for (const block of blocks) {
+    if (
+      block.type === 'callout' &&
+      block.data &&
+      'content' in block.data &&
+      options.detectDiagrams
+    ) {
+      const calloutData = block.data as CalloutElement;
+      const diagram = detectInlineDiagram(calloutData.content);
+      if (diagram) {
+        state.diagramCount++;
+        const dId = `diagram-${state.diagramCount}`;
+        expanded.push({
+          type: 'diagram',
+          raw: '```mermaid\n' + diagram.code + '\n```',
+          id: dId,
+          data: {
+            type: 'diagram',
+            kind: diagram.kind,
+            label: `Diagram ${state.diagramCount}`,
+            content: diagram.code,
+            caption: '',
+            altText: '',
+            placement: -1,
+            id: dId,
+          },
+        });
+        if (diagram.remaining) {
+          expanded.push({ ...block, data: { ...calloutData, content: diagram.remaining } });
+        }
+        continue;
+      }
+    }
+    expanded.push(block);
+  }
 
-  return { blocks, hierarchy, warnings };
+  const hierarchy = buildHierarchy(expanded, state);
+
+  return { blocks: expanded, hierarchy, warnings };
 }
 
 export function buildHierarchy(
   blocks: EnrichedBlock[],
-  state?: { figureCount: number; tableCount: number; diagramCount: number; codeCount: number },
+  _state?: { figureCount: number; tableCount: number; diagramCount: number; codeCount: number },
 ): ContentHierarchy {
   const toc: HeadingNode[] = [];
   const stack: HeadingNode[] = [];
@@ -268,14 +413,13 @@ export function buildHierarchy(
   const diagrams: NumberedItem[] = [];
   const codeBlocks: NumberedItem[] = [];
 
-  let figNum = 0;
   let tableNum = 0;
   let diagNum = 0;
   let codeNum = 0;
 
   for (const block of blocks) {
     if (block.type === 'heading' && block.level) {
-      const text = (block.raw.replace(/^#+\s*/, '').trim()) || '';
+      const text = block.raw.replace(/^#+\s*/, '').trim() || '';
       const node: HeadingNode = {
         level: block.level,
         text,
@@ -297,7 +441,7 @@ export function buildHierarchy(
 
     if (block.type === 'diagram' && block.data && 'kind' in block.data) {
       diagNum++;
-      const diagramData = block.data as any;
+      const diagramData = block.data as DiagramElement;
       diagrams.push({
         type: 'diagram',
         number: diagNum,
@@ -346,11 +490,14 @@ function assignNumbers(nodes: HeadingNode[], prefix = ''): void {
   }
 }
 
-export function applyNumberingToBlocks(blocks: EnrichedBlock[], hierarchy: ContentHierarchy): EnrichedBlock[] {
+export function applyNumberingToBlocks(
+  blocks: EnrichedBlock[],
+  hierarchy: ContentHierarchy,
+): EnrichedBlock[] {
   const headingMap = new Map<string, string>();
   flattenHeadings(hierarchy.toc, headingMap);
 
-  return blocks.map(block => {
+  return blocks.map((block) => {
     if (block.type === 'heading' && block.id && headingMap.has(block.id)) {
       return { ...block, number: headingMap.get(block.id) };
     }
@@ -383,7 +530,7 @@ export function serializeEnrichedBlock(block: EnrichedBlock): string {
       return block.raw.trim();
     case 'callout': {
       if (block.data && 'kind' in block.data) {
-        const d = block.data as any;
+        const d = block.data as CalloutElement;
         const title = d.title ? ` ${d.title}` : '';
         return `[!${d.kind.toUpperCase()}]${title}\n${d.content}`;
       }
@@ -391,7 +538,7 @@ export function serializeEnrichedBlock(block: EnrichedBlock): string {
     }
     case 'diagram': {
       if (block.data && 'kind' in block.data) {
-        const d = block.data as any;
+        const d = block.data as DiagramElement;
         const lang = d.kind === 'plantuml' ? 'plantuml' : 'mermaid';
         return `\`\`\`${lang}\n${d.content}\n\`\`\``;
       }
@@ -412,4 +559,11 @@ export function serializeEnrichedBlock(block: EnrichedBlock): string {
 
 export function serializeEnrichedDocument(blocks: EnrichedBlock[]): string {
   return blocks.map(serializeEnrichedBlock).join('\n\n');
+}
+
+export function stripNotchMarkers(markdown: string): string {
+  return markdown
+    .replace(/<!-- NOTCH-ANALYSIS -->[\s\S]*?<!-- \/NOTCH-ANALYSIS -->\n*/g, '')
+    .replace(/<!-- NOTCH-DIAGRAMS -->[\s\S]*?<!-- \/NOTCH-DIAGRAMS -->\n*/g, '')
+    .replace(/<!-- NOTCH-IMAGES -->[\s\S]*?<!-- \/NOTCH-IMAGES -->\n*/g, '');
 }

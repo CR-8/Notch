@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { RichTableElement } from '../types';
 import { InlineMarkdown } from './InlineMarkdown';
-import { inlineToPlainText } from '../inline-md';
+import { inlineToPlainText } from '../../markdown/inline-md';
 
 interface RichTableProps {
   data: RichTableElement;
@@ -11,18 +11,9 @@ interface RichTableProps {
 export function RichTable({ data, number }: RichTableProps) {
   const [sortColumn, setSortColumn] = useState<number | null>(null);
   const [sortAsc, setSortAsc] = useState(true);
-  const [filterText, setFilterText] = useState('');
 
   const processedRows = useMemo(() => {
-    let rows = [...data.rows];
-
-    // Filter — compare against plain text so markdown markers don't interfere.
-    if (filterText) {
-      const lower = filterText.toLowerCase();
-      rows = rows.filter(row =>
-        row.some(cell => inlineToPlainText(cell).toLowerCase().includes(lower)),
-      );
-    }
+    const rows = [...data.rows];
 
     // Sort — on the rendered (plain) text, not the raw markdown.
     if (sortColumn !== null) {
@@ -35,11 +26,11 @@ export function RichTable({ data, number }: RichTableProps) {
     }
 
     return rows;
-  }, [data.rows, sortColumn, sortAsc, filterText]);
+  }, [data.rows, sortColumn, sortAsc]);
 
   function toggleSort(colIndex: number) {
     if (sortColumn === colIndex) {
-      setSortAsc(v => !v);
+      setSortAsc((v) => !v);
     } else {
       setSortColumn(colIndex);
       setSortAsc(true);
@@ -50,20 +41,9 @@ export function RichTable({ data, number }: RichTableProps) {
     <div className="my-6" data-table-id={data.caption}>
       {data.caption && (
         <p className="text-[13px] text-[var(--color-ink-muted)] mb-2 font-medium">
-          {number ? `Table ${number}: ` : ''}<InlineMarkdown text={data.caption} />
+          {number ? `Table ${number}: ` : ''}
+          <InlineMarkdown text={data.caption} />
         </p>
-      )}
-
-      {data.filterable && (
-        <div className="mb-2">
-          <input
-            type="text"
-            placeholder="Filter table..."
-            value={filterText}
-            onChange={e => setFilterText(e.target.value)}
-            className="notion-input text-[12px] w-full max-w-[240px]"
-          />
-        </div>
       )}
 
       <div className="overflow-x-auto rounded-lg border border-[var(--color-hairline)]">
@@ -74,7 +54,9 @@ export function RichTable({ data, number }: RichTableProps) {
                 <th
                   key={i}
                   className={`px-4 py-2.5 text-[12px] font-semibold text-[var(--color-ink-muted)] uppercase tracking-wide border-b border-[var(--color-hairline)] ${
-                    data.sortable ? 'cursor-pointer hover:bg-[var(--color-surface-hover)] select-none' : ''
+                    data.sortable
+                      ? 'cursor-pointer hover:bg-[var(--color-surface-hover)] select-none'
+                      : ''
                   }`}
                   style={{ textAlign: col.align }}
                   onClick={() => data.sortable && toggleSort(i)}

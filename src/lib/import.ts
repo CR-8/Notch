@@ -3,6 +3,7 @@ import type { Document, DocumentChunk } from './types';
 import { saveDocument, saveDocIndex, getDocIndex } from './storage';
 import { saveChunk } from './idb';
 import { log } from './logger';
+import type { ParsedPdf } from './pdf-parser';
 
 export interface NotchBundle {
   document: Document;
@@ -48,15 +49,39 @@ export async function importNotchPDF(file: File): Promise<string> {
   try {
     const pdfDoc = await PDFDocument.load(arrayBuffer);
     const attachments = extractAttachments(pdfDoc);
-    const notchAttachment = attachments.find(a => a.name === 'notch_data.json');
+    const notchAttachment = attachments.find((a) => a.name === 'notch_data.json');
 
     if (!notchAttachment) {
-      throw new Error(`[${fileName}] This PDF does not contain Notch data. Only PDFs exported from Notch can be imported.`);
+      log.info('storage', `No Notch metadata found in PDF "${fileName}", parsing as standard PDF`);
+      const bytes = Array.from(new Uint8Array(arrayBuffer));
+      const pdfParser = (await import('./pdf-parser')) as {
+        parsePdfBytes: (bytes: number[], fileName: string) => Promise<ParsedPdf>;
+      };
+      const parsed = await pdfParser.parsePdfBytes(bytes, fileName);
+
+      const { runCapturePipeline } = await import('./pipeline');
+      const extraction = {
+        title: parsed.title,
+        url: '',
+        domain: 'local-file',
+        textContent: parsed.content,
+        cleanedHtml: parsed.content
+          .split('\n\n')
+          .map((p) => `<p>${p}</p>`)
+          .join(''),
+        images: [],
+        videos: [],
+        wordCount: parsed.wordCount,
+        metaDescription: '',
+      };
+
+      const docId = await runCapturePipeline(extraction, 'FAST', ['imported-pdf']);
+      return docId;
     }
 
     let parsed: NotchBundle;
     try {
-      parsed = JSON.parse(new TextDecoder().decode(notchAttachment.data));
+      parsed = JSON.parse(new TextDecoder().decode(notchAttachment.data)) as NotchBundle;
     } catch {
       throw new Error(`[${fileName}] Invalid Notch data: attachment is not valid JSON.`);
     }
@@ -80,7 +105,7 @@ export async function importNotchPDF(file: File): Promise<string> {
     const msg = err instanceof Error ? err.message : String(err);
     if (!msg.startsWith(`[${fileName}]`)) {
       log.error('storage', `Failed to import PDF "${fileName}": ${msg}`, err);
-      throw new Error(`[${fileName}] ${msg}`);
+      throw new Error(`[${fileName}] ${msg}`, { cause: err });
     }
     throw err;
   }

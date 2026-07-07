@@ -1,265 +1,342 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { browser } from 'wxt/browser';
-import { getSettings, getAllProviders, getAppearance } from '../../lib/storage';
-import type { GenerationMode, RuntimeMessage } from '../../lib/types';
-import { privacyLabel, shouldRunOffline } from '../../lib/privacy';
-import { applyAppearance, watchAppearance } from '../../lib/theme';
 import { cn } from '@/lib/utils';
+import { getAppearance, deleteDocument } from '@/lib/storage';
+import { applyAppearance, watchAppearance } from '@/lib/theme';
+import { openSettings, libraryUrl } from '@/lib/navigation';
+import { importNotchPDF } from '@/lib/import';
+import type { GenerationMode } from '@/lib/types';
+import { modeMeta } from './data';
+import { usePageContext, useConnection, useCapture, useRecentTags } from './hooks';
+import { PageCard } from './PageCard';
+import { ModeSelector } from './ModeSelector';
+import { TagInput } from './TagInput';
+import { ProcessingScreen } from './ProcessingScreen';
 
-type CaptureState = 'idle' | 'loading' | 'success' | 'error';
+// ── Header ───────────────────────────────────────────────────────────────────
 
-const MODES: { mode: GenerationMode; label: string; description: string }[] = [
-  { mode: 'FAST',     label: 'Fast',     description: 'Quick capture' },
-  { mode: 'BALANCED', label: 'Balanced', description: 'Quality + speed' },
-  { mode: 'DEEP',     label: 'Deep',     description: 'Best quality' },
-];
-
-function StatusBar({ providerLabel, hasKey }: { providerLabel: string; hasKey: boolean }) {
+function Header({
+  providerLabel,
+  hasKey,
+  onConnect,
+}: {
+  providerLabel: string;
+  hasKey: boolean;
+  onConnect: () => void;
+}) {
   return (
-    <div className="flex items-center justify-between px-4 py-2.5">
-      <span className="text-[15px] font-semibold tracking-tight text-[var(--color-ink)]">Notch</span>
-      <div className="flex items-center gap-1.5">
-        <span
-          className={cn('inline-block w-2 h-2 rounded-full', hasKey ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-destructive)]')}
-        />
-        <span className={cn('text-[11px] font-medium', hasKey ? 'text-[var(--color-primary)]' : 'text-[var(--color-destructive)]')}>
-          {hasKey ? providerLabel : 'No key'}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PageContextZone() {
-  const [loading, setLoading] = useState(true);
-  const [title, setTitle] = useState('');
-  const [domain, setDomain] = useState('');
-
-  useEffect(() => {
-    browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
-      const tab = tabs[0];
-      if (tab) {
-        setTitle(tab.title ?? '');
-        try { setDomain(new URL(tab.url ?? '').hostname); }
-        catch { setDomain(tab.url ?? ''); }
-      }
-      setLoading(false);
-    });
-  }, []);
-
-  return (
-    <div className="px-4 py-3 border-b border-[var(--color-hairline)]">
-      {loading ? (
-        <div className="space-y-1.5">
-          <div className="h-3 w-[70%] bg-[var(--color-hairline)] rounded-sm animate-pulse" />
-          <div className="h-2.5 w-[45%] bg-[var(--color-hairline)] rounded-sm animate-pulse" />
+    <header className="sticky top-0 z-30 flex items-center justify-between px-4 h-14 bg-surface/80 backdrop-blur-[12px] backdrop-saturate-150 border-b border-hairline">
+      <div className="flex items-center gap-2.5 min-w-0">
+        <div className="w-7 h-7 rounded-lg bg-ink grid place-items-center shrink-0">
+          <span className="text-[13px] font-bold text-canvas leading-none">N</span>
         </div>
-      ) : (
-        <>
-          <p className="text-[14px] font-medium text-[var(--color-ink)] leading-snug truncate">{title}</p>
-          <p className="text-[12px] text-[var(--color-ink-muted)] mt-0.5 truncate">{domain}</p>
-        </>
-      )}
-    </div>
-  );
-}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[14px] font-semibold tracking-tight text-ink">Notch</span>
+          <span className="text-ink-faint">/</span>
+          <span className="text-[12.5px] text-ink-muted truncate">Personal</span>
+        </div>
+      </div>
 
-function ModeSelector({ mode, onModeChange }: { mode: GenerationMode; onModeChange: (m: GenerationMode) => void }) {
-  return (
-    <div className="flex gap-1.5 px-4 py-3 border-b border-[var(--color-hairline)]">
-      {MODES.map((m) => (
+      <div className="flex items-center gap-2 shrink-0">
         <button
-          key={m.mode}
-          onClick={() => onModeChange(m.mode)}
+          onClick={hasKey ? undefined : onConnect}
           className={cn(
-            'flex-1 flex flex-col items-center rounded-md py-1.5 px-2 text-[11px] transition-all',
-            m.mode === mode
-              ? 'bg-[var(--color-primary)] text-white'
-              : 'bg-[var(--color-surface)] text-[var(--color-ink-muted)] border border-[var(--color-hairline)] hover:border-[var(--color-primary)]'
+            'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border transition-colors',
+            hasKey
+              ? 'border-hairline bg-surface cursor-default'
+              : 'border-destructive/30 bg-destructive/5 hover:bg-destructive/10',
           )}
         >
-          <span className="font-semibold">{m.label}</span>
-          <span className="text-[9px] opacity-70 mt-0.5">{m.description}</span>
+          <span
+            className={cn(
+              'w-1.5 h-1.5 rounded-full',
+              hasKey ? 'bg-accent-green' : 'bg-destructive',
+            )}
+          />
+          <span
+            className={cn(
+              'text-[11px] font-medium max-w-[92px] truncate',
+              hasKey ? 'text-ink-muted' : 'text-destructive',
+            )}
+          >
+            {hasKey ? providerLabel : 'Connect key'}
+          </span>
         </button>
-      ))}
-    </div>
-  );
-}
-
-function TagInput({ tags, onTagsChange }: { tags: string[]; onTagsChange: (t: string[]) => void }) {
-  const [input, setInput] = useState('');
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== 'Enter') return;
-    const trimmed = input.trim();
-    if (!trimmed || tags.includes(trimmed)) { setInput(''); return; }
-    onTagsChange([...tags, trimmed]);
-    setInput('');
-  }
-
-  return (
-    <div className="px-4 py-2.5 border-b border-[var(--color-hairline)]">
-      <input
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Add a tag..."
-        className="notion-input text-[13px]"
-      />
-      {tags.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-1.5">
-          {tags.map((tag) => (
-            <span key={tag} className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--color-primary)] bg-[var(--color-primary)]/5 rounded-full px-2 py-0.5">
-              {tag}
-              <button onClick={() => onTagsChange(tags.filter((t) => t !== tag))} className="text-[var(--color-primary)] hover:text-[var(--color-primary-active)] leading-none">&times;</button>
-            </span>
-          ))}
+        <div className="w-7 h-7 rounded-full bg-soft-cloud border border-hairline grid place-items-center">
+          <span className="text-[11px] font-semibold text-ink-faint">P</span>
         </div>
-      )}
-    </div>
+      </div>
+    </header>
   );
 }
+
+// ── Primary + secondary actions ──────────────────────────────────────────────
+
+function SecondaryTile({
+  label,
+  glyph,
+  onClick,
+  disabled,
+  badge,
+  busy,
+}: {
+  label: string;
+  glyph: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  badge?: string;
+  busy?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || busy}
+      className={cn(
+        'relative flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl border border-hairline bg-surface transition-all',
+        disabled
+          ? 'opacity-50 cursor-not-allowed'
+          : 'hover:border-ink-faint hover:shadow-level-1 active:scale-[0.97]',
+      )}
+    >
+      {badge && (
+        <span className="absolute top-1 right-1.5 text-[8px] font-semibold uppercase tracking-wide text-ink-faint">
+          {badge}
+        </span>
+      )}
+      <span className="text-[15px] leading-none">
+        {busy ? (
+          <motion.span
+            animate={{ rotate: 360 }}
+            transition={{ repeat: Infinity, ease: 'linear', duration: 0.8 }}
+            className="block w-3.5 h-3.5 rounded-full border-2 border-ink-faint/30 border-t-ink-muted"
+          />
+        ) : (
+          glyph
+        )}
+      </span>
+      <span className="text-[11px] font-medium text-ink-muted">{busy ? 'Importing' : label}</span>
+    </button>
+  );
+}
+
+// ── Footer ───────────────────────────────────────────────────────────────────
+
+function FooterLink({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-[12px] font-medium text-ink-muted hover:text-ink transition-colors"
+    >
+      {label}
+    </button>
+  );
+}
+
+// ── App ──────────────────────────────────────────────────────────────────────
 
 export default function PopupApp() {
   const [mode, setMode] = useState<GenerationMode>('FAST');
   const [tags, setTags] = useState<string[]>([]);
-  const [captureState, setCaptureState] = useState<CaptureState>('idle');
-  const [documentId, setDocumentId] = useState<string | undefined>();
-  const [errorMsg, setErrorMsg] = useState<string | undefined>();
-  const [captureProgress, setCaptureProgress] = useState<string>('');
-  const [providerLabel, setProviderLabel] = useState('Anthropic');
-  const [hasKey, setHasKey] = useState(false);
-  const [privacy, setPrivacy] = useState('');
-  const [isOffline, setIsOffline] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const page = usePageContext();
+  const conn = useConnection();
+  const recentTags = useRecentTags();
+  const capture = useCapture(page.tabId, page.url);
+  const active = modeMeta(mode);
 
   useEffect(() => {
-    getSettings().then((s) => {
-      const offline = shouldRunOffline(s);
-      setIsOffline(offline);
-      const chatProviderId = s.runtime.chat.providerId;
-      if (chatProviderId) {
-        getAllProviders().then((providers) => {
-          const p = providers.find(p => p.id === chatProviderId);
-          if (p) {
-            setProviderLabel(p.label);
-            setHasKey(Boolean(p.apiKey));
-            setPrivacy(privacyLabel(s, p.label));
-          }
-        });
-      } else if (s.apiKey) {
-        const label = s.provider === 'anthropic' ? 'Anthropic' : s.provider === 'openai-compatible' ? 'OpenRouter / Custom' : 'Offline';
-        setProviderLabel(label);
-        setHasKey(true);
-        setPrivacy(privacyLabel(s, label));
-      } else {
-        setPrivacy(privacyLabel(s));
-      }
-    });
-    getAppearance().then(applyAppearance);
+    void getAppearance().then(applyAppearance);
     return watchAppearance(applyAppearance);
   }, []);
 
-  async function handleCaptureClick() {
-    try {
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-      if (!tab?.id) { setCaptureState('error'); setErrorMsg('Could not get active tab'); return; }
-      setCaptureState('loading');
-      setCaptureProgress('Starting capture...');
-      setErrorMsg(undefined);
-
-      const progressListener = (msg: unknown) => {
-        if (msg && typeof msg === 'object' && (msg as { type?: string }).type === 'CAPTURE_PROGRESS') {
-          const m = msg as { payload: { step: string } };
-          setCaptureProgress(m.payload.step);
-        }
-      };
-      browser.runtime.onMessage.addListener(progressListener);
-
-      const response = await browser.runtime.sendMessage({
-        type: 'CAPTURE_PAGE',
-        payload: { mode, tags, tabId: tab.id, url: tab.url },
-      }) as RuntimeMessage;
-
-      browser.runtime.onMessage.removeListener(progressListener);
-
-      if (response.type === 'CAPTURE_COMPLETE' && response.payload?.documentId) {
-        setDocumentId(response.payload.documentId);
-        setCaptureState('success');
-        setCaptureProgress('');
-      } else if (response.type === 'CAPTURE_ERROR') {
-        setErrorMsg(response.payload?.error ?? 'Unknown error');
-        setCaptureState('error');
-        setCaptureProgress('');
+  // ⌘↵ / Ctrl+↵ captures the page from anywhere in the popup.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && capture.state === 'idle') {
+        e.preventDefault();
+        void capture.start({ mode, tags, captureMode: 'page' });
       }
-    } catch (e) {
-      setErrorMsg((e as Error).message ?? 'Unknown error');
-      setCaptureState('error');
-      setCaptureProgress('');
-    }
-  }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [capture, mode, tags]);
 
-  function handleOpenReader() {
-    if (documentId) {
-      browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?documentId=${documentId}`) });
-    }
-  }
+  const openReader = (id?: string) => {
+    const documentId = id ?? capture.documentId;
+    if (!documentId) return;
+    void browser.tabs.create({
+      url: browser.runtime.getURL(`/reader.html?documentId=${documentId}`),
+    });
+  };
 
-  function handleOpenSettings() {
-    browser.runtime.openOptionsPage();
-  }
+  const openLibrary = () => {
+    browser.tabs.create({ url: libraryUrl() }).catch(() => {});
+  };
+
+  const handleUndo = () => {
+    if (capture.documentId) void deleteDocument(capture.documentId);
+    capture.reset();
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImporting(true);
+    try {
+      const docId = await importNotchPDF(file);
+      openReader(docId);
+    } catch (err) {
+      console.error('PDF import failed', err);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const isOverlay =
+    capture.state === 'loading' || capture.state === 'success' || capture.state === 'error';
 
   return (
-    <div className="w-[320px] bg-[var(--color-canvas-soft)] text-[var(--color-ink)] flex flex-col overflow-hidden">
-      <StatusBar providerLabel={providerLabel} hasKey={hasKey} />
-      {privacy && (
-        <div className="flex items-center gap-1.5 px-4 pb-2">
-          <span className={cn('inline-block w-1.5 h-1.5 rounded-full', isOffline ? 'bg-[var(--color-accent-green)]' : 'bg-[var(--color-ink-faint)]')} />
-          <span className="text-[11px] text-[var(--color-ink-muted)]">{privacy}</span>
-        </div>
-      )}
-      <PageContextZone />
-      <ModeSelector mode={mode} onModeChange={setMode} />
-      <TagInput tags={tags} onTagsChange={setTags} />
+    <div className="w-[400px] bg-canvas-soft text-ink flex flex-col overflow-hidden">
+      <Header
+        providerLabel={conn.providerLabel}
+        hasKey={conn.hasKey}
+        onConnect={() => {
+          void openSettings();
+        }}
+      />
 
-      <div className="px-4 pb-4 pt-3 flex flex-col gap-2">
-        {captureState === 'success' ? (
-          <button
-            onClick={handleOpenReader}
-            className="notion-btn-primary w-full text-[14px] py-2.5"
+      <AnimatePresence mode="wait" initial={false}>
+        {isOverlay ? (
+          <motion.div
+            key="overlay"
+            initial={{ opacity: 0, filter: 'blur(8px)' }}
+            animate={{ opacity: 1, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, filter: 'blur(8px)' }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
           >
-            Open in Reader
-          </button>
+            <ProcessingScreen
+              state={capture.state as 'loading' | 'success' | 'error'}
+              progress={capture.progress}
+              domain={page.domain}
+              errorMsg={capture.errorMsg}
+              onOpen={() => openReader()}
+              onReset={capture.state === 'success' ? handleUndo : capture.reset}
+              onRetry={() => void capture.start({ mode, tags, captureMode: 'page' })}
+            />
+          </motion.div>
         ) : (
-          <button
-            disabled={captureState === 'loading'}
-            onClick={handleCaptureClick}
-            className={cn(
-              'w-full text-[14px] font-medium py-2.5 rounded-full transition-all',
-              captureState === 'idle' && 'notion-btn-primary',
-              captureState === 'loading' && 'bg-[var(--color-primary)] text-white opacity-70 cursor-not-allowed',
-              captureState === 'error' && 'border-2 border-[var(--color-destructive)] text-[var(--color-destructive)] bg-white hover:bg-[var(--color-destructive)]/5',
-            )}
+          <motion.div
+            key="main"
+            initial={{ opacity: 0, filter: 'blur(8px)' }}
+            animate={{ opacity: 1, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, filter: 'blur(8px)' }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            className="flex flex-col gap-4 px-4 pt-4 pb-3"
           >
-            {captureState === 'loading' ? 'Processing...' : captureState === 'error' ? 'Retry' : 'Capture this page'}
-          </button>
-        )}
+            {capture.paywall === 'detected' && (
+              <div className="flex items-start gap-2.5 rounded-xl border-l-2 border-l-accent-orange bg-accent-orange/8 pl-3 pr-2 py-2.5">
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11.5px] font-semibold text-accent-orange">Paywall detected</p>
+                  <p className="text-[10.5px] text-ink-muted leading-snug mt-0.5">
+                    This page may have restricted content — the capture could be incomplete.
+                  </p>
+                </div>
+                <button
+                  onClick={capture.dismissPaywall}
+                  className="text-ink-faint hover:text-ink leading-none shrink-0"
+                >
+                  &times;
+                </button>
+              </div>
+            )}
 
-        {captureState === 'loading' && captureProgress && (
-          <p className="text-[11px] text-[var(--color-primary)] animate-pulse">{captureProgress}</p>
-        )}
+            <PageCard page={page} captureState={capture.state} />
+            <ModeSelector mode={mode} onModeChange={setMode} />
+            <TagInput tags={tags} onTagsChange={setTags} recent={recentTags} />
 
-        {captureState === 'error' && errorMsg && (
-          <p className="text-[11px] text-[var(--color-destructive)]">{errorMsg.slice(0, 120)}</p>
-        )}
+            {/* Primary action */}
+            <motion.button
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => void capture.start({ mode, tags, captureMode: 'page' })}
+              className="group relative w-full flex items-center gap-3 rounded-2xl bg-primary px-4 py-3 text-left shadow-level-1 transition-colors hover:bg-primary-active"
+            >
+              <span className="w-9 h-9 rounded-xl bg-white/15 grid place-items-center text-[16px] shrink-0">
+                {active.glyph}
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-[15px] font-semibold text-primary-foreground leading-tight">
+                  Capture page
+                </span>
+                <span className="block text-[11.5px] text-primary-foreground/75 leading-tight mt-0.5">
+                  {active.label} mode · {active.estTime}
+                </span>
+              </span>
+              <span className="text-primary-foreground/60 text-[16px] transition-transform group-hover:translate-x-0.5">
+                →
+              </span>
+            </motion.button>
 
-        <button
-          onClick={handleOpenSettings}
-          className="w-full text-[13px] font-medium py-2 rounded-full border border-[var(--color-hairline)] bg-white text-[var(--color-ink-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all"
-        >
-          Settings
-        </button>
-      </div>
+            {/* Secondary actions */}
+            <div className="grid grid-cols-3 gap-2 -mt-1">
+              <SecondaryTile
+                label="Selection"
+                glyph="⌟"
+                onClick={() => void capture.start({ mode, tags, captureMode: 'selection' })}
+              />
+              <SecondaryTile label="Screenshot" glyph="◳" disabled badge="Soon" />
+              <SecondaryTile
+                label="Import PDF"
+                glyph="↧"
+                busy={importing}
+                onClick={() => fileInputRef.current?.click()}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Footer */}
+      <footer className="flex items-center justify-between px-4 h-11 border-t border-hairline bg-surface/60 backdrop-blur-[12px]">
+        <div className="flex items-center gap-4">
+          <FooterLink
+            label="Library"
+            onClick={() => {
+              void openLibrary();
+            }}
+          />
+          <FooterLink
+            label="Recent"
+            onClick={() => {
+              void openLibrary();
+            }}
+          />
+          <FooterLink
+            label="Settings"
+            onClick={() => {
+              void openSettings();
+            }}
+          />
+        </div>
+        <span className="inline-flex items-center gap-1 text-[10.5px] text-ink-faint">
+          <kbd className="px-1 py-0.5 rounded bg-soft-cloud text-ink-muted font-sans text-[10px]">
+            ⌘↵
+          </kbd>
+          capture
+        </span>
+      </footer>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,application/pdf"
+        className="hidden"
+        onChange={(e) => void handleImportFile(e)}
+      />
     </div>
   );
 }

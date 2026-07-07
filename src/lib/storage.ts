@@ -33,19 +33,14 @@ const DEFAULT_RUNTIME: AIRuntimeConfig = {
   },
 };
 
-// Dark by default; light is the toggleable alternate. Inter (sans) + Notion blue
-// accent per DESIGN.md.
+// Dark by default; light is the toggleable alternate. Inter (sans) substitutes
+// the Helvetica Now UI tier per DESIGN.md; ink (#111111) is the monochrome
+// default accent — the adaptive primary token inverts it per theme.
 const DEFAULT_APPEARANCE: AppearanceSettings = {
   theme: 'dark',
   fontFamily: 'sans',
   fontSize: 'md',
-  accentColor: '#0075de',
-};
-
-const DEFAULT_CHAT_MODELS: Record<string, string> = {
-  FAST: 'gemini-2.0-flash',
-  BALANCED: 'gemini-1.5-pro',
-  DEEP: 'gemini-2.0-pro-exp',
+  accentColor: '#111111',
 };
 
 // ── Schema migration guard ───────────────────────────────────────────────────
@@ -62,8 +57,14 @@ export async function ensureSchema(): Promise<void> {
         const allNotes = await db.notes.toArray();
         for (const note of allNotes) {
           const enrichedContent = note.content;
-          const diagramCount = (enrichedContent?.match(/```(?:mermaid|plantuml|flowchart|sequenceDiagram|classDiagram|erDiagram|stateDiagram|mindmap|timeline|gantt|pie|journey|gitGraph)\b/g) ?? []).length;
-          const calloutCount = (enrichedContent?.match(/\[!(?:NOTE|WARNING|TIP|DANGER|INFO)\]/g) ?? []).length;
+          const diagramCount = (
+            enrichedContent?.match(
+              /```(?:mermaid|plantuml|flowchart|sequenceDiagram|classDiagram|erDiagram|stateDiagram|mindmap|timeline|gantt|pie|journey|gitGraph)\b/g,
+            ) ?? []
+          ).length;
+          const calloutCount = (
+            enrichedContent?.match(/\[!(?:NOTE|WARNING|TIP|DANGER|INFO)\]/g) ?? []
+          ).length;
 
           await db.notes.put({
             ...note,
@@ -101,7 +102,10 @@ export async function saveSettings(settings: Settings): Promise<void> {
 
 export async function getAppearance(): Promise<AppearanceSettings> {
   const result = await browser.storage.local.get(APPEARANCE_KEY);
-  return { ...DEFAULT_APPEARANCE, ...(result[APPEARANCE_KEY] as Partial<AppearanceSettings> ?? {}) };
+  return {
+    ...DEFAULT_APPEARANCE,
+    ...((result[APPEARANCE_KEY] as Partial<AppearanceSettings>) ?? {}),
+  };
 }
 
 export async function saveAppearance(settings: AppearanceSettings): Promise<void> {
@@ -119,14 +123,22 @@ export async function getDocument(id: string): Promise<Document | undefined> {
 }
 
 export async function deleteDocument(id: string): Promise<void> {
-  await db.transaction('rw', db.notes, db.chunks, db.vectors, db.messages, db.highlights, async () => {
-    const chunkIds = await db.chunks.where('noteId').equals(id).primaryKeys();
-    await db.notes.delete(id);
-    await db.chunks.where('noteId').equals(id).delete();
-    await db.vectors.where('chunkId').anyOf(chunkIds).delete();
-    await db.messages.where('documentId').equals(id).delete();
-    await db.highlights.where('documentId').equals(id).delete();
-  });
+  await db.transaction(
+    'rw',
+    db.notes,
+    db.chunks,
+    db.vectors,
+    db.messages,
+    db.highlights,
+    async () => {
+      const chunkIds = await db.chunks.where('noteId').equals(id).primaryKeys();
+      await db.notes.delete(id);
+      await db.chunks.where('noteId').equals(id).delete();
+      await db.vectors.where('chunkId').anyOf(chunkIds).delete();
+      await db.messages.where('documentId').equals(id).delete();
+      await db.highlights.where('documentId').equals(id).delete();
+    },
+  );
 }
 
 export async function getAllNotes(): Promise<Document[]> {
@@ -166,7 +178,31 @@ export async function deleteProvider(id: string): Promise<void> {
 }
 
 export async function getEnabledProvider(): Promise<ProviderConfig | undefined> {
-  return db.providers.filter(p => p.enabled).first();
+  return db.providers.filter((p) => p.enabled).first();
+}
+
+/**
+ * Wipe every stored API key without removing provider configs.
+ * Strips `apiKey` from all provider records and clears the legacy
+ * `settings.apiKey` field, so secrets are gone but base URLs / models remain.
+ * Returns the number of keys cleared.
+ */
+export async function clearAllApiKeys(): Promise<number> {
+  const provs = await db.providers.toArray();
+  let cleared = 0;
+  await Promise.all(
+    provs.map((p) => {
+      if (p.apiKey) cleared++;
+      return db.providers.put({ ...p, apiKey: '' });
+    }),
+  );
+  const s = await getSettings();
+  if (s.apiKey) {
+    cleared++;
+    await saveSettings({ ...s, apiKey: '' });
+  }
+  log.info('storage', `Cleared ${cleared} stored API key(s)`);
+  return cleared;
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────
@@ -187,7 +223,10 @@ export async function checkStorageQuota(): Promise<{ usage: number; quota: numbe
     const usage = estimate.usage ?? 0;
     const quota = estimate.quota ?? 0;
     const pct = quota > 0 ? usage / quota : 0;
-    log.info('storage', `Storage: ${Math.round(pct * 100)}% used (${Math.round(usage / 1024 / 1024)}MB / ${Math.round(quota / 1024 / 1024)}MB)`);
+    log.info(
+      'storage',
+      `Storage: ${Math.round(pct * 100)}% used (${Math.round(usage / 1024 / 1024)}MB / ${Math.round(quota / 1024 / 1024)}MB)`,
+    );
 
     if (pct > 0.9) {
       try {
@@ -195,7 +234,9 @@ export async function checkStorageQuota(): Promise<{ usage: number; quota: numbe
           type: 'STORAGE_QUOTA_WARNING',
           payload: { usedBytes: usage, quotaBytes: quota },
         });
-      } catch { /* no listeners */ }
+      } catch {
+        /* no listeners */
+      }
     }
 
     return { usage, quota, pct };
@@ -209,7 +250,9 @@ export async function requestPersist(): Promise<boolean> {
     if (navigator.storage?.persist) {
       return await navigator.storage.persist();
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return false;
 }
 
@@ -226,7 +269,7 @@ const KEYS = {
 // separate browser.storage list that capture never updated.
 export async function getDocIndex(): Promise<string[]> {
   const notes = await db.notes.orderBy('createdAt').reverse().toArray();
-  return notes.map(d => d.id);
+  return notes.map((d) => d.id);
 }
 
 export async function saveDocIndex(index: string[]): Promise<void> {
@@ -234,13 +277,23 @@ export async function saveDocIndex(index: string[]): Promise<void> {
 }
 
 export function deriveDocumentMeta(doc: Document): DocumentMeta {
-  const topEntities = doc.entities?.slice(0, 3).map(e => e.name);
-  const topConcepts = doc.concepts?.slice(0, 3).map(c => c.term);
+  const topEntities = doc.entities?.slice(0, 3).map((e) => e.name);
+  const topConcepts = doc.concepts?.slice(0, 3).map((c) => c.term);
   return {
-    id: doc.id, title: doc.title, url: doc.url, domain: doc.domain,
-    capturedAt: doc.capturedAt, wordCount: doc.wordCount, summary: doc.summary,
-    tags: doc.tags, folder: doc.folder, isStarred: doc.starred,
-    isArchived: doc.archived, isRead: false, mode: 'FAST', provider: '',
+    id: doc.id,
+    title: doc.title,
+    url: doc.url,
+    domain: doc.domain,
+    capturedAt: doc.capturedAt,
+    wordCount: doc.wordCount,
+    summary: doc.summary,
+    tags: doc.tags,
+    folder: doc.folder,
+    isStarred: doc.starred,
+    isArchived: doc.archived,
+    isRead: false,
+    mode: 'FAST',
+    provider: '',
     entityCount: doc.entities?.length ?? 0,
     conceptCount: doc.concepts?.length ?? 0,
     hasTimeline: (doc.timeline?.length ?? 0) > 0,
@@ -265,7 +318,7 @@ export async function updateDocumentMeta(
 ): Promise<void> {
   const doc = await db.notes.get(id);
   if (!doc) return;
-  await db.notes.put({ ...doc, ...patch } as Document);
+  await db.notes.put({ ...doc, ...patch });
 }
 
 const FOLDERS_KEY = 'notch:folders';
@@ -279,14 +332,14 @@ export async function getFolders(): Promise<Folder[]> {
 
 export async function saveFolder(folder: Folder): Promise<void> {
   const folders = await getFolders();
-  const idx = folders.findIndex(f => f.id === folder.id);
+  const idx = folders.findIndex((f) => f.id === folder.id);
   if (idx >= 0) folders[idx] = folder;
   else folders.push(folder);
   await browser.storage.local.set({ [FOLDERS_KEY]: folders });
 }
 
 export async function deleteFolder(folderId: string): Promise<void> {
-  const folders = (await getFolders()).filter(f => f.id !== folderId);
+  const folders = (await getFolders()).filter((f) => f.id !== folderId);
   await browser.storage.local.set({ [FOLDERS_KEY]: folders });
 }
 
@@ -309,4 +362,92 @@ export async function getViewMode(): Promise<ViewMode> {
 
 export async function saveViewMode(mode: ViewMode): Promise<void> {
   await browser.storage.local.set({ [VIEW_MODE_KEY]: mode });
+}
+
+// ── LIB-6: Related notes ─────────────────────────────────────────────────────
+
+export interface RelatedNote {
+  id: string;
+  title: string;
+  url: string;
+  capturedAt: string;
+  tags: string[];
+  score: number;
+  sharedTags: string[];
+  sharedEntities: string[];
+  sharedConcepts: string[];
+}
+
+/**
+ * LIB-6: Find notes related to a given document, ranked by tag/entity/concept overlap.
+ * Returns up to `maxResults` results, excluding the source document itself.
+ */
+export async function findRelatedNotes(documentId: string, maxResults = 5): Promise<RelatedNote[]> {
+  const source = await db.notes.get(documentId);
+  if (!source) return [];
+
+  const sourceTags = new Set(source.tags ?? []);
+  const sourceEntities = new Set((source.entities ?? []).map((e) => e.name.toLowerCase()));
+  const sourceConcepts = new Set((source.concepts ?? []).map((c) => c.term.toLowerCase()));
+
+  if (sourceTags.size === 0 && sourceEntities.size === 0 && sourceConcepts.size === 0) {
+    // Nothing to relate by — return most recently captured excluding self
+    const recent = await db.notes
+      .orderBy('createdAt')
+      .reverse()
+      .filter((n) => n.id !== documentId && n.status === 'ready')
+      .limit(maxResults)
+      .toArray();
+    return recent.map((n) => ({
+      id: n.id,
+      title: n.title,
+      url: n.url,
+      capturedAt: n.capturedAt,
+      tags: n.tags,
+      score: 0,
+      sharedTags: [],
+      sharedEntities: [],
+      sharedConcepts: [],
+    }));
+  }
+
+  const allNotes = await db.notes
+    .filter((n) => n.id !== documentId && n.status === 'ready')
+    .toArray();
+
+  const scored: RelatedNote[] = allNotes.map((n) => {
+    const sharedTags = (n.tags ?? []).filter((t) => sourceTags.has(t));
+    const sharedEntities = (n.entities ?? [])
+      .filter((e) => sourceEntities.has(e.name.toLowerCase()))
+      .map((e) => e.name);
+    const sharedConcepts = (n.concepts ?? [])
+      .filter((c) => sourceConcepts.has(c.term.toLowerCase()))
+      .map((c) => c.term);
+    const score = sharedTags.length * 3 + sharedEntities.length * 2 + sharedConcepts.length;
+    return {
+      id: n.id,
+      title: n.title,
+      url: n.url,
+      capturedAt: n.capturedAt,
+      tags: n.tags,
+      score,
+      sharedTags,
+      sharedEntities,
+      sharedConcepts,
+    };
+  });
+
+  return scored
+    .filter((r) => r.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxResults);
+}
+
+// ── LIB-7: Read/unread state ──────────────────────────────────────────────────
+
+/**
+ * LIB-7: Mark a document as read. Uses updateDocumentMeta which patches via Dexie.
+ */
+export async function markDocumentRead(id: string): Promise<void> {
+  await updateDocumentMeta(id, { isRead: true, updatedAt: new Date().toISOString() });
 }

@@ -15,13 +15,7 @@ export type DiagramKind =
   | 'architecture'
   | 'plantuml';
 
-export type UMLKind =
-  | 'class'
-  | 'sequence'
-  | 'activity'
-  | 'usecase'
-  | 'component'
-  | 'deployment';
+export type UMLKind = 'class' | 'sequence' | 'activity' | 'usecase' | 'component' | 'deployment';
 
 export type ImageKind =
   | 'concept_illustration'
@@ -74,7 +68,8 @@ export interface ChapterMarker {
   title: string;
 }
 
-export type CalloutKind = 'note' | 'warning' | 'tip' | 'danger' | 'info';
+export type CalloutKind =
+  'note' | 'warning' | 'tip' | 'danger' | 'info' | 'important' | 'caution' | 'success' | 'question';
 
 export interface CalloutElement {
   type: 'callout';
@@ -223,15 +218,32 @@ export interface ContentHierarchy {
 // ── Enriched Document ─────────────────────────────────────────────────────────
 
 export interface EnrichedBlock {
-  type: 'heading' | 'paragraph' | 'code' | 'list' | 'table' | 'blockquote'
-    | 'diagram' | 'image' | 'video' | 'callout' | 'rich_table' | 'reference';
+  type:
+    | 'heading'
+    | 'paragraph'
+    | 'code'
+    | 'list'
+    | 'table'
+    | 'blockquote'
+    | 'diagram'
+    | 'image'
+    | 'video'
+    | 'callout'
+    | 'rich_table'
+    | 'reference';
   raw: string;
   level?: number;
   number?: string;
   id?: string;
   children?: EnrichedBlock[];
-  data?: DiagramElement | ImageElement | VideoElement | CalloutElement
-    | CodeBlockElement | RichTableElement | ReferenceElement;
+  data?:
+    | DiagramElement
+    | ImageElement
+    | VideoElement
+    | CalloutElement
+    | CodeBlockElement
+    | RichTableElement
+    | ReferenceElement;
 }
 
 export interface EnrichedDocument {

@@ -1,20 +1,27 @@
-import { db } from '../lib/db';
-import { getSettings, saveDocument, saveChunks, getProvider } from '../lib/storage';
-import { getChatProvider, getEmbeddingProvider } from '../lib/providers/registry';
-import { chunkDocument } from '../lib/chunker';
-import { normalise, buildRAGPrompt, parseCitations, retrieveTopK } from '../lib/retrieval';
-import { buildOfflineCaptureMarkdown, rankChunksByKeywords, answerWithOfflineNLP } from '../lib/nlp-fallback';
-import { deriveAutoTags, mergeTags } from '../lib/auto-tag';
-import { extractKnowledge } from '../lib/content-engine/extraction/extractors';
-import { planDocument, type PlanDepth } from '../lib/content-engine/planner/document-planner';
-import { generateDocument } from '../lib/content-engine/generator/orchestrator';
-import type { CompleteFn } from '../lib/content-engine/generator/types';
-import { shouldRunOffline } from '../lib/privacy';
-import { readingLevelInstruction, buildTranslatePrompt } from '../lib/chat-actions';
-import { withRetry, withTimeout } from '../lib/client';
-import { log } from '../lib/logger';
-import { AIClientError } from '../lib/providers/errors';
-import type { RetrievedChunk } from '../lib/retrieval';
+import { log } from './logger';
+import { getSettings, saveDocument, saveChunks } from './storage';
+import { getChatProvider, getEmbeddingProvider } from './providers/registry';
+import { getProvider } from './storage';
+import { shouldRunOffline } from './privacy';
+import { withRetry, withTimeout } from './client';
+import { AIClientError } from './providers/errors';
+import { deriveAutoTags, mergeTags } from './auto-tag';
+import {
+  buildOfflineCaptureMarkdown,
+  rankChunksByKeywords,
+  answerWithOfflineNLP,
+} from './nlp-fallback';
+import {
+  normalise,
+  parseCitations,
+  retrieveTopK as _retrieveTopK,
+  retrieveHybridTopK,
+  buildRAGPrompt,
+  expandQueryWithHistory,
+  expandContext,
+} from './retrieval';
+import { chunkDocument } from './chunker';
+import { db } from './db';
 import type {
   Document,
   GenerationMode,
@@ -23,188 +30,106 @@ import type {
   ProviderConfig,
   Settings,
   ReadingLevel,
-} from '../lib/types';
+} from './types';
+import type { RetrievedChunk } from './retrieval';
 
-const MODE_PROMPTS: Record<GenerationMode, string> = {
-  FAST: `You are a senior technical writer producing a concise professional knowledge note (300-600 words). Do NOT merely summarize — interpret.
+import { runCaptureEngine } from './capture/engine';
+import { runContentEngine } from './content/engine';
+import { runLayoutEngine } from './layout/engine';
+import type { CompleteFn } from './content/types';
 
-Each section has ONE distinct job. NEVER repeat the same fact across sections.
+/* ── Helpers ─────────────────────────────────────────────────────────── */
 
-# Document Title
+function extractTitle(md: string): string {
+  return md.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? '';
+}
 
-## Summary
-What is this document about? 2-4 sentences. Prose.
+function extractSummaryAndKeyPoints(md: string): { summary: string; keyPoints: string[] } {
+  const lines = md.split('\n');
+  let inHeading = false;
+  let summary = '';
+  const keyPoints: string[] = [];
 
-## Key Points
-What are the most important facts? 5-8 bullets. Bullets only, never paragraphs.
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
 
-## Concepts
-What terminology must the reader understand? Definition list only: **Term** — definition. Do not re-explain elsewhere.
+    if (line.startsWith('# ')) {
+      inHeading = true;
+      continue;
+    }
 
-## Key Entities
-What are the main entities (people, organizations, technologies, standards, products) mentioned? Bullet list with **Entity Name** (type): brief description. At minimum, list 3. Output ONLY if entities exist.
+    if (inHeading && line.length > 0 && !line.startsWith('#')) {
+      inHeading = false;
+      summary = line.replace(/^[>\s]*/, '').trim();
+      if (summary) break;
+    }
+  }
 
-## Key Takeaways
-What should the reader remember and do? 3-5 actionable bullets. Bullets only.
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('- ') && !trimmed.startsWith('- [') && trimmed.length > 3) {
+      keyPoints.push(trimmed.slice(2).trim());
+    }
+  }
 
-If a diagram genuinely aids understanding, include at most ONE \`\`\`mermaid block; pick the diagram type and direction from DIAGRAM RULES below.
+  // Fallback: use first substantial paragraph if no heading content found
+  if (!summary) {
+    for (const line of lines) {
+      const t = line.trim();
+      if (t.length > 40 && !t.startsWith('#') && !t.startsWith('-') && !t.startsWith('>')) {
+        summary = t;
+        break;
+      }
+    }
+  }
 
-Output ONLY valid markdown. No preamble.`,
+  return { summary, keyPoints: keyPoints.slice(0, 8) };
+}
 
-  BALANCED: `You are a senior analyst writing a professional report (1000-2500 words). Interpret and explain — do not just summarize. The result must feel intentionally authored by an expert.
-
-Each section has ONE distinct responsibility. NEVER repeat the same information across sections.
-
-# Document Title (specific, not generic)
-
-## Summary
-What is this document about? 200-400 words, prose. The big picture only.
-
-## Key Points
-What are the most important facts? 5-10 bullets. Bullets only, never paragraphs.
-
-## Concepts
-What terminology must the reader understand? Definition list: **Term** — definition. No repeated explanations.
-
-## Key Entities
-What are the main entities (people, organizations, technologies, standards, products) mentioned? Bullet list with **Entity Name** (type): brief description. At minimum, list 5.
-
-## Timeline
-How did this evolve over time? Only if dated events exist. Each: **Year** — event — significance.
-
-## Main Content
-What is the actual explanation? Deep, hierarchical (### subsections). This is where detail lives — do not pre-empt it in earlier sections.
-
-## Analysis
-Why does this matter? Your interpretation: tradeoffs, implications, what changed. Not a recap.
-
-## Key Takeaways
-What should the reader remember and do? 4-6 actionable bullets. Bullets only.
-
-Use 2-3 diagrams where they aid understanding (see DIAGRAM RULES). Use [!NOTE]/[!TIP]/[!WARNING] callouts and real markdown tables for comparisons.
-
-Output ONLY valid markdown.`,
-
-  DEEP: `You are a senior technical researcher and information architect producing a thorough whitepaper (3000-7000+ words). This must read like an expert authored it — interpret, argue, and synthesize. It must be SUBSTANTIALLY richer than a short summary.
-
-Each section has ONE distinct responsibility. NEVER repeat information across sections — escalate depth as the document progresses.
-
-# Document Title (specific and substantive)
-
-## Summary
-What is this document about? 300-400 words, prose. Orientation only.
-
-## Key Points
-The most important facts. 7-10 bullets. Bullets only.
-
-## Concepts
-Terminology the reader must understand. Definition list: **Term** — definition. Define once, never re-explain.
-
-## Key Entities
-What are the main entities (people, organizations, technologies, standards, products) mentioned? Bullet list with **Entity Name** (type): brief description. At minimum, list 8.
-
-## Timeline
-How did this evolve? Each: **Year** — event — significance. Only with real dated events.
-
-## Main Content
-The actual explanation, in depth. Hierarchical ### / #### subsections. Context, mechanisms, evidence. This is the core — most words live here.
-
-## Examples
-Where is this used in practice? Concrete case studies and real-world examples.
-
-## Analysis
-Why does this matter? Tradeoffs, counterarguments, limitations, implications. Your expert interpretation, not a recap.
-
-## Key Takeaways
-What should the reader remember and do? 5-8 actionable bullets. Bullets only.
-
-Use 5-15 visuals total: diagrams, comparison tables, and a knowledge graph of the key entities. Use [!NOTE]/[!TIP]/[!WARNING] callouts. Prefer a visual over prose whenever it communicates better.
-
-Output ONLY valid markdown. No preamble.`,
-};
-
-// Shared diagram guidance appended to every capture prompt (Problems 4 & 5):
-// choose the diagram TYPE from the content and the DIRECTION from its role.
-const DIAGRAM_RULES = `DIAGRAM RULES:
-- Choose the diagram type from the content; never default to a flowchart:
-  process/pipeline/CI-CD → flowchart · API/request-response → sequenceDiagram ·
-  system/infrastructure → flowchart (architecture) or C4 · object model → classDiagram ·
-  data/schema → erDiagram · history/evolution → timeline · concept breakdown → mindmap ·
-  lifecycle/status → stateDiagram-v2 · entities & links → a graph "knowledge graph".
-- Choose flow DIRECTION by role, never hardcode TD:
-  LR for timelines, pipelines, workflows, processes ·
-  TD for hierarchies, trees, org/structure breakdowns ·
-  RL for dependency chains / reverse flows ·
-  BT for root-cause / escalation trees.
-- Write \`flowchart LR\` (or the correct direction) explicitly. Keep node labels short and quoted if they contain punctuation. Output valid Mermaid only.`;
-
-// BUG-002: zero-config default so a new OpenRouter user can capture without first
-// picking a model. `openrouter/free` is OpenRouter's own free auto-router — a real,
-// valid model id.
-export const OPENROUTER_DEFAULT_MODEL = 'openrouter/free';
-
-/**
- * Supplies a default model ONLY when none is configured. It never rewrites an
- * explicit model id — any non-empty value the user chose (e.g. `openrouter/free`,
- * `openrouter/auto`, or any catalogue id) is passed through untouched. Pure.
- */
-export function normalizeModelId(model: string | undefined, baseUrl?: string): string {
+function normalizeModelId(model: string | undefined, baseUrl?: string): string {
   const m = (model ?? '').trim();
   if (m) return m;
   const isOpenRouter = !!baseUrl && /openrouter\.ai/i.test(baseUrl);
-  return isOpenRouter ? OPENROUTER_DEFAULT_MODEL : m;
+  return isOpenRouter ? 'openrouter/free' : m;
 }
 
 async function resolveChatProvider(settings: Settings): Promise<ProviderConfig> {
   const { providerId } = settings.runtime.chat;
-
   if (providerId) {
     const provider = await getProvider(providerId);
     if (provider) return provider;
   }
-
   if (settings.provider && settings.apiKey) {
-    const providerId = settings.provider;
-    const protocol: ProviderConfig['protocol'] =
-      providerId === 'openai-compatible' ? 'openai' :
-      providerId as ProviderConfig['protocol'];
+    const protocol =
+      settings.provider === 'openai-compatible'
+        ? 'openai'
+        : (settings.provider as ProviderConfig['protocol']);
     return {
-      id: providerId,
-      label:
-        providerId === 'openai-compatible' ? 'OpenAI Compatible' :
-        providerId.charAt(0).toUpperCase() + providerId.slice(1),
+      id: settings.provider,
+      label: settings.provider,
       protocol,
       baseUrl: settings.baseUrl || '',
       apiKey: settings.apiKey,
       extraHeaders: {},
-      chatModel: normalizeModelId(settings.modelId, settings.baseUrl) || (protocol === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gpt-4o-mini'),
+      chatModel:
+        normalizeModelId(settings.modelId, settings.baseUrl) ||
+        (protocol === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gpt-4o-mini'),
       embeddingModel: '',
       embeddingDimensions: 0,
       enabled: true,
     };
   }
-
   throw new AIClientError('No valid provider configuration found', 'MISSING_KEY');
 }
 
 function resolveChatModel(settings: Settings, mode: GenerationMode): string {
   const { providerId, modeModels } = settings.runtime.chat;
-  if (providerId && modeModels) {
+  if (providerId && modeModels)
     return normalizeModelId(modeModels[mode] || modeModels.FAST, settings.baseUrl);
-  }
   return normalizeModelId(settings.modelId, settings.baseUrl) || 'gpt-4o-mini';
 }
 
-export function buildCapturePrompt(content: string, mode: GenerationMode, images: string): string {
-  return `${MODE_PROMPTS[mode]}
-
-${DIAGRAM_RULES}
-
-PAGE CONTENT:
-${content.slice(0, 20000)}
-
-${images ? `IMAGE REFERENCES:\n${images}` : ''}`;
-}
+/* ── Main capture pipeline ───────────────────────────────────────────── */
 
 export async function runCapturePipeline(
   extraction: DOMExtraction,
@@ -213,39 +138,53 @@ export async function runCapturePipeline(
   onProgress?: (step: string, pct: number) => void,
 ): Promise<string> {
   const settings = await getSettings();
-
-  onProgress?.('Structuring with AI...', 20);
-
-  const imageText = extraction.images
-    .map(i => `[IMG: ${i.url} | ${i.alt}]`)
-    .join('\n')
-    .slice(0, 4000);
-
   const docId = crypto.randomUUID();
 
-  // ── Log raw extraction input ─────────────────────────────────────────────
-  log.info('pipeline', `EXTRACTION INPUT: title="${extraction.title}", url="${extraction.url}", textContent.length=${extraction.textContent.length}, wordCount=${extraction.wordCount}, images=${extraction.images.length}, cleanedHtml.length=${extraction.cleanedHtml.length}`);
+  onProgress?.('Extracting content...', 10);
+  const capture = runCaptureEngine(extraction);
 
+  // Build the document
   const doc: Document = {
     id: docId,
-    title: extraction.title,
-    url: extraction.url,
-    domain: extraction.domain,
-    capturedAt: new Date().toISOString(),
-    wordCount: extraction.wordCount,
+    title: capture.metadata.title,
+    url: capture.metadata.url,
+    domain: capture.metadata.domain,
+    capturedAt: capture.metadata.capturedAt,
+    wordCount: capture.metadata.wordCount,
     cleanedHtml: extraction.cleanedHtml,
-    textContent: extraction.textContent,
+    textContent: capture.rawContent,
+    content: '',
     summary: '',
     keyPoints: [],
-    entities: [],
-    timeline: [],
-    concepts: [],
+    entities: capture.entities.map((e, i) => ({ name: e.name, type: e.type, paragraphIndex: i })),
+    timeline: capture.timeline.map((t, i) => ({
+      date: t.year,
+      description: t.event,
+      significance: t.significance,
+      paragraphIndex: i,
+    })),
+    concepts: capture.concepts.map((c, i) => ({
+      term: c.concept,
+      definition: c.definition,
+      paragraphIndex: i,
+    })),
+    relationships: capture.relationships,
+    topics: capture.topics,
+    complexity: capture.complexity,
+    documentType: capture.documentClass,
     tags,
-    images: extraction.images.map(i => ({
+    images: capture.images.map((i) => ({
       url: i.url,
       alt: i.alt,
       sectionIndex: 0,
       paragraphContext: i.paragraphContext,
+    })),
+    videos: capture.videos.map((v) => ({
+      url: v.url,
+      title: v.title,
+      description: v.description,
+      thumbnailUrl: v.thumbnailUrl,
+      duration: v.duration,
     })),
     status: 'captured',
     starred: false,
@@ -253,29 +192,15 @@ export async function runCapturePipeline(
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-
-  await saveDocument(doc);
-  onProgress?.('Saved base document', 30);
-  log.info('pipeline', `Base document saved: ${docId}`);
-
-  doc.status = 'structuring';
   await saveDocument(doc);
 
-  // Stage 1 (Phase 1): extract structured knowledge up front so the planner can
-  // decide the document shape BEFORE any content is generated.
-  const knowledge = extractKnowledge(extraction.textContent);
-  log.info('pipeline', `KNOWLEDGE EXTRACTION (raw text): entities=${knowledge.entities.length}, concepts=${knowledge.concepts.length}, timeline=${knowledge.timeline.length}, relationships=${knowledge.relationships.length}, topics=[${knowledge.topics.join(', ')}], documentType=${knowledge.documentType}, complexity=${knowledge.complexity}, input.length=${extraction.textContent.length}`);
-
-  let structuredContent: string;
+  // Generate content (AI or offline)
+  onProgress?.('Generating document...', 20);
+  let content: string;
 
   if (shouldRunOffline(settings)) {
-    // Offline / local-only lock: structure the page with the local keyword/TF-IDF
-    // NLP — guarantees no API call leaves the device.
-    structuredContent = buildOfflineCaptureMarkdown(extraction.title, extraction.textContent);
+    content = buildOfflineCaptureMarkdown(capture.metadata.title, capture.rawContent);
   } else {
-    // Online: planner-driven, per-section generation (Phase 2). Each section is a
-    // scoped call so sections can't rephrase each other; diagrams are generated and
-    // validated/repaired. Falls back to the legacy single call if orchestration fails.
     const provider = await resolveChatProvider(settings);
     const model = resolveChatModel(settings, mode);
     const chat = getChatProvider(provider);
@@ -293,7 +218,8 @@ export async function runCapturePipeline(
               ],
             })) {
               if (chunk.type === 'text' && chunk.text) full += chunk.text;
-              if (chunk.type === 'error') throw new AIClientError(chunk.error ?? 'Generation failed');
+              if (chunk.type === 'error')
+                throw new AIClientError(chunk.error ?? 'Generation failed');
             }
             return full;
           })(),
@@ -302,218 +228,83 @@ export async function runCapturePipeline(
       );
 
     try {
-      const depth: PlanDepth = mode === 'FAST' ? 'fast' : mode === 'DEEP' ? 'deep' : 'standard';
-      const plan = planDocument(knowledge, depth);
-      log.info('pipeline', `PLAN: depth=${depth}, sections=${plan.sections.length}, targetWords=${plan.targetWords.min}–${plan.targetWords.max}, visuals=${plan.visuals.length}`);
-      const generated = await generateDocument(extraction.title, plan, knowledge, extraction.textContent, complete, { onProgress });
-      structuredContent = generated.markdown;
-      log.info('pipeline', `GENERATION: orchestrated, structuredContent.length=${structuredContent.length}`);
+      const result = await runContentEngine({ capture, mode, complete });
+      content = result.markdown;
+      log.info('pipeline', `Content generated: ${result.wordCount} words`);
     } catch (err) {
-      // Resilience: never fail capture because orchestration hit a snag.
-      log.warn('pipeline', 'Structured generation failed, using single-pass fallback', err);
-      structuredContent = await complete(
-        'You are a helpful assistant.',
-        buildCapturePrompt(extraction.textContent, mode, imageText),
-      );
-      log.info('pipeline', `GENERATION: single-pass fallback, structuredContent.length=${structuredContent.length}`);
+      const reason = err instanceof Error ? err.message : String(err);
+      log.warn('pipeline', `AI generation failed (${reason}) — using raw text`, err);
+      onProgress?.(`AI unavailable — saved raw text (${reason})`, 60);
+      content = buildOfflineCaptureMarkdown(capture.metadata.title, capture.rawContent);
     }
   }
 
-  onProgress?.('Structuring complete', 80);
-  log.info('pipeline', `STRUCTURED CONTENT: length=${structuredContent.length}, first 200 chars="${structuredContent.slice(0, 200).replace(/\n/g, '\\n')}"`);
+  onProgress?.('Content generated', 60);
 
-  const titleMatch = structuredContent.match(/^#\s+(.+)$/m);
-  const summaryMatch = structuredContent.match(/^##\s+(?:SUMMARY|Summary)\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
+  // Enrich: inject images, tables, diagrams, callouts, knowledge graphs
+  const { enrichedMarkdown } = runLayoutEngine({
+    markdown: content,
+    title: capture.metadata.title,
+    images: capture.images,
+    tables: capture.tables,
+    entities: capture.entities,
+    relationships: capture.relationships,
+    timeline: capture.timeline,
+    concepts: capture.concepts,
+    complexity: capture.complexity,
+    isPdf: capture.metadata.isPdf,
+  });
+  content = enrichedMarkdown;
 
-  const keyPoints: string[] = [];
-  const kpMatch = structuredContent.match(/^##\s+Key Points\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
-  if (kpMatch) {
-    for (const line of kpMatch[1].split('\n')) {
-      const m = line.match(/^\s*[*-]\s+(.*)/);
-      if (m?.[1]?.trim()) keyPoints.push(m[1].trim());
-    }
-  }
-
-  // Extract entities from the "Key Entities" section with flexible regex that
-  // handles multiple LLM output formats:
-  //   **Name** (type): description
-  //   **Name** (type) — description
-  //   **Name** — description
-  //   **Name**: description
-  const entities: Document['entities'] = [];
-  const entMatch = structuredContent.match(/^##\s+Key Entities\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
-  if (entMatch) {
-    entMatch[1].split('\n').forEach((line, i) => {
-      const m = line.match(/^\s*[*-]\s+\*\*([^*:]+?)\*\*\s*(?:\(([^)]*)\))?\s*[:—–-]?\s*(.*)/);
-      if (m && m[1].trim()) entities.push({
-        name: m[1].trim(),
-        type: (m[2]?.trim() || 'other'),
-        paragraphIndex: i,
-      });
-    });
-  }
-
-  const timeline: Document['timeline'] = [];
-  const tlMatch = structuredContent.match(/^##\s+Timeline\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
-  if (tlMatch) {
-    tlMatch[1].split('\n').forEach((line, i) => {
-      const m = line.match(/^\s*[*-]\s+\*\*([^*]+)\*\*:?\s+(.*)/);
-      if (m) timeline.push({ date: m[1].trim(), description: m[2].trim(), paragraphIndex: i });
-    });
-  }
-
-  const concepts: Document['concepts'] = [];
-  const concMatch = structuredContent.match(/^##\s+Concepts\s*\n([\s\S]*?)(?=\n##\s|\s*$)/im);
-  if (concMatch) {
-    concMatch[1].split('\n').forEach((line, i) => {
-      const m = line.match(/^\s*[*-]\s+\*\*([^*:]+):?\*\*:?\s+(.*)/);
-      if (m) concepts.push({ term: m[1].trim(), definition: m[2].trim(), paragraphIndex: i });
-    });
-  }
-
-  // Backfill: run deterministic extraction on the generated structured content.
-  // The AI-generated markdown often contains richer entity/concept data than the
-  // raw page text (especially when Readability returns short or empty text).
-  const knowledgeFromContent = extractKnowledge(structuredContent);
-
-  // Backfill entities from Concepts section terms when Key Entities section
-  // returned nothing — every concept is a potential entity.
-  const conceptsAsEntities: Document['entities'] = concepts.length && !entities.length
-    ? concepts.slice(0, 8).map((c, i) => ({
-        name: c.term,
-        type: 'concept' as const,
-        paragraphIndex: c.paragraphIndex ?? i,
-      }))
-    : [];
-
-  // Three-tier merge: LLM-parsed → deterministic-from-structured → raw-text.
-  // The deterministic-from-structured pass catches entities/concepts that the
-  // LLM mentions in the body but didn't list in the Key Entities section.
-  const mergedEntities: Document['entities'] = entities.length
-    ? entities
-    : conceptsAsEntities.length
-      ? conceptsAsEntities
-      : knowledgeFromContent.entities.length
-        ? knowledgeFromContent.entities.map((e, i) => ({ name: e.name, type: e.type, description: e.description, mentions: e.mentions, paragraphIndex: i }))
-        : knowledge.entities.map((e, i) => ({ name: e.name, type: e.type, description: e.description, mentions: e.mentions, paragraphIndex: i }));
-  const mergedConcepts: Document['concepts'] = concepts.length
-    ? concepts
-    : knowledgeFromContent.concepts.length
-      ? knowledgeFromContent.concepts.map((c, i) => ({ term: c.concept, definition: c.definition, paragraphIndex: i }))
-      : knowledge.concepts.map((c, i) => ({ term: c.concept, definition: c.definition, paragraphIndex: i }));
-  const mergedTimeline: Document['timeline'] = timeline.length
-    ? timeline
-    : knowledgeFromContent.timeline.length
-      ? knowledgeFromContent.timeline.map((t, i) => ({ date: t.year, description: t.event, significance: t.significance, paragraphIndex: i }))
-      : knowledge.timeline.map((t, i) => ({ date: t.year, description: t.event, significance: t.significance, paragraphIndex: i }));
-
-  log.info('pipeline', `PARSE RESULTS: titleMatch=${!!titleMatch}, summaryMatch=${!!summaryMatch}, keyPoints=${keyPoints.length}, entities_llm=${entities.length}, timeline_llm=${timeline.length}, concepts_llm=${concepts.length}`);
-  log.info('pipeline', `BACKFILL RESULTS: knowledgeFromContent entities=${knowledgeFromContent.entities.length}, concepts=${knowledgeFromContent.concepts.length}, timeline=${knowledgeFromContent.timeline.length}`);
-  log.info('pipeline', `MERGE RESULTS: mergedEntities=${mergedEntities.length}, mergedConcepts=${mergedConcepts.length}, mergedTimeline=${mergedTimeline.length}`);
-
-  doc.title = titleMatch?.[1]?.trim() ?? doc.title;
-  doc.summary = summaryMatch?.[1]?.trim() ?? '';
-  doc.keyPoints = keyPoints;
-  doc.entities = mergedEntities;
-  doc.timeline = mergedTimeline;
-  doc.concepts = mergedConcepts;
-  // Structured intelligence: prefer extraction from generated content (richer),
-  // fall back to raw-text extraction.
-  const richExtraction = knowledgeFromContent.entities.length ? knowledgeFromContent : knowledge;
-  doc.relationships = richExtraction.relationships;
-  doc.topics = richExtraction.topics;
-  doc.complexity = richExtraction.complexity;
-  doc.documentType = richExtraction.documentType;
-  log.info('pipeline', `META SET: relationships=${doc.relationships?.length ?? 0}, topics=[${doc.topics?.join(', ')}], complexity=${doc.complexity}, documentType=${doc.documentType}`);
-  // Persist the full structured markdown so the reader can render the document body.
-  doc.content = structuredContent;
-
-  // Recompute wordCount from the actual rendered content, not the raw extraction.
-  // The reader renders `doc.content`, so wordCount must reflect that content.
-  const contentWordCount = structuredContent.split(/\s+/).filter(Boolean).length;
-  if (contentWordCount < doc.wordCount * 0.5) {
-    log.warn('pipeline', `content wordCount (${contentWordCount}) is <50% of raw wordCount (${doc.wordCount}) — using content-based count`);
-  }
-  doc.wordCount = Math.max(contentWordCount, doc.wordCount);
-
-  // Guard: structuredContent must not be empty. If it is, the reader will show
-  // nothing in the main content panel, even though metadata may be populated.
-  if (!structuredContent || structuredContent.trim().length === 0) {
-    log.error('pipeline', 'structuredContent is EMPTY — reader will show no content');
-  }
-
+  // Update document with generated content
+  doc.title = extractTitle(content) || doc.title;
+  doc.content = content;
+  doc.wordCount = Math.max(content.split(/\s+/).filter(Boolean).length, doc.wordCount);
   doc.readingTimeMinutes = Math.max(1, Math.round(doc.wordCount / 220));
+  doc.diagramCount = (content.match(/```mermaid/g) ?? []).length;
+  doc.calloutCount = (content.match(/\[!(NOTE|WARNING|TIP|INFO)\]/g) ?? []).length;
 
-  // Content Intelligence: store enriched version and analysis metadata
-  // The enriched content includes diagrams, callouts, and structured elements
-  doc.enrichedContent = structuredContent;
-  doc.hasToc = structuredContent.includes('## Table of Contents');
-  doc.hasNumbering = true;
-  doc.diagramCount = (structuredContent.match(/```mermaid|```plantuml|```flowchart/g) ?? []).length;
-  doc.calloutCount = (structuredContent.match(/\[!(NOTE|WARNING|TIP|DANGER|INFO)\]/g) ?? []).length;
+  // Extract summary and key points from generated content
+  const extracted = extractSummaryAndKeyPoints(content);
+  if (extracted.summary) doc.summary = extracted.summary;
+  if (extracted.keyPoints.length > 0) doc.keyPoints = extracted.keyPoints;
 
-  // LIB-5: auto-file the note with tags derived from its own structure.
-  doc.tags = mergeTags(tags, deriveAutoTags({ entities: mergedEntities, concepts: mergedConcepts, domain: extraction.domain }));
+  // Auto-tag
+  doc.tags = mergeTags(
+    tags,
+    deriveAutoTags({
+      entities: doc.entities,
+      concepts: doc.concepts,
+      domain: capture.metadata.domain,
+    }),
+  );
 
-  onProgress?.('Parsing structured data', 70);
-
+  // Chunk and save
+  onProgress?.('Chunking...', 80);
   doc.status = 'chunked';
+  doc.updatedAt = new Date().toISOString();
   await saveDocument(doc);
 
-  const chunks = chunkDocument(docId, structuredContent, extraction.cleanedHtml);
+  const chunks = chunkDocument(docId, content, extraction.cleanedHtml);
   await saveChunks(chunks);
-  log.info('offscreen', `Created ${chunks.length} chunks for ${docId}`);
-
-  log.info('pipeline', `FINAL DOC: id=${docId}, title="${doc.title}", content.length=${doc.content?.length ?? 0}, enrichedContent.length=${doc.enrichedContent?.length ?? 0}, wordCount=${doc.wordCount}, entities=${doc.entities?.length ?? 0}, concepts=${doc.concepts?.length ?? 0}, timeline=${doc.timeline?.length ?? 0}, diagramCount=${doc.diagramCount}, tags=[${doc.tags.join(', ')}]`);
-
-  onProgress?.('Chunked content', 80);
-
-  const { providerId: embedProviderId, model: embedModel, version: embedVersion } = settings.runtime.embedding;
-  if (embedProviderId && embedModel) {
-    doc.status = 'embedding';
-    await saveDocument(doc);
-
-    try {
-      const embedProvider = await getProvider(embedProviderId);
-      if (embedProvider) {
-        const embedder = getEmbeddingProvider(embedProvider);
-        if (embedder.dimensions > 0) {
-          const texts = chunks.map(c => c.text);
-          const batchSize = 10;
-
-          for (let i = 0; i < texts.length; i += batchSize) {
-            const batch = texts.slice(i, i + batchSize);
-            const vectors = await withRetry(() => embedder.embed(batch));
-
-            for (let j = 0; j < batch.length; j++) {
-              const chunkId = chunks[i + j].id;
-              await db.vectors.put({
-                chunkId,
-                embedding: normalise(vectors[j]),
-                providerId: embedProviderId,
-                embeddingModel: embedModel,
-                dimensions: embedder.dimensions,
-                embeddingVersion: embedVersion,
-              });
-            }
-          }
-          doc.embeddingsGenerated = true;
-          log.info('offscreen', `Embedded ${chunks.length} chunks for ${docId}`);
-        }
-      }
-    } catch (err) {
-      log.warn('offscreen', `Embedding failed for ${docId}, will retry later`, err);
-    }
-  }
+  log.info('pipeline', `Created ${chunks.length} chunks`);
 
   doc.status = 'ready';
   doc.updatedAt = new Date().toISOString();
   await saveDocument(doc);
 
-  onProgress?.('Capture complete', 100);
-  log.success('offscreen', `Capture complete: ${docId} - "${doc.title}"`);
+  onProgress?.('Complete', 100);
+  log.success('pipeline', `Captured: ${docId} — "${doc.title}"`);
 
   return docId;
+}
+
+/* ── RAG pipeline ─────────────────────────────────────────────────────── */
+
+let abortController: AbortController | null = null;
+
+export function abortRAG(): void {
+  abortController?.abort();
 }
 
 export async function runRAGPipeline(
@@ -525,27 +316,31 @@ export async function runRAGPipeline(
   const settings = await getSettings();
   const { providerId: embedProviderId, version: embedVersion } = settings.runtime.embedding;
 
-  // Conversation history is scoped to the document being read.
   const priorMessages = await db.messages.where('documentId').equals(documentId).toArray();
   priorMessages.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const recentHistory = priorMessages.slice(-6).map(m => ({ role: m.role, content: m.text }));
+  const recentHistory = priorMessages.slice(-6).map((m) => ({ role: m.role, content: m.text }));
 
-  // ── Offline / local-only lock: answer locally with keyword/TF-IDF NLP. ──────
+  const expandedQuery = expandQueryWithHistory(query, recentHistory);
+
   if (shouldRunOffline(settings)) {
     const docChunks = await db.chunks.where('noteId').equals(documentId).toArray();
     const ranked = rankChunksByKeywords(
-      query,
-      docChunks.map(c => ({ text: c.text, paragraphIndex: c.paragraphIndex })),
+      expandedQuery,
+      docChunks.map((c) => ({ text: c.text, paragraphIndex: c.paragraphIndex })),
       6,
     );
-    const rankedFull: RetrievedChunk[] = ranked.map(r => {
-      const orig = docChunks.find(c => c.paragraphIndex === r.paragraphIndex && c.text === r.text) ?? docChunks[0];
-      return { ...orig, score: r.score };
-    });
-    const answer = answerWithOfflineNLP(query, ranked);
+    const answer = answerWithOfflineNLP(expandedQuery, ranked);
     onChunk?.(answer);
-    const citations = parseCitations(answer, rankedFull);
-    await persistConversationTurn(documentId, query, answer, citations);
+    const citations = parseCitations(
+      answer,
+      ranked.map((r) => {
+        const orig =
+          docChunks.find((c) => c.paragraphIndex === r.paragraphIndex && c.text === r.text) ??
+          docChunks[0];
+        return { ...orig, score: r.score, source: 'keyword' as const };
+      }),
+    );
+    await persistConversationTurn(documentId, expandedQuery, answer, citations);
     return { answer, citations };
   }
 
@@ -553,84 +348,92 @@ export async function runRAGPipeline(
   const model = resolveChatModel(settings, 'BALANCED');
   const chat = getChatProvider(provider);
 
-  // Vector retrieval, restricted to the open document.
-  let chunks: RetrievedChunk[] = [];
+  let queryEmbedding: Float32Array | null = null;
   if (embedProviderId && embedVersion > 0) {
     try {
       const embedProvider = await getProvider(embedProviderId);
       if (embedProvider) {
         const embedder = getEmbeddingProvider(embedProvider);
-        const [queryVec] = await embedder.embed([query]);
-        const queryEmbedding = normalise(queryVec);
-        chunks = await retrieveTopK(queryEmbedding, embedVersion, 6, documentId);
+        const [queryVec] = await embedder.embed([expandedQuery]);
+        queryEmbedding = normalise(queryVec);
       }
-    } catch (err) {
-      log.warn('offscreen', 'Vector search failed, falling back to keyword', err);
+    } catch {
+      log.warn('pipeline', 'Vector embedding failed, using keyword-only search');
     }
   }
 
-  // Keyword fallback (or no embeddings configured): rank this document's chunks.
+  let chunks: RetrievedChunk[] = [];
+  try {
+    chunks = await retrieveHybridTopK(expandedQuery, queryEmbedding, embedVersion, 6, documentId);
+  } catch {
+    log.warn('pipeline', 'Hybrid search failed, falling back to keyword');
+  }
+
   if (chunks.length === 0) {
     const docChunks = await db.chunks.where('noteId').equals(documentId).toArray();
     const ranked = rankChunksByKeywords(
-      query,
-      docChunks.map(c => ({ text: c.text, paragraphIndex: c.paragraphIndex })),
+      expandedQuery,
+      docChunks.map((c) => ({ text: c.text, paragraphIndex: c.paragraphIndex })),
       6,
     );
-    chunks = ranked.map(r => {
-      const orig = docChunks.find(c => c.paragraphIndex === r.paragraphIndex && c.text === r.text) ?? docChunks[0];
-      return { ...orig, score: r.score };
-    }).filter(c => c != null);
+    chunks = ranked
+      .map((r) => {
+        const orig =
+          docChunks.find((c) => c.paragraphIndex === r.paragraphIndex && c.text === r.text) ??
+          docChunks[0];
+        return { ...orig, score: r.score, source: 'keyword' as const };
+      })
+      .filter((c) => c != null);
   }
 
-  const styleInstruction = readingLevel ? readingLevelInstruction(readingLevel) : undefined;
-  const prompt = buildRAGPrompt(query, chunks, recentHistory, styleInstruction);
+  chunks = await expandContext(chunks, 1, documentId);
+
+  const prompt = buildRAGPrompt(expandedQuery, chunks, recentHistory, readingLevel);
+
+  abortController = new AbortController();
+  const signal = abortController.signal;
 
   let answer = '';
-  for await (const chunk of chat.generate({
-    model,
-    messages: [
-      { role: 'system', content: 'You are a precise question-answering assistant.' },
-      { role: 'user', content: prompt },
-    ],
-  })) {
-    if (chunk.type === 'text' && chunk.text) {
-      answer += chunk.text;
-      onChunk?.(chunk.text);
+  try {
+    for await (const chunk of chat.generate({
+      model,
+      messages: [
+        { role: 'system', content: 'You are a precise question-answering assistant.' },
+        { role: 'user', content: prompt },
+      ],
+    })) {
+      if (signal.aborted) break;
+      if (chunk.type === 'text' && chunk.text) {
+        answer += chunk.text;
+        onChunk?.(chunk.text);
+      }
+      if (chunk.type === 'error') throw new AIClientError(chunk.error ?? 'RAG failed');
     }
-    if (chunk.type === 'error') throw new AIClientError(chunk.error ?? 'RAG failed');
+  } catch {
+    if (signal.aborted) {
+      await persistConversationTurn(
+        documentId,
+        expandedQuery,
+        answer,
+        parseCitations(answer, chunks),
+      );
+      return { answer, citations: parseCitations(answer, chunks) };
+    }
+    const docChunks = await db.chunks.where('noteId').equals(documentId).toArray();
+    const ranked = rankChunksByKeywords(
+      expandedQuery,
+      docChunks.map((c) => ({ text: c.text, paragraphIndex: c.paragraphIndex })),
+      6,
+    );
+    answer = answerWithOfflineNLP(expandedQuery, ranked);
+    onChunk?.(answer);
+  } finally {
+    abortController = null;
   }
 
   const citations = parseCitations(answer, chunks);
-  await persistConversationTurn(documentId, query, answer, citations);
-
+  await persistConversationTurn(documentId, expandedQuery, answer, citations);
   return { answer, citations };
-}
-
-// CHAT-6: translate arbitrary text via the active chat provider. Blocked when
-// local-only is locked (translation needs a cloud/local model, not extractive NLP).
-export async function translateText(text: string, targetLanguage: string): Promise<string> {
-  const settings = await getSettings();
-  if (shouldRunOffline(settings)) {
-    throw new AIClientError('Translation is unavailable in local-only mode.', 'API_ERROR');
-  }
-
-  const provider = await resolveChatProvider(settings);
-  const model = resolveChatModel(settings, 'FAST');
-  const chat = getChatProvider(provider);
-
-  let out = '';
-  for await (const chunk of chat.generate({
-    model,
-    messages: [
-      { role: 'system', content: 'You are a precise translator.' },
-      { role: 'user', content: buildTranslatePrompt(text, targetLanguage) },
-    ],
-  })) {
-    if (chunk.type === 'text' && chunk.text) out += chunk.text;
-    if (chunk.type === 'error') throw new AIClientError(chunk.error ?? 'Translation failed');
-  }
-  return out.trim();
 }
 
 async function persistConversationTurn(
@@ -641,33 +444,48 @@ async function persistConversationTurn(
 ): Promise<void> {
   const now = new Date().toISOString();
   await db.messages.bulkPut([
-    { id: `${documentId}:${crypto.randomUUID()}`, documentId, role: 'user', text: query, citations: [], isError: false, createdAt: now },
-    { id: `${documentId}:${crypto.randomUUID()}`, documentId, role: 'assistant', text: answer, citations, isError: false, createdAt: now },
+    {
+      id: `${documentId}:${crypto.randomUUID()}`,
+      documentId,
+      role: 'user',
+      text: query,
+      citations: [],
+      isError: false,
+      createdAt: now,
+    },
+    {
+      id: `${documentId}:${crypto.randomUUID()}`,
+      documentId,
+      role: 'assistant',
+      text: answer,
+      citations,
+      isError: false,
+      createdAt: now,
+    },
   ]);
 }
 
-// Embed an already-captured document's chunks on demand (reader "Generate
-// Embeddings" action). Requires an embedding provider to be configured.
 export async function generateEmbeddingsForDocument(documentId: string): Promise<void> {
   const settings = await getSettings();
-  const { providerId: embedProviderId, model: embedModel, version: embedVersion } = settings.runtime.embedding;
-  if (!embedProviderId || !embedModel) {
-    throw new AIClientError('No embedding provider configured. Add one in Settings.', 'MISSING_KEY');
-  }
+  const {
+    providerId: embedProviderId,
+    model: embedModel,
+    version: embedVersion,
+  } = settings.runtime.embedding;
+  if (!embedProviderId || !embedModel)
+    throw new AIClientError('No embedding provider configured.', 'MISSING_KEY');
 
   const doc = await db.notes.get(documentId);
   if (!doc) throw new Error(`Document not found: ${documentId}`);
 
   const embedProvider = await getProvider(embedProviderId);
   if (!embedProvider) throw new AIClientError('Embedding provider not found.', 'MISSING_KEY');
-
   const embedder = getEmbeddingProvider(embedProvider);
   if (embedder.dimensions <= 0) return;
 
   const chunks = await db.chunks.where('noteId').equals(documentId).toArray();
-  const texts = chunks.map(c => c.text);
+  const texts = chunks.map((c) => c.text);
   const batchSize = 10;
-
   for (let i = 0; i < texts.length; i += batchSize) {
     const batch = texts.slice(i, i + batchSize);
     const vectors = await withRetry(() => embedder.embed(batch));
@@ -682,9 +500,29 @@ export async function generateEmbeddingsForDocument(documentId: string): Promise
       });
     }
   }
-
   doc.embeddingsGenerated = true;
   doc.updatedAt = new Date().toISOString();
   await saveDocument(doc);
-  log.info('offscreen', `Generated embeddings for ${documentId} (${chunks.length} chunks)`);
+}
+
+export async function translateText(text: string, targetLanguage: string): Promise<string> {
+  const { buildTranslatePrompt } = await import('./chat-actions');
+  const settings = await getSettings();
+  if (shouldRunOffline(settings))
+    throw new AIClientError('Translation is unavailable in local-only mode.', 'API_ERROR');
+  const provider = await resolveChatProvider(settings);
+  const model = resolveChatModel(settings, 'FAST');
+  const chat = getChatProvider(provider);
+  let out = '';
+  for await (const chunk of chat.generate({
+    model,
+    messages: [
+      { role: 'system', content: 'You are a precise translator.' },
+      { role: 'user', content: buildTranslatePrompt(text, targetLanguage) },
+    ],
+  })) {
+    if (chunk.type === 'text' && chunk.text) out += chunk.text;
+    if (chunk.type === 'error') throw new AIClientError(chunk.error ?? 'Translation failed');
+  }
+  return out.trim();
 }

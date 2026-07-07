@@ -1,4 +1,10 @@
-import type { ProviderAdapter, ProviderConfig, ChatProvider, EmbeddingProvider, TestResult } from '../types';
+import type {
+  ProviderAdapter,
+  ProviderConfig,
+  ChatProvider,
+  EmbeddingProvider,
+  TestResult,
+} from '../types';
 import { log } from '../logger';
 import { createOpenAIAdapter } from './openai';
 import { createAnthropicAdapter } from './anthropic';
@@ -46,12 +52,12 @@ export const PRESETS: Array<{
   embeddingDimensions: number;
 }> = [
   {
-    label: 'Gemini',
-    protocol: 'gemini',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-    chatModel: 'gemini-2.0-flash',
-    embeddingModel: 'models/text-embedding-004',
-    embeddingDimensions: 768,
+    label: 'OpenRouter (Free)',
+    protocol: 'openai',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    chatModel: 'openrouter/free',
+    embeddingModel: '',
+    embeddingDimensions: 0,
   },
   {
     label: 'OpenAI',
@@ -60,14 +66,6 @@ export const PRESETS: Array<{
     chatModel: 'gpt-4o-mini',
     embeddingModel: 'text-embedding-3-small',
     embeddingDimensions: 1536,
-  },
-  {
-    label: 'OpenRouter (Free)',
-    protocol: 'openai',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    chatModel: 'google/gemini-2.0-flash-exp:free',
-    embeddingModel: '',
-    embeddingDimensions: 0,
   },
   {
     label: 'Groq',

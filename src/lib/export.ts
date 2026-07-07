@@ -1,24 +1,10 @@
-import html2canvas from 'html2canvas';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { Document } from './types';
-import { getChunksByDocument } from './idb';
 import { log } from './logger';
-import { numberTocEntries } from './print-toc';
-
-export interface PDFExportOptions {
-  sourceElement?: HTMLElement | null;
-  theme?: 'dark' | 'light';
-}
-
-const PDF_PAGE_WIDTH = 595.28; // A4 portrait width in points
-const PDF_PAGE_HEIGHT = 841.89; // A4 portrait height in points
-const PDF_PAGE_MARGIN = 28;
-const MEDIA_WAIT_TIMEOUT_MS = 5000;
-const MEDIA_WAIT_POLL_MS = 120;
+import { renderPrintHtml } from './print/print-renderer';
+import { canGeneratePdfDirectly, generateAndDownloadPdf } from './print/pdf-generator';
 
 // ── Markdown Export ───────────────────────────────────────────────────────────
 
-// ... (existing buildMarkdownExport and downloadMarkdown remain the same)
 export function buildMarkdownExport(doc: Document): string {
   const frontmatter = [
     '---',
@@ -46,531 +32,100 @@ export function downloadMarkdown(doc: Document): void {
   URL.revokeObjectURL(url);
 }
 
-// ── PDF Export (RAG Enabled) ──────────────────────────────────────────────────
+// ── PDF Export ────────────────────────────────────────────────────────────────
 
-// ── WinAnsi sanitiser ────────────────────────────────────────────────────────
-// pdf-lib's StandardFonts (Times Roman, Helvetica, etc.) only support WinAnsi
-// (code points 0x20–0xFF). Any character outside that range throws at
-// widthOfTextAtSize / drawText time. Strip them out rather than crash.
-function toWinAnsi(text: string): string {
-  return text
-    .replace(/[\u0100-\uFFFF]/g, '') // remove non-WinAnsi
-    .replace(/[\u0000-\u001F]/g, ''); // remove control chars
-}
-
-// ── Text wrapping ─────────────────────────────────────────────────────────────
-
-function wrapText(text: string, maxWidth: number, font: any, fontSize: number): string[] {
-  const safe = toWinAnsi(text);
-  const words = safe.split(/\s+/);
-  const lines: string[] = [];
-  let currentLine = '';
-
-  for (const word of words) {
-    const testLine = currentLine ? `${currentLine} ${word}` : word;
-    const width = font.widthOfTextAtSize(testLine, fontSize);
-    if (width <= maxWidth) {
-      currentLine = testLine;
-    } else {
-      lines.push(currentLine);
-      currentLine = word;
-    }
-  }
-  if (currentLine) lines.push(currentLine);
-  return lines;
-}
-
-function hasPendingVisualElements(sourceElement: HTMLElement): boolean {
-  const hasPendingDiagram = sourceElement.querySelector('[data-diagram-status="loading"]') !== null;
-  if (hasPendingDiagram) return true;
-
-  const images = sourceElement.querySelectorAll<HTMLImageElement>('img');
-  for (const image of images) {
-    const src = image.getAttribute('src')?.trim();
-    if (!src) continue;
-    if (!image.complete) return true;
-  }
-
-  return false;
-}
-
-async function waitForVisualElements(sourceElement: HTMLElement): Promise<void> {
-  const start = Date.now();
-
-  while (Date.now() - start < MEDIA_WAIT_TIMEOUT_MS) {
-    if (!hasPendingVisualElements(sourceElement)) break;
-    await new Promise((resolve) => setTimeout(resolve, MEDIA_WAIT_POLL_MS));
-  }
-
-  await new Promise<void>((resolve) => {
-    requestAnimationFrame(() => resolve());
-  });
-}
-
-async function captureSnapshotCanvas(
-  sourceElement: HTMLElement,
-  captureWidth: number,
-  captureHeight: number,
-  theme: 'dark' | 'light',
-  scale: number,
-): Promise<HTMLCanvasElement> {
-  const baseOptions = {
-    backgroundColor: theme === 'light' ? '#efe6d8' : '#120e0b',
-    scale,
-    useCORS: true,
-    allowTaint: false,
-    imageTimeout: 15000,
-    logging: false,
-    width: captureWidth,
-    height: captureHeight,
-    windowWidth: Math.max(document.documentElement.clientWidth, captureWidth),
-    windowHeight: Math.max(document.documentElement.clientHeight, captureHeight),
-    scrollX: 0,
-    scrollY: 0,
-    onclone: (clonedDoc: globalThis.Document) => {
-      const clonedImages = clonedDoc.querySelectorAll<HTMLImageElement>('img');
-      clonedImages.forEach((img) => {
-        img.setAttribute('crossorigin', 'anonymous');
-        img.setAttribute('loading', 'eager');
-        img.decoding = 'sync';
-      });
-
-      const clonedSvgs = clonedDoc.querySelectorAll<SVGElement>('svg');
-      clonedSvgs.forEach((svg) => {
-        if (!svg.getAttribute('preserveAspectRatio')) {
-          svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-        }
-      });
-    },
-  };
-
-  try {
-    return await html2canvas(sourceElement, {
-      ...baseOptions,
-      foreignObjectRendering: true,
-    });
-  } catch (firstErr) {
-    log.warn('storage', 'Snapshot capture with foreignObjectRendering failed; retrying standard capture', firstErr);
-    return await html2canvas(sourceElement, {
-      ...baseOptions,
-      foreignObjectRendering: false,
-    });
-  }
-}
-
-async function renderReaderSnapshotToPdf(
-  pdfDoc: PDFDocument,
-  sourceElement: HTMLElement,
-  theme: 'dark' | 'light',
-): Promise<boolean> {
-  try {
-    await waitForVisualElements(sourceElement);
-
-    const rect = sourceElement.getBoundingClientRect();
-    const captureWidth = Math.max(sourceElement.scrollWidth, Math.ceil(rect.width));
-    const captureHeight = Math.max(sourceElement.scrollHeight, Math.ceil(rect.height));
-    if (captureWidth <= 0 || captureHeight <= 0) return false;
-
-    const scale = Math.min(2, Math.max(1.25, window.devicePixelRatio || 1));
-    const canvas = await captureSnapshotCanvas(sourceElement, captureWidth, captureHeight, theme, scale);
-
-    if (canvas.width <= 0 || canvas.height <= 0) return false;
-
-    const targetWidth = PDF_PAGE_WIDTH - (PDF_PAGE_MARGIN * 2);
-    const targetHeight = PDF_PAGE_HEIGHT - (PDF_PAGE_MARGIN * 2);
-    const pixelsPerPoint = canvas.width / targetWidth;
-    const sliceHeightPx = Math.max(1, Math.floor(targetHeight * pixelsPerPoint));
-    const pageBackground = theme === 'light' ? rgb(0.937, 0.902, 0.847) : rgb(0.071, 0.055, 0.043);
-
-    for (let offsetPx = 0; offsetPx < canvas.height; offsetPx += sliceHeightPx) {
-      const currentSliceHeightPx = Math.min(sliceHeightPx, canvas.height - offsetPx);
-      const sliceCanvas = document.createElement('canvas');
-      sliceCanvas.width = canvas.width;
-      sliceCanvas.height = currentSliceHeightPx;
-
-      const sliceCtx = sliceCanvas.getContext('2d');
-      if (!sliceCtx) return false;
-
-      sliceCtx.drawImage(
-        canvas,
-        0,
-        offsetPx,
-        canvas.width,
-        currentSliceHeightPx,
-        0,
-        0,
-        canvas.width,
-        currentSliceHeightPx,
-      );
-
-      const page = pdfDoc.addPage([PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT]);
-      page.drawRectangle({
-        x: 0,
-        y: 0,
-        width: PDF_PAGE_WIDTH,
-        height: PDF_PAGE_HEIGHT,
-        color: pageBackground,
-      });
-
-      const image = await pdfDoc.embedPng(sliceCanvas.toDataURL('image/png'));
-      const drawnHeight = currentSliceHeightPx / pixelsPerPoint;
-
-      page.drawImage(image, {
-        x: PDF_PAGE_MARGIN,
-        y: PDF_PAGE_HEIGHT - PDF_PAGE_MARGIN - drawnHeight,
-        width: targetWidth,
-        height: drawnHeight,
-      });
-    }
-
-    return true;
-  } catch (err) {
-    log.warn('storage', 'Reader snapshot export failed; falling back to markdown layout', err);
-    return false;
-  }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
-}
-
-/** Builds an auto-TOC (Problem 9) from the cloned article's headings, or '' if too few. */
-function buildPrintToc(root: HTMLElement): string {
-  const heads = Array.from(root.querySelectorAll('h2, h3')) as HTMLElement[];
-  const items = heads
-    .map((h) => ({ level: h.tagName === 'H2' ? 2 : 3, text: (h.textContent ?? '').trim(), id: h.id }))
-    .filter((i) => i.text);
-  const entries = numberTocEntries(items);
-  if (entries.length < 2) return '';
-  const lis = entries
-    .map((e) => `<li class="${e.level === 3 ? 'lvl3' : ''}">${e.number}&nbsp;&nbsp;${escapeHtml(e.text)}</li>`)
-    .join('');
-  return `<nav class="notch-toc"><h2>Contents</h2><ol>${lis}</ol></nav>`;
-}
+const MEDIA_WAIT_TIMEOUT_MS = 5000;
 
 /**
- * BUG-005/006/007/008 — High-fidelity PDF via the browser's own print engine.
+ * High-fidelity PDF export with automatic one-click download.
  *
- * The hand-rolled pdf-lib drawer (below) cannot render Mermaid/UML diagrams (they
- * leak out as raw fenced code) and its manual cursor math causes overlap. Instead
- * we clone the *already rendered* reader DOM — which contains the Mermaid/UML SVGs,
- * laid-out tables and images — into an isolated iframe, copy the page stylesheets,
- * add print rules (page margins, avoid breaking inside diagrams/code/tables, repeat
- * table headers across pages) and let the browser paginate. Output is selectable,
- * searchable text with real diagrams. Returns false if it can't run (caller falls
- * back to pdf-lib).
+ * Two pathways:
+ *   1. **Direct CDP** — Uses `chrome.debugger` + `Page.printToPDF` to
+ *      generate a PDF silently and download it. PDF metadata (title,
+ *      subject, keywords) is injected via pdf-lib.
+ *   2. **Print dialog** — Falls back to the browser's native print dialog
+ *      (user selects "Save as PDF") when CDP is unavailable.
+ *
+ * @param preRenderedSvgs - Optional map of block‑id → SVG string for diagrams
+ *                          that have already been rendered in the reader DOM.
  */
-export async function exportViaPrint(doc: Document, sourceElement?: HTMLElement | null): Promise<boolean> {
-  if (typeof document === 'undefined' || !sourceElement) return false;
+export async function exportViaPrint(
+  doc: Document,
+  documentClass?: string,
+  preRenderedSvgs?: Map<string, string>,
+): Promise<boolean> {
+  if (typeof document === 'undefined') return false;
+
+  const content = doc.enrichedContent || doc.content || '';
+  const { html } = renderPrintHtml(content, doc, {
+    documentClass,
+    svgs: preRenderedSvgs,
+  });
+  const fileName = doc.title.replace(/[^a-z0-9\-_. ]/gi, '_').trim() || 'document';
+
+  // Attempt one-click direct PDF via CDP first.
+  if (canGeneratePdfDirectly()) {
+    const ok = await generateAndDownloadPdf(html, fileName, {
+      title: doc.title || 'Document',
+      documentClass,
+    });
+    if (ok) return true;
+    log.warn('export', 'Direct PDF path failed; falling back to print dialog');
+  }
+
+  // Fallback: open browser print dialog via hidden iframe.
   try {
     const iframe = document.createElement('iframe');
     iframe.setAttribute('aria-hidden', 'true');
-    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+    iframe.style.cssText =
+      'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
     document.body.appendChild(iframe);
 
     const idoc = iframe.contentDocument;
     const iwin = iframe.contentWindow;
-    if (!idoc || !iwin) { iframe.remove(); return false; }
+    if (!idoc || !iwin) {
+      iframe.remove();
+      return false;
+    }
 
-    // Reuse the page's compiled styles (Tailwind tokens, prose styles).
-    const headStyles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
-      .map((n) => n.outerHTML)
-      .join('\n');
-
-    // Clone + clean the rendered article. We strip any failed-diagram raw code so
-    // Mermaid/UML source can NEVER leak into the PDF (Problem 9), plus interactive
-    // chrome (buttons/filters) that doesn't belong in a document.
-    const clone = sourceElement.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll(
-      '[data-diagram-status="error"] pre, [data-diagram-status="unavailable"] pre, ' +
-      'pre code[class*="language-mermaid"], pre code[class*="language-plantuml"]',
-    ).forEach((el) => (el.closest('pre') ?? el).remove());
-    clone.querySelectorAll('button, input, [contenteditable]').forEach((el) => el.remove());
-
-    const toc = buildPrintToc(clone);
-    const meta = [doc.domain, doc.capturedAt?.slice(0, 10),
-      `${doc.readingTimeMinutes ?? Math.max(1, Math.round((doc.wordCount ?? 0) / 220))} min read`,
-      `${(doc.wordCount ?? 0).toLocaleString()} words`]
-      .filter(Boolean).join('  ·  ');
-
-    const printCss = `
-      @page { size: A4; margin: 16mm; }
-      :root { color-scheme: light; }
-      html, body { background: #fff !important; }
-      body { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; color: #1a1a1a; }
-      .notch-print-root { max-width: 100%; color: #1a1a1a; }
-      .notch-print-root img, .notch-print-root svg { max-width: 100% !important; height: auto !important; }
-      /* Cover + TOC each get their own page so the body starts clean. */
-      .notch-cover { padding-bottom: 8mm; border-bottom: 1px solid #e5e5e5; break-after: page; }
-      .notch-cover h1 { font-size: 28px; margin: 0 0 6px; }
-      .notch-cover .meta { color: #6b7280; font-size: 12px; }
-      .notch-toc { break-after: page; }
-      .notch-toc h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; }
-      .notch-toc ol { list-style: none; padding-left: 0; }
-      .notch-toc li { margin: 2px 0; }
-      .notch-toc .lvl3 { padding-left: 16px; font-size: 13px; color: #4b5563; }
-      /* Don't split atomic blocks across pages (BUG-005). */
-      pre, figure, table, blockquote, [data-diagram-kind], .notion-prose pre {
-        break-inside: avoid; page-break-inside: avoid;
-      }
-      figure svg { display: block; margin: 0 auto; }
-      figcaption { font-size: 12px; color: #6b7280; }
-      h1, h2, h3, h4 { break-after: avoid; page-break-after: avoid; }
-      h2 { break-before: auto; margin-top: 1.2em; }
-      /* Tables: full width, real borders, repeat the header on every page (BUG-008). */
-      table { width: 100%; border-collapse: collapse; }
-      thead { display: table-header-group; }
-      tr { break-inside: avoid; page-break-inside: avoid; }
-      th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
-    `;
-
-    const title = (doc.title || 'document').replace(/[<>&]/g, '');
-    const cover = `<div class="notch-cover"><h1>${title}</h1><div class="meta">${meta}</div></div>`;
     idoc.open();
-    idoc.write(
-      `<!doctype html><html data-theme="light"><head><meta charset="utf-8"><title>${title}</title>` +
-      `${headStyles}<style>${printCss}</style></head>` +
-      `<body>${cover}${toc}<div class="notch-print-root notion-prose">${clone.innerHTML}</div></body></html>`,
-    );
+    idoc.write(html);
     idoc.close();
 
-    // Wait for fonts and images so nothing prints half-loaded.
     await new Promise<void>((resolve) => {
       let done = false;
-      const finish = () => { if (!done) { done = true; resolve(); } };
+      const finish = () => {
+        if (!done) {
+          done = true;
+          resolve();
+        }
+      };
       iframe.addEventListener('load', () => setTimeout(finish, 150), { once: true });
-      // Fallback if 'load' already fired or never fires.
       setTimeout(finish, MEDIA_WAIT_TIMEOUT_MS);
     });
-    try { await idoc.fonts?.ready; } catch { /* fonts API optional */ }
+    try {
+      await idoc.fonts?.ready;
+    } catch {
+      /* fonts API optional */
+    }
 
-    iwin.focus();
-    iwin.print();
+    try {
+      iwin.print();
+    } catch (printErr) {
+      log.warn('export', 'Print dialog could not open from iframe', printErr);
+      iframe.remove();
+      return false;
+    }
 
-    // Give the print dialog time to grab the document before teardown.
-    setTimeout(() => iframe.remove(), 1000);
+    iwin.onafterprint = () => {
+      iframe.remove();
+    };
+    setTimeout(() => {
+      if (iframe.parentNode) iframe.remove();
+    }, 60000);
     return true;
   } catch (err) {
-    log.warn('storage', 'Print-to-PDF failed; falling back to pdf-lib', err);
+    log.warn('export', 'Print-to-PDF failed', err);
     return false;
   }
 }
-
-export async function exportPDF(doc: Document, options: PDFExportOptions = {}): Promise<void> {
-  log.info('storage', `Exporting RAG PDF for: ${doc.title}`);
-
-  try {
-    const pdfDoc = await PDFDocument.create();
-    // Skip snapshot approach - always use content-based export for searchable, text-based PDF
-    // This produces better quality output that is also smaller in size
-    const renderedFromSnapshot = false; // Force content-based export
-
-    if (!renderedFromSnapshot) {
-    const timesRomanFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
-    const boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
-    const codeFont = await pdfDoc.embedFont(StandardFonts.Courier);
-
-    let page = pdfDoc.addPage();
-    const { width, height } = page.getSize();
-    const margin = 50;
-    const maxWidth = width - (2 * margin);
-    let cursorY = height - margin;
-
-    function ensureSpace(neededHeight: number): void {
-      if (cursorY - neededHeight < margin) {
-        page = pdfDoc.addPage();
-        cursorY = height - margin;
-      }
-    }
-
-    function drawWrappedText(
-      text: string,
-      font: any,
-      size: number,
-      lineHeight: number,
-      x = margin,
-      color = rgb(0, 0, 0),
-    ): void {
-      const availableWidth = maxWidth - (x - margin);
-      const lines = wrapText(text, availableWidth, font, size);
-
-      for (const line of lines) {
-        ensureSpace(lineHeight);
-        page.drawText(line, { x, y: cursorY, size, font, color });
-        cursorY -= lineHeight;
-      }
-    }
-
-    function flushParagraph(buffer: string[]): void {
-      const text = buffer.join(' ').trim();
-      if (!text) return;
-      drawWrappedText(text, timesRomanFont, 10, 13);
-      cursorY -= 4;
-      buffer.length = 0;
-    }
-
-    function flushCodeBlock(buffer: string[], language: string): void {
-      if (buffer.length === 0) return;
-
-      const codeLineHeight = 11;
-      const label = language ? `[${language}]` : '[CODE]';
-      ensureSpace(codeLineHeight * (buffer.length + 2));
-      page.drawText(label, {
-        x: margin,
-        y: cursorY,
-        size: 8,
-        font: boldFont,
-        color: rgb(0.37, 0.42, 0.82),
-      });
-      cursorY -= 10;
-
-      for (const line of buffer) {
-        ensureSpace(codeLineHeight);
-        page.drawText(line || ' ', {
-          x: margin,
-          y: cursorY,
-          size: 9,
-          font: codeFont,
-          color: rgb(0.15, 0.15, 0.15),
-        });
-        cursorY -= codeLineHeight;
-      }
-
-      cursorY -= 8;
-      buffer.length = 0;
-    }
-
-    // 1. Draw Content (Simplistic Layout)
-    
-    // Title
-    const titleLines = wrapText(doc.title, maxWidth, boldFont, 18);
-    for (const line of titleLines) {
-      page.drawText(line, { x: margin, y: cursorY, size: 18, font: boldFont, color: rgb(0, 0, 0) });
-      cursorY -= 22;
-    }
-    cursorY -= 5;
-
-    // Meta Row
-    page.drawText(toWinAnsi(`${doc.domain} • ${doc.capturedAt.slice(0, 10)} • ${doc.wordCount} words`), {
-      x: margin,
-      y: cursorY,
-      size: 9,
-      font: timesRomanFont,
-      color: rgb(0.4, 0.4, 0.4),
-    });
-    cursorY -= 20;
-
-    // Content Section — render the stored markdown structure instead of flattening it.
-    page.drawText('DOC CONTENT', { x: margin, y: cursorY, size: 10, font: boldFont, color: rgb(0, 0, 0) });
-    cursorY -= 14;
-
-    const markdownLines = ((doc.content ?? doc.summary) || '').split(/\r?\n/);
-    const paragraphBuffer: string[] = [];
-    const codeBuffer: string[] = [];
-    let inCodeBlock = false;
-    let codeLanguage = '';
-
-    for (const rawLine of markdownLines) {
-      const line = rawLine.replace(/\s+$/, '');
-
-      if (inCodeBlock) {
-        if (/^```/.test(line)) {
-          flushCodeBlock(codeBuffer, codeLanguage);
-          inCodeBlock = false;
-          codeLanguage = '';
-        } else {
-          codeBuffer.push(rawLine);
-        }
-        continue;
-      }
-
-      const fenceMatch = line.match(/^```([\w-]+)?\s*$/);
-      if (fenceMatch) {
-        flushParagraph(paragraphBuffer);
-        inCodeBlock = true;
-        codeLanguage = fenceMatch[1] ?? '';
-        continue;
-      }
-
-      if (/^\s*$/.test(line)) {
-        flushParagraph(paragraphBuffer);
-        continue;
-      }
-
-      const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
-      if (headingMatch) {
-        flushParagraph(paragraphBuffer);
-        const headingLevel = headingMatch[1].length;
-        const headingText = headingMatch[2].trim();
-        cursorY -= headingLevel === 1 ? 2 : 1;
-        drawWrappedText(
-          headingText,
-          headingLevel <= 2 ? boldFont : timesRomanFont,
-          headingLevel === 1 ? 16 : headingLevel === 2 ? 13 : 11,
-          headingLevel === 1 ? 19 : headingLevel === 2 ? 15 : 13,
-          margin,
-          rgb(0, 0, 0),
-        );
-        cursorY -= 4;
-        continue;
-      }
-
-      const bulletMatch = line.match(/^(\s*)(?:[-*+]\s+|\d+\.\s+)(.*)$/);
-      if (bulletMatch) {
-        flushParagraph(paragraphBuffer);
-        const indentLevel = Math.min(3, Math.floor(bulletMatch[1].length / 2));
-        const bulletText = `• ${bulletMatch[2].trim()}`;
-        drawWrappedText(bulletText, timesRomanFont, 10, 13, margin + (indentLevel * 14));
-        continue;
-      }
-
-      paragraphBuffer.push(line.trim());
-    }
-
-    flushParagraph(paragraphBuffer);
-    flushCodeBlock(codeBuffer, codeLanguage);
-
-    // 2. Fetch and Attach Chunk Bundle (optional — failure does not abort the PDF)
-    try {
-      const chunks = await getChunksByDocument(doc.id);
-      const bundle = {
-        document: doc,
-        chunks: chunks.map(c => ({ id: c.id, noteId: c.noteId, text: c.text, paragraphIndex: c.paragraphIndex })),
-      };
-
-      const attachmentData = JSON.stringify(bundle);
-      const attachmentBytes = new TextEncoder().encode(attachmentData);
-
-      await pdfDoc.attach(attachmentBytes, 'notch_data.json', {
-        mimeType: 'application/json',
-        description: 'Notch Context Bundle',
-        creationDate: new Date(),
-        modificationDate: new Date(),
-      });
-      log.success('storage', `Chunk bundle attached (${chunks.length} chunks)`);
-    } catch (attachErr) {
-      log.warn('storage', 'Could not attach chunk bundle to PDF', attachErr);
-    }
-
-    // 3. Save and Download
-    const pdfBytes = await pdfDoc.save();
-    const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const filename = doc.title.replace(/[^a-z0-9\-_. ]/gi, '_').trim() || 'document';
-    a.href = url;
-    a.download = `${filename}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    
-    log.success('storage', `Exported RAG PDF: ${filename}.pdf`);
-    }
-  } catch (err) {
-    log.error('storage', 'Failed to export PDF', err);
-    throw err;
-  }
-}
-
-

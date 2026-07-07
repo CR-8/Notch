@@ -96,7 +96,7 @@ export function chunkDocument(
 }
 
 function splitIntoParagraphs(text: string): string[] {
-  return text.split(/\n\n+/).filter(p => p.trim().length > 0);
+  return text.split(/\n\n+/).filter((p) => p.trim().length > 0);
 }
 
 function findParagraphIndex(text: string, charOffset: number): number {
@@ -116,8 +116,6 @@ function extractHeadings(htmlOrText: string): Map<number, string> {
   if (htmlOrText.includes('<h') || htmlOrText.includes('<H')) {
     const headingRegex = /<h[1-6][^>]*>(.*?)<\/h[1-6]>/gi;
     let match: RegExpExecArray | null;
-    let paragraphIndex = 0;
-    // Simple heuristic: estimate paragraph index from position
     while ((match = headingRegex.exec(htmlOrText)) !== null) {
       const text = match[1].replace(/<[^>]+>/g, '').trim();
       const pct = match.index / htmlOrText.length;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseInline, inlineToPlainText } from '../content-engine/inline-md';
+import { parseInline, inlineToPlainText } from '../markdown/inline-md';
 
 describe('parseInline', () => {
   it('parses bold so **DevOps** no longer leaks (Problem 6)', () => {

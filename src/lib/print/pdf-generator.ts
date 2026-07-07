@@ -1,0 +1,237 @@
+/**
+ * One-click PDF generation via Chrome DevTools Protocol.
+ *
+ * Uses `chrome.debugger` + `Page.printToPDF` to generate a PDF directly
+ * without opening the print dialog. Falls back to `window.print()` if
+ * the debugger API is unavailable.
+ *
+ * PDF metadata (title, author, subject) is injected using pdf-lib.
+ */
+import { log } from '@/lib/logger';
+import { PDFDocument } from 'pdf-lib';
+
+// Chrome-specific debugger / permissions APIs — not in WXT/browser types.
+declare const chrome: {
+  debugger: {
+    attach(target: { tabId: number }, version: string, callback: () => void): void;
+    detach(target: { tabId: number }, callback: () => void): void;
+    sendCommand(
+      target: { tabId: number },
+      method: string,
+      params: Record<string, unknown>,
+      callback: (result: Record<string, unknown>) => void,
+    ): void;
+  };
+  permissions: {
+    request(p: { permissions: string[] }, cb: (granted: boolean) => void): void;
+  };
+  runtime: { lastError?: { message: string } };
+};
+
+export interface DirectPdfOptions {
+  title: string;
+  documentClass?: string;
+}
+
+/**
+ * Whether the direct (CDP) PDF pathway is possible in this browser.
+ *
+ * `debugger` is an *optional* permission, so `chrome.debugger` is undefined
+ * until the user grants it — we therefore detect the Chromium target via the
+ * user agent rather than the (possibly not-yet-granted) API. Firefox has no
+ * CDP and falls back to the native print dialog.
+ */
+export function canGeneratePdfDirectly(): boolean {
+  const isFirefox = typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent);
+  return !isFirefox && typeof chrome !== 'undefined' && !!chrome.permissions;
+}
+
+/**
+ * Request the optional `debugger` + `downloads` permissions needed for direct
+ * PDF generation. Must run inside a user gesture (the export click). Resolves
+ * false if denied, so the caller can fall back to the print dialog. When the
+ * permissions are already granted, Chrome resolves true without prompting.
+ */
+function ensurePdfPermissions(): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      chrome.permissions.request({ permissions: ['debugger', 'downloads'] }, (granted) => {
+        resolve(!!granted && !chrome.runtime.lastError);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/**
+ * Generate a PDF from a print-optimised HTML string, download it directly.
+ *
+ * @param html     Full print HTML document (as produced by print-renderer).
+ * @param fileName Suggested download filename (without extension).
+ * @param opts     PDF metadata and layout options.
+ * @returns        true if the PDF was generated and downloaded.
+ */
+export async function generateAndDownloadPdf(
+  html: string,
+  fileName: string,
+  opts: DirectPdfOptions,
+): Promise<boolean> {
+  if (!canGeneratePdfDirectly()) return false;
+
+  // Request the optional debugger + downloads permissions within the export
+  // gesture. If denied, fall back to the print dialog.
+  const granted = await ensurePdfPermissions();
+  if (!granted || typeof chrome.debugger === 'undefined') return false;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const blobUrl = URL.createObjectURL(blob);
+  let tabId: number | undefined;
+
+  try {
+    // 1. Create a hidden tab with the print HTML.
+    const tab = await browser.tabs.create({ url: blobUrl, active: false });
+    tabId = tab.id;
+    if (!tabId) return false;
+
+    // 2. Wait for the tab to finish loading.
+    await waitForTabLoad(tabId);
+
+    // 3. Attach the debugger.
+    await attachDebugger(tabId);
+
+    // 4. Call Page.printToPDF with publication-grade settings.
+    const header = `<div style="font-size:7pt;color:#6b7280;width:100%;text-align:center;border-bottom:1px solid #e5e5e5;padding:0 16px 2px;margin:0 16px;">${escapeCdpHtml(opts.title)}</div>`;
+    const footer = `<div style="font-size:7pt;color:#9ca3af;width:100%;text-align:center;padding:2px 16px 0;margin:0 16px;border-top:1px solid #e5e5e5;">— <span class="pageNumber"></span> —</div>`;
+
+    const result = await chromeDebuggerCommand(tabId, 'Page.printToPDF', {
+      printBackground: true,
+      preferCSSPageSize: true,
+      displayHeaderFooter: true,
+      headerTemplate: header,
+      footerTemplate: footer,
+      marginTop: 0.6,
+      marginBottom: 0.7,
+      marginLeft: 0.6,
+      marginRight: 0.6,
+      scale: 1,
+      generateTaggedPDF: true,
+      generateDocumentOutline: true,
+    });
+
+    const pdfBase64 = result.data as string;
+    if (!pdfBase64) return false;
+
+    // 5. Decode base64 → bytes.
+    const binaryStr = atob(pdfBase64);
+    const rawBytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      rawBytes[i] = binaryStr.charCodeAt(i);
+    }
+
+    // 6. Inject PDF metadata via pdf-lib.
+    const pdfDoc = await PDFDocument.load(rawBytes);
+    pdfDoc.setTitle(opts.title);
+    pdfDoc.setSubject('Generated by Notch');
+    pdfDoc.setKeywords(['notch', 'research', 'export']);
+    pdfDoc.setProducer('Notch PDF Export');
+    pdfDoc.setCreator('Notch');
+    const pdfBytes = await pdfDoc.save();
+
+    // 7. Download via browser.downloads API.
+    const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    await browser.downloads.download({
+      url,
+      filename: `${fileName}.pdf`,
+      saveAs: false,
+    });
+    // Allow the download to start before revoking.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+
+    return true;
+  } catch (err) {
+    log.warn('PDF', 'Direct generation failed, falling back', err);
+    return false;
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+    if (tabId) {
+      try {
+        await detachDebugger(tabId);
+      } catch {
+        /* OK */
+      }
+      try {
+        await browser.tabs.remove(tabId);
+      } catch {
+        /* OK */
+      }
+    }
+  }
+}
+
+// ── Chrome debugger helpers ──────────────────────────────────────────────────
+
+function attachDebugger(tabId: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.attach({ tabId }, '1.3', () => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve();
+    });
+  });
+}
+
+function detachDebugger(tabId: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.detach({ tabId }, () => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve();
+    });
+  });
+}
+
+function chromeDebuggerCommand(
+  tabId: number,
+  method: string,
+  params?: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand({ tabId }, method, params ?? {}, (result) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(result);
+    });
+  });
+}
+
+// ── Tab lifecycle ─────────────────────────────────────────────────────────────
+
+function waitForTabLoad(tabId: number): Promise<void> {
+  return new Promise((resolve, _reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve(); // resolve anyway after timeout
+    }, 15_000);
+
+    const listener = (updatedId: number, changeInfo: { status?: string }) => {
+      if (updatedId === tabId && changeInfo.status === 'complete') {
+        cleanup();
+        // Small extra wait so fonts/images settle.
+        setTimeout(resolve, 300);
+      }
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      browser.tabs.onUpdated.removeListener(listener);
+    };
+
+    browser.tabs.onUpdated.addListener(listener);
+  });
+}
+
+function escapeCdpHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}

@@ -40,7 +40,10 @@ export function ModelCombobox({
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Keep the field in sync when the value changes externally (e.g. preset click).
-  useEffect(() => { setQuery(value); }, [value]);
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(value), 0);
+    return () => clearTimeout(t);
+  }, [value]);
 
   // Close on outside click.
   useEffect(() => {
@@ -61,7 +64,10 @@ export function ModelCombobox({
     );
   }, [query, value, options]);
 
-  useEffect(() => { setHighlight(0); }, [query, open]);
+  useEffect(() => {
+    const t = setTimeout(() => setHighlight(0), 0);
+    return () => clearTimeout(t);
+  }, [query, open]);
 
   function commit(id: string) {
     onChange(id);
@@ -76,19 +82,32 @@ export function ModelCombobox({
   function reconcile() {
     setOpen(false);
     const trimmed = query.trim();
-    if (!trimmed) { setQuery(value); return; }
+    if (!trimmed) {
+      setQuery(value);
+      return;
+    }
     if (trimmed !== value) onChange(trimmed);
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
-    if (!open && (e.key === 'ArrowDown' || e.key === 'Enter')) { setOpen(true); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => Math.min(h + 1, filtered.length - 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)); }
-    else if (e.key === 'Enter') {
+    if (!open && (e.key === 'ArrowDown' || e.key === 'Enter')) {
+      setOpen(true);
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight((h) => Math.min(h + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === 'Enter') {
       e.preventDefault();
       if (filtered[highlight]) commit(filtered[highlight].id);
       else reconcile(); // commit typed custom id
-    } else if (e.key === 'Escape') { setQuery(value); setOpen(false); }
+    } else if (e.key === 'Escape') {
+      setQuery(value);
+      setOpen(false);
+    }
   }
 
   return (
@@ -99,9 +118,14 @@ export function ModelCombobox({
           // Typing only filters the list — the committed model id is unchanged until
           // a row is selected or the field is blurred (see reconcile). This prevents
           // partial/empty text from leaking up and being "healed" to a default.
-          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
           onFocus={() => setOpen(true)}
-          onBlur={() => { window.setTimeout(reconcile, 120); }}
+          onBlur={() => {
+            window.setTimeout(reconcile, 120);
+          }}
           onKeyDown={onKeyDown}
           placeholder={placeholder}
           autoComplete="off"
@@ -114,7 +138,10 @@ export function ModelCombobox({
           {onRefresh && (
             <button
               type="button"
-              onClick={() => { onRefresh(); setOpen(true); }}
+              onClick={() => {
+                onRefresh();
+                setOpen(true);
+              }}
               title="Reload models"
               className="text-[11px] font-medium text-[var(--color-ink-muted)] hover:text-[var(--color-primary)] px-1"
             >
@@ -135,7 +162,9 @@ export function ModelCombobox({
       {open && (
         <div className="absolute z-20 mt-1 w-full max-h-72 overflow-y-auto rounded-lg border border-[var(--color-hairline)] bg-white shadow-lg py-1">
           {loading && (
-            <div className="px-3 py-2 text-[12px] text-[var(--color-ink-muted)]">Loading models…</div>
+            <div className="px-3 py-2 text-[12px] text-[var(--color-ink-muted)]">
+              Loading models…
+            </div>
           )}
           {!loading && error && (
             <div className="px-3 py-2 text-[12px] text-[var(--color-destructive)]">{error}</div>
@@ -145,34 +174,46 @@ export function ModelCombobox({
               No matches. Press Enter to use “{query}” as a custom model.
             </div>
           )}
-          {!loading && filtered.map((o, i) => (
-            <button
-              key={o.id}
-              type="button"
-              onMouseDown={(e) => { e.preventDefault(); commit(o.id); }}
-              onMouseEnter={() => setHighlight(i)}
-              className={cn(
-                'w-full text-left px-3 py-2 flex items-center justify-between gap-3 transition-colors',
-                i === highlight ? 'bg-[var(--color-primary)]/8' : 'hover:bg-[var(--color-canvas-soft)]',
-                o.id === value && 'font-semibold',
-              )}
-            >
-              <span className="min-w-0">
-                <span className="block text-[13px] text-[var(--color-ink)] truncate">{o.name}</span>
-                <span className="block text-[11px] text-[var(--color-ink-faint)] truncate">{o.id}</span>
-              </span>
-              <span className="shrink-0 flex items-center gap-1.5">
-                {o.free && (
-                  <span className="text-[10px] font-semibold text-[var(--color-primary)] border border-[var(--color-primary)]/40 rounded-full px-1.5 py-0.5">
-                    FREE
-                  </span>
+          {!loading &&
+            filtered.map((o, i) => (
+              <button
+                key={o.id}
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  commit(o.id);
+                }}
+                onMouseEnter={() => setHighlight(i)}
+                className={cn(
+                  'w-full text-left px-3 py-2 flex items-center justify-between gap-3 transition-colors',
+                  i === highlight
+                    ? 'bg-[var(--color-primary)]/8'
+                    : 'hover:bg-[var(--color-canvas-soft)]',
+                  o.id === value && 'font-semibold',
                 )}
-                {o.contextLength ? (
-                  <span className="text-[10px] text-[var(--color-ink-faint)]">{formatContext(o.contextLength)}</span>
-                ) : null}
-              </span>
-            </button>
-          ))}
+              >
+                <span className="min-w-0">
+                  <span className="block text-[13px] text-[var(--color-ink)] truncate">
+                    {o.name}
+                  </span>
+                  <span className="block text-[11px] text-[var(--color-ink-faint)] truncate">
+                    {o.id}
+                  </span>
+                </span>
+                <span className="shrink-0 flex items-center gap-1.5">
+                  {o.free && (
+                    <span className="text-[10px] font-semibold text-[var(--color-primary)] border border-[var(--color-primary)]/40 rounded-full px-1.5 py-0.5">
+                      FREE
+                    </span>
+                  )}
+                  {o.contextLength ? (
+                    <span className="text-[10px] text-[var(--color-ink-faint)]">
+                      {formatContext(o.contextLength)}
+                    </span>
+                  ) : null}
+                </span>
+              </button>
+            ))}
         </div>
       )}
     </div>

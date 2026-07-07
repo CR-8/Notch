@@ -1,5 +1,4 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
-import { cn } from '@/lib/utils';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -28,15 +27,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const addToast = useCallback((message: string, type: ToastType = 'info') => {
     const id = crypto.randomUUID();
-    setToasts(prev => [...prev, { id, message, type }]);
+    setToasts((prev) => [...prev, { id, message, type }]);
     // Auto-remove after 3 seconds
     setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
+      setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 3000);
   }, []);
 
   const removeToast = useCallback((id: string) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   return (
@@ -52,7 +51,7 @@ function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove: (id: 
 
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
-      {toasts.map(toast => (
+      {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} onRemove={onRemove} />
       ))}
     </div>
@@ -83,7 +82,9 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: (id: string) =
         {icon}
       </span>
       <p className="text-[14px] leading-snug text-[var(--color-ink)] flex-1">{toast.message}</p>
-      <button className="text-[16px] leading-none text-[var(--color-ink-faint)] hover:text-[var(--color-ink)] shrink-0">×</button>
+      <button className="text-[16px] leading-none text-[var(--color-ink-faint)] hover:text-[var(--color-ink)] shrink-0">
+        ×
+      </button>
     </div>
   );
 }

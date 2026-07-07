@@ -1,5 +1,18 @@
-import type { ProviderAdapter, ProviderConfig, ChatProvider, EmbeddingProvider, ChatRequest, ChatChunk, TestResult } from '../types';
+import type {
+  ProviderAdapter,
+  ProviderConfig,
+  ChatProvider,
+  EmbeddingProvider,
+  ChatRequest,
+  TestResult,
+} from '../types';
 import { AIClientError, describeHttpError } from './errors';
+
+type OpenAIStreamChunk = {
+  choices?: Array<{
+    delta?: { content?: string };
+  }>;
+};
 
 function buildChatEndpoint(baseUrl: string): string {
   const url = baseUrl.replace(/\/+$/, '');
@@ -11,51 +24,6 @@ function buildEmbeddingEndpoint(baseUrl: string): string {
   return `${url}/embeddings`;
 }
 
-async function* streamChat(
-  endpoint: string,
-  body: Record<string, unknown>,
-  signal?: AbortSignal,
-): AsyncIterable<ChatChunk> {
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, stream: true }),
-    signal,
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new AIClientError(`OpenAI API error ${res.status}: ${text}`, 'API_ERROR', res.status);
-  }
-
-  const reader = res.body?.getReader();
-  if (!reader) throw new AIClientError('No response body', 'API_ERROR');
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      const data = line.slice(6).trim();
-      if (data === '[DONE]') { yield { type: 'done' }; return; }
-      try {
-        const parsed = JSON.parse(data);
-        const content = parsed.choices?.[0]?.delta?.content ?? '';
-        if (content) yield { type: 'text', text: content };
-      } catch { /* skip malformed chunk */ }
-    }
-  }
-  yield { type: 'done' };
-}
-
 const OpenAICompatibleChatProvider = (cfg: ProviderConfig): ChatProvider => ({
   id: cfg.id,
   capabilities: { streaming: true, maxContextTokens: 128000 },
@@ -63,7 +31,7 @@ const OpenAICompatibleChatProvider = (cfg: ProviderConfig): ChatProvider => ({
     const endpoint = buildChatEndpoint(cfg.baseUrl);
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...(cfg.apiKey ? { 'Authorization': `Bearer ${cfg.apiKey}` } : {}),
+      ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
       ...cfg.extraHeaders,
     };
 
@@ -81,7 +49,11 @@ const OpenAICompatibleChatProvider = (cfg: ProviderConfig): ChatProvider => ({
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new AIClientError(describeHttpError('OpenAI-compatible', res.status, text), 'API_ERROR', res.status);
+      throw new AIClientError(
+        describeHttpError('OpenAI-compatible', res.status, text),
+        'API_ERROR',
+        res.status,
+      );
     }
 
     const reader = res.body?.getReader();
@@ -101,12 +73,17 @@ const OpenAICompatibleChatProvider = (cfg: ProviderConfig): ChatProvider => ({
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         const data = line.slice(6).trim();
-        if (data === '[DONE]') { yield { type: 'done' }; return; }
+        if (data === '[DONE]') {
+          yield { type: 'done' };
+          return;
+        }
         try {
-          const parsed = JSON.parse(data);
+          const parsed = JSON.parse(data) as OpenAIStreamChunk;
           const content = parsed.choices?.[0]?.delta?.content ?? '';
           if (content) yield { type: 'text', text: content };
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
     }
     yield { type: 'done' };
@@ -121,7 +98,7 @@ const OpenAICompatibleEmbeddingProvider = (cfg: ProviderConfig): EmbeddingProvid
     const endpoint = buildEmbeddingEndpoint(cfg.baseUrl);
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...(cfg.apiKey ? { 'Authorization': `Bearer ${cfg.apiKey}` } : {}),
+      ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
       ...cfg.extraHeaders,
     };
 
@@ -136,11 +113,15 @@ const OpenAICompatibleEmbeddingProvider = (cfg: ProviderConfig): EmbeddingProvid
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new AIClientError(describeHttpError('Embedding', res.status, text), 'API_ERROR', res.status);
+      throw new AIClientError(
+        describeHttpError('Embedding', res.status, text),
+        'API_ERROR',
+        res.status,
+      );
     }
 
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data.map(d => d.embedding);
+    const data = (await res.json()) as { data: Array<{ embedding: number[] }> };
+    return data.data.map((d) => d.embedding);
   },
 });
 
@@ -148,26 +129,49 @@ export function createOpenAIAdapter(): ProviderAdapter {
   return {
     protocol: 'openai',
     createChatProvider: (cfg) => OpenAICompatibleChatProvider(cfg),
-    createEmbeddingProvider: (cfg) => cfg.embeddingModel ? OpenAICompatibleEmbeddingProvider(cfg) : { id: cfg.id, model: '', dimensions: 0, embed: () => { throw new Error('No embedding model configured'); } },
+    createEmbeddingProvider: (cfg) =>
+      cfg.embeddingModel
+        ? OpenAICompatibleEmbeddingProvider(cfg)
+        : {
+            id: cfg.id,
+            model: '',
+            dimensions: 0,
+            embed: () => {
+              throw new Error('No embedding model configured');
+            },
+          },
     async testConnection(cfg: ProviderConfig): Promise<TestResult> {
       const t0 = Date.now();
       try {
         const endpoint = buildChatEndpoint(cfg.baseUrl);
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
-          ...(cfg.apiKey ? { 'Authorization': `Bearer ${cfg.apiKey}` } : {}),
+          ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
         };
         const res = await fetch(endpoint, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ model: cfg.chatModel, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 1 }),
+          body: JSON.stringify({
+            model: cfg.chatModel,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 1,
+          }),
         });
         if (!res.ok) {
           const text = await res.text().catch(() => '');
-          return { success: false, latencyMs: Date.now() - t0, error: describeHttpError('OpenAI-compatible', res.status, text) };
+          return {
+            success: false,
+            latencyMs: Date.now() - t0,
+            error: describeHttpError('OpenAI-compatible', res.status, text),
+          };
         }
-        const data = await res.json() as { model?: string };
-        return { success: true, latencyMs: Date.now() - t0, model: data.model ?? cfg.chatModel, dimensions: cfg.embeddingDimensions };
+        const data = (await res.json()) as { model?: string };
+        return {
+          success: true,
+          latencyMs: Date.now() - t0,
+          model: data.model ?? cfg.chatModel,
+          dimensions: cfg.embeddingDimensions,
+        };
       } catch (err) {
         return { success: false, latencyMs: Date.now() - t0, error: (err as Error).message };
       }

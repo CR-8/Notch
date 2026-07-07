@@ -1,10 +1,16 @@
+import { marked } from 'marked';
+import { sanitizeHtml } from '@/lib/sanitize';
+import { renderMath } from '@/lib/markdown/math';
 import type { CalloutElement, CalloutKind } from '../types';
 
 interface CalloutBlockProps {
   data: CalloutElement;
 }
 
-const CALLOUT_STYLES: Record<CalloutKind, { icon: string; bg: string; border: string; text: string }> = {
+const CALLOUT_STYLES: Record<
+  CalloutKind,
+  { icon: string; bg: string; border: string; text: string }
+> = {
   note: {
     icon: 'ℹ',
     bg: 'bg-[var(--color-primary)]/5',
@@ -19,21 +25,45 @@ const CALLOUT_STYLES: Record<CalloutKind, { icon: string; bg: string; border: st
   },
   tip: {
     icon: '💡',
-    bg: 'bg-[#1aae39]/5',
-    border: 'border-[#1aae39]/30',
-    text: 'text-[#1aae39]',
+    bg: 'bg-[var(--color-success)]/5',
+    border: 'border-[var(--color-success)]/30',
+    text: 'text-[var(--color-success)]',
   },
   danger: {
     icon: '✖',
-    bg: 'bg-[#be5b50]/5',
-    border: 'border-[#be5b50]/30',
-    text: 'text-[#be5b50]',
+    bg: 'bg-[var(--color-sale)]/5',
+    border: 'border-[var(--color-sale)]/30',
+    text: 'text-[var(--color-sale)]',
   },
   info: {
     icon: 'i',
-    bg: 'bg-[#62aef0]/5',
-    border: 'border-[#62aef0]/30',
-    text: 'text-[#62aef0]',
+    bg: 'bg-[var(--color-info)]/5',
+    border: 'border-[var(--color-info)]/30',
+    text: 'text-[var(--color-info)]',
+  },
+  important: {
+    icon: '❗',
+    bg: 'bg-[#e11d48]/5',
+    border: 'border-[#e11d48]/30',
+    text: 'text-[#e11d48]',
+  },
+  caution: {
+    icon: '🚧',
+    bg: 'bg-[#f59e0b]/5',
+    border: 'border-[#f59e0b]/30',
+    text: 'text-[#f59e0b]',
+  },
+  success: {
+    icon: '✅',
+    bg: 'bg-[#22c55e]/5',
+    border: 'border-[#22c55e]/30',
+    text: 'text-[#22c55e]',
+  },
+  question: {
+    icon: '❓',
+    bg: 'bg-[#8b5cf6]/5',
+    border: 'border-[#8b5cf6]/30',
+    text: 'text-[#8b5cf6]',
   },
 };
 
@@ -54,9 +84,12 @@ export function CalloutBlock({ data }: CalloutBlockProps) {
             {data.title}
           </p>
         )}
-        <div className="text-[14px] text-[var(--color-ink)] leading-relaxed [&_p]:my-1 [&_a]:text-[var(--color-primary)] [&_code]:text-[12px] [&_code]:bg-[var(--color-surface)] [&_code]:px-1 [&_code]:rounded">
-          {data.content}
-        </div>
+        <div
+          className="text-[14px] text-[var(--color-ink)] leading-relaxed [&_p]:my-1 [&_a]:text-[var(--color-primary)] [&_code]:text-[12px] [&_code]:bg-[var(--color-surface)] [&_code]:px-1 [&_code]:rounded [&_strong]:font-semibold [&_em]:italic"
+          dangerouslySetInnerHTML={{
+            __html: sanitizeHtml(marked.parse(renderMath(data.content), { async: false })),
+          }}
+        />
       </div>
     </div>
   );

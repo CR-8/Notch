@@ -1,0 +1,267 @@
+/* ============================================================================
+   Notch — Design Tokens (single source of truth)
+   ----------------------------------------------------------------------------
+   Notion × Apple system: a warm paper-soft canvas (#f6f5f4) with pure-white
+   card surfaces, a near-black ink ramp in warm grays, and exactly ONE
+   structural accent — Notion blue (#0075de) — reserved for primary actions,
+   links, and the focus signal. The decorative "sticker" palette (purple, pink,
+   orange, teal, green, sky) exists only for illustration, category dots and
+   callouts — it never paints a CTA or structural fill.
+
+   Elevation is barely-there: hairline borders (#e6e6e6) plus layered
+   near-transparent shadows. CTAs are full pills; utility buttons round at 8px;
+   cards at 12px; inputs stay tight at 4px.
+
+   Everything visual in the workspace resolves through the custom properties
+   declared here. Tailwind utilities (`bg-canvas`, `text-ink`, `rounded-lg`,
+   `shadow-level-1`, …) and the `.notion-*` component classes in globals.css
+   both read these tokens, so the entire light/dark system is controlled from
+   this one file. The `html[data-theme="dark"]` block at the bottom re-points
+   the same custom properties for the night palette.
+   ========================================================================== */
+
+@theme {
+  /* ── Surface · warm paper canvas / white cards ────────────────────────
+     canvas-soft (#f6f5f4) is the warm document-like page stage; canvas /
+     surface (#ffffff) is the card itself. hairline carries the dividers. */
+  --color-canvas: #ffffff;
+  --color-canvas-soft: #f6f5f4; /* warm paper — page stage */
+  --color-soft-cloud: #f1efee; /* recessed wells, code blocks */
+  --color-surface: #ffffff;
+  --color-surface-hover: #f6f5f4;
+  --color-hairline: #e6e6e6; /* 1px dividers */
+  --color-hairline-soft: #f0f0f0; /* inset hairline under sticky bars */
+
+  /* ── Brand · one dependable blue ──────────────────────────────────────
+     Notion blue is the single structural accent: primary CTA fill, inline
+     links, active nav, focus ring. `--accent-user`, when set by appearance
+     settings, overrides it. Deep indigo is the "night band" hero surface. */
+  --color-primary: var(--accent-user, #0075de);
+  --color-primary-active: var(--accent-user, #005bab);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #ffffff; /* secondary pill: white + soft shadow */
+  --color-secondary-foreground: #1d1d1f;
+  --color-on-primary: #ffffff;
+  --color-indigo-night: #213183; /* single dark hero band */
+
+  /* ── Text ramp · warm near-black ink ──────────────────────────────────
+     ink → warm charcoal → stone → ash. Warm grays to match the paper. */
+  --color-ink: #1d1d1f;
+  --color-ink-secondary: #31302e; /* warm charcoal */
+  --color-ink-muted: #615d59; /* stone */
+  --color-ink-faint: #a39e98; /* ash */
+  --color-charcoal: #31302e;
+  --color-ash: #4b4945;
+  --color-mute: #615d59;
+  --color-stone: #a39e98;
+  --color-link: #0075de;
+
+  /* ── Semantic ─────────────────────────────────────────────────────────
+     Status leans on the sticker palette: green ticks, orange cautions. */
+  --color-sale: #e03e3e;
+  --color-sale-deep: #a32c2c;
+  --color-success: #1aae39;
+  --color-success-bright: #2fc352;
+  --color-info: #0075de;
+  --color-info-deep: #005bab;
+
+  /* ── Sticker palette (decoration only, never chrome) ──────────────────── */
+  --color-accent-pink: #ff64c8;
+  --color-accent-pink-soft: #ffb0dd;
+  --color-accent-pink-deep: #4c012d;
+  --color-accent-purple: #9065b0;
+  --color-accent-purple-soft: #d6b6f6;
+  --color-accent-purple-pale: #ece2f7;
+  --color-accent-purple-deep: #391c57;
+  --color-accent-teal: #2a9d99;
+  --color-accent-sky: #62aef0;
+  --color-accent-green: #1aae39;
+  --color-accent-orange: #dd5b00;
+  --color-accent-orange-deep: #793400;
+  --color-accent-brown: #523410;
+
+  /* ── shadcn / structural aliases ──────────────────────────────────────
+     Body sits on warm paper; cards/popovers on white. */
+  --color-background: #f6f5f4;
+  --color-foreground: #1d1d1f;
+  --color-card: #ffffff;
+  --color-card-foreground: #1d1d1f;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #1d1d1f;
+  --color-muted: #f1efee;
+  --color-muted-foreground: #615d59;
+  --color-accent: #f1efee;
+  --color-accent-foreground: #1d1d1f;
+  --color-destructive: #e03e3e;
+  --color-destructive-foreground: #ffffff;
+  --color-border: #e6e6e6;
+  --color-input: #dddddd;
+  --color-ring: #0075de;
+
+  /* ── shadcn sidebar (floating) ────────────────────────────────────────── */
+  --color-sidebar-bg: #ffffff;
+  --color-sidebar-foreground: #31302e;
+  --color-sidebar-primary: #0075de;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-accent: #f6f5f4;
+  --color-sidebar-accent-foreground: #1d1d1f;
+  --color-sidebar-border: #e6e6e6;
+  --color-sidebar-ring: #0075de;
+
+  /* ── Typography ───────────────────────────────────────────────────────
+     Inter substitutes both NotionInter and SF Pro. Display sizes apply
+     explicit negative tracking to recreate the tight headline cadence. */
+  --font-sans:
+    Inter, -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-display:
+    Inter, -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+  /* ── Spacing · 8px base, 80px section rhythm ─────────────────────────── */
+  --spacing-section: 80px;
+
+  /* ── Border radius · friendly cards / pill CTAs / tight inputs ────────
+     Inputs 4px · utility buttons 8px · cards 12px · wells 16px · CTAs pill. */
+  --radius: 8px;
+  --radius-none: 0px;
+  --radius-xs: 4px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+  --radius-avatar: 18px;
+  --radius-pill-md: 24px;
+  --radius-pill-lg: 30px;
+
+  /* ── Elevation · hairline + barely-there layered shadows ──────────────
+     Level 0: hairline only. Level 1: soft layered micro-shadow for raised
+     cards. Level 2: deeper stack for modals/popovers/floating bars. */
+  --shadow-level-0: 0 0 0 1px var(--color-hairline);
+  --shadow-level-1:
+    0 0.175px 1.041px rgba(0, 0, 0, 0.012), 0 0.8px 2.925px rgba(0, 0, 0, 0.02),
+    0 2.025px 7.847px rgba(0, 0, 0, 0.027), 0 4px 18px rgba(0, 0, 0, 0.04);
+  --shadow-level-2:
+    0 0.8px 2px rgba(0, 0, 0, 0.02), 0 2.7px 6.7px rgba(0, 0, 0, 0.03),
+    0 8px 18px rgba(0, 0, 0, 0.04), 0 23px 52px rgba(0, 0, 0, 0.05);
+
+  /* ── Focus ring · the blue signal (2px canvas gap + 2px blue) ─────────── */
+  --focus-ring: 0 0 0 2px var(--color-canvas), 0 0 0 4px #0071e3;
+
+  /* ── Animations ──────────────────────────────────────────────────────── */
+  --animate-pulse-skeleton: pulse-skeleton 1.5s ease-in-out infinite;
+  --animate-blink: blink 1s step-end infinite;
+  --animate-capture-pulse: capture-pulse 1.5s ease-in-out infinite;
+  --animate-page-enter: page-enter 300ms ease-out both;
+
+  /* ── Apple-specific enhancements ───────────────────────────────────────── */
+  --backdrop-blur-menu: saturate(180%) blur(20px);
+  --backdrop-blur-bar: saturate(180%) blur(12px);
+  --shadow-product: 3px 5px 30px rgba(0, 0, 0, 0.22);
+  --color-surface-pearl: #fafafc;
+  --color-divider-soft: #f0f0f0;
+
+  /* ── Apple section-alternation tokens ─────────────────────────────────── */
+  --color-tile-light: #ffffff;
+  --color-tile-parchment: #f5f5f7;
+  --color-tile-dark: #272729;
+  --color-tile-dark-2: #2a2a2c;
+}
+
+/* ============================================================================
+   Dark theme — "night shift"
+   ----------------------------------------------------------------------------
+   Apple near-black tiles with warm-neutral ink ramp. The blue accent brightens
+   to the dark-surface link blue so it stays readable; cards micro-step lighter
+   than the page the way Apple's dark tiles do. Activated by
+   [data-theme="dark"] on <html>.
+   ========================================================================== */
+html[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Surfaces — near-black tile stack */
+  --color-canvas: #272729;
+  --color-canvas-soft: #1d1d1f;
+  --color-soft-cloud: #2a2a2c;
+  --color-surface: #252527;
+  --color-surface-hover: #2f2f31;
+  --color-hairline: #3a3a3c;
+  --color-hairline-soft: #313133;
+
+  /* Brand — iOS dark blue for fills, sky blue for links */
+  --color-primary: var(--accent-user, #0a84ff);
+  --color-primary-active: var(--accent-user, #409cff);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #2f2f31;
+  --color-secondary-foreground: #f5f5f7;
+  --color-on-primary: #ffffff;
+  --color-link: #2997ff;
+
+  /* Text ramp */
+  --color-ink: #f5f5f7;
+  --color-ink-secondary: #d5d5d7;
+  --color-ink-muted: #a1a1a6;
+  --color-ink-faint: #6e6e73;
+  --color-charcoal: #d5d5d7;
+  --color-ash: #a1a1a6;
+  --color-mute: #a1a1a6;
+  --color-stone: #6e6e73;
+
+  /* Semantic — brightened for the dark stage */
+  --color-sale: #ff6b6b;
+  --color-sale-deep: #e03e3e;
+  --color-success: #30d158;
+  --color-success-bright: #4ade80;
+  --color-info: #2997ff;
+  --color-info-deep: #0a84ff;
+
+  /* Sticker palette — lifted for dark surfaces */
+  --color-accent-sky: #64b5f6;
+  --color-accent-green: #30d158;
+  --color-accent-orange: #ff9f40;
+  --color-accent-purple: #bf94e4;
+  --color-accent-teal: #40c8c2;
+
+  /* shadcn / structural aliases */
+  --color-background: #1d1d1f;
+  --color-foreground: #f5f5f7;
+  --color-card: #252527;
+  --color-card-foreground: #f5f5f7;
+  --color-popover: #252527;
+  --color-popover-foreground: #f5f5f7;
+  --color-muted: #2a2a2c;
+  --color-muted-foreground: #a1a1a6;
+  --color-accent: #2f2f31;
+  --color-accent-foreground: #f5f5f7;
+  --color-destructive: #ff6b6b;
+  --color-destructive-foreground: #1d1d1f;
+  --color-border: #3a3a3c;
+  --color-input: #3a3a3c;
+  --color-ring: #2997ff;
+
+  /* shadcn sidebar */
+  --color-sidebar-bg: #252527;
+  --color-sidebar-foreground: #d5d5d7;
+  --color-sidebar-primary: #2997ff;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-accent: #2f2f31;
+  --color-sidebar-accent-foreground: #f5f5f7;
+  --color-sidebar-border: #3a3a3c;
+  --color-sidebar-ring: #2997ff;
+
+  /* Focus ring flips to the dark canvas gap */
+  --focus-ring: 0 0 0 2px var(--color-canvas-soft), 0 0 0 4px #2997ff;
+
+  /* Apple-specific — dark mode variants */
+  --color-surface-pearl: #2f2f31;
+  --color-divider-soft: #3a3a3c;
+  --shadow-product: 3px 5px 30px rgba(0, 0, 0, 0.5);
+
+  /* Shadows deepen slightly so lift still reads on near-black */
+  --shadow-level-1:
+    0 0.175px 1.041px rgba(0, 0, 0, 0.08), 0 0.8px 2.925px rgba(0, 0, 0, 0.12),
+    0 2.025px 7.847px rgba(0, 0, 0, 0.16), 0 4px 18px rgba(0, 0, 0, 0.2);
+  --shadow-level-2:
+    0 0.8px 2px rgba(0, 0, 0, 0.14), 0 2.7px 6.7px rgba(0, 0, 0, 0.18),
+    0 8px 18px rgba(0, 0, 0, 0.22), 0 23px 52px rgba(0, 0, 0, 0.28);
+}

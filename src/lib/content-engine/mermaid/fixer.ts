@@ -1,6 +1,5 @@
 // ── Mermaid Auto-Fixer ────────────────────────────────────────────────────────
 
-import { detectDiagramType } from './validator';
 import type { MermaidValidationResult } from './validator';
 
 export interface FixResult {
@@ -10,20 +9,15 @@ export interface FixResult {
   confidence: number;
 }
 
-export function autoFixMermaid(
-  code: string,
-  validation?: MermaidValidationResult,
-): FixResult {
+export function autoFixMermaid(code: string, validation?: MermaidValidationResult): FixResult {
   const changes: string[] = [];
   let fixed = code;
 
   if (validation && !validation.valid) {
-    const hasUnbalancedParens = validation.errors.some(
-      e => e.message.includes('Unbalanced parentheses'),
+    const hasUnbalancedParens = validation.errors.some((e) =>
+      e.message.includes('Unbalanced parentheses'),
     );
-    const hasUnbalancedQuotes = validation.errors.some(
-      e => e.message.includes('quotes'),
-    );
+    const hasUnbalancedQuotes = validation.errors.some((e) => e.message.includes('quotes'));
 
     if (hasUnbalancedParens) {
       fixed = fixUnbalancedParens(fixed);
@@ -44,7 +38,6 @@ export function autoFixMermaid(
   fixed = removeEmptyLines(fixed);
 
   const fixedHasChanges = fixed !== code;
-  const diagramType = detectDiagramType(fixed);
 
   return {
     original: code,
@@ -55,70 +48,94 @@ export function autoFixMermaid(
 }
 
 function fixUnbalancedParens(code: string): string {
-  return code.split('\n').map(line => {
-    let open = (line.match(/\(/g) ?? []).length;
-    let close = (line.match(/\)/g) ?? []).length;
-    while (open > close) { line += ')'; close++; }
-    while (close > open) { line = line.replace(/\)(?!.*\))/, ''); close--; }
-    return line;
-  }).join('\n');
+  return code
+    .split('\n')
+    .map((line) => {
+      const openC = (line.match(/\(/g) ?? []).length;
+      let close = (line.match(/\)/g) ?? []).length;
+      while (openC > close) {
+        line += ')';
+        close++;
+      }
+      while (close > openC) {
+        line = line.replace(/\)(?!.*\))/, '');
+        close--;
+      }
+      return line;
+    })
+    .join('\n');
 }
 
 function fixUnbalancedQuotes(code: string): string {
-  return code.split('\n').map(line => {
-    if (line.includes('"') && (line.match(/"/g) ?? []).length % 2 !== 0) {
-      if (line.startsWith('"') || !line.endsWith('"')) {
-        return line + '"';
+  return code
+    .split('\n')
+    .map((line) => {
+      if (line.includes('"') && (line.match(/"/g) ?? []).length % 2 !== 0) {
+        if (line.startsWith('"') || !line.endsWith('"')) {
+          return line + '"';
+        }
       }
-    }
-    if (line.includes("'") && (line.match(/'/g) ?? []).length % 2 !== 0) {
-      return line + "'";
-    }
-    return line;
-  }).join('\n');
+      if (line.includes("'") && (line.match(/'/g) ?? []).length % 2 !== 0) {
+        return line + "'";
+      }
+      return line;
+    })
+    .join('\n');
 }
 
 function fixEmptyLabels(code: string): string {
-  return code.replace(/\[\]/g, '[ ]')
-    .replace(/\(\)/g, '( )')
-    .replace(/\{\}/g, '{ }');
+  return code.replace(/\[\]/g, '[ ]').replace(/\(\)/g, '( )').replace(/\{\}/g, '{ }');
 }
 
 function fixDanglingArrows(code: string): string {
-  return code.split('\n').map(line => {
-    const trimmed = line.trim();
-    if (trimmed === '-->' || trimmed === '==>' || trimmed === '-.->' || trimmed === '--o' || trimmed === '--x') {
-      return ''; // Remove dangling arrows
-    }
-    return line;
-  }).join('\n');
+  return code
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim();
+      if (
+        trimmed === '-->' ||
+        trimmed === '==>' ||
+        trimmed === '-.->' ||
+        trimmed === '--o' ||
+        trimmed === '--x'
+      ) {
+        return ''; // Remove dangling arrows
+      }
+      return line;
+    })
+    .join('\n');
 }
 
 function fixDirectionSyntax(code: string): string {
   const lines = code.split('\n');
   if (lines.length > 0) {
     const first = lines[0].trim();
-    // Auto-correct common direction typos
     lines[0] = first
-      .replace(/\b(?:graph|flowchart)\s+(Td|T D)\b/i, '$1 LR')
-      .replace(/\b(?:graph|flowchart)\s+(Lr)\b/i, '$1 LR');
+      .replace(/\b(graph|flowchart)\s+(Td|T D)\b/i, '$1 LR')
+      .replace(/\b(graph|flowchart)\s+(Lr)\b/i, '$1 LR');
   }
   return lines.join('\n');
 }
 
 function fixSectionFormatting(code: string): string {
   // Ensure gantt/journey sections have proper indentation
-  return code.split('\n').map(line => {
-    const trimmed = line.trim();
-    if (/^section\s+/i.test(trimmed) && !line.startsWith('  ')) {
-      if (!line.startsWith('    ')) {
-        return '    ' + trimmed;
+  return code
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim();
+      if (/^section\s+/i.test(trimmed) && !line.startsWith('  ')) {
+        if (!line.startsWith('    ')) {
+          return '    ' + trimmed;
+        }
       }
-    }
-    return line;
-  }).join('\n');
+      return line;
+    })
+    .join('\n');
 }
 
 function removeEmptyLines(code: string): string {
-  return code.split('\n').filter(line => line.trim() !== '').join('\n');
+  return code
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .join('\n');
 }
