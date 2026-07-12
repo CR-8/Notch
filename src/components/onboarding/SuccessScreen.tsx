@@ -1,7 +1,19 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Library, BookOpen, CircleCheck } from 'lucide-react';
 import { browser } from 'wxt/browser';
+
+const confetti = Array.from({ length: 30 }).map((_, i) => ({
+  key: i,
+  color: ['#0a84ff', '#9065b0', '#30d158', '#ff9f40', '#ff6b6b'][i % 5],
+  initialX: `${40 + Math.random() * 20}%`,
+  initialY: `${20 + Math.random() * 20}%`,
+  initialScale: 0.4 + Math.random() * 0.6,
+  animateY: `${80 + Math.random() * 20}%`,
+  animateX: `${30 + Math.random() * 40}%`,
+  animateRotate: Math.random() * 720,
+  duration: 1.5 + Math.random() * 1.5,
+}));
 
 export function SuccessScreen({
   captureInfo,
@@ -14,27 +26,6 @@ export function SuccessScreen({
     const timer = setTimeout(() => setConfettiVisible(false), 3000);
     return () => clearTimeout(timer);
   }, []);
-
-  const confetti = useRef(
-    Array.from({ length: 30 }).map((_, i) => ({
-      key: i,
-      color: ['#0a84ff', '#9065b0', '#30d158', '#ff9f40', '#ff6b6b'][i % 5],
-      // eslint-disable-next-line react-hooks/purity
-      initialX: `${40 + Math.random() * 20}%`,
-      // eslint-disable-next-line react-hooks/purity
-      initialY: `${20 + Math.random() * 20}%`,
-      // eslint-disable-next-line react-hooks/purity
-      initialScale: 0.4 + Math.random() * 0.6,
-      // eslint-disable-next-line react-hooks/purity
-      animateY: `${80 + Math.random() * 20}%`,
-      // eslint-disable-next-line react-hooks/purity
-      animateX: `${30 + Math.random() * 40}%`,
-      // eslint-disable-next-line react-hooks/purity
-      animateRotate: Math.random() * 720,
-      // eslint-disable-next-line react-hooks/purity
-      duration: 1.5 + Math.random() * 1.5,
-    })),
-  ).current;
 
   function openLibrary() {
     browser.tabs.create({ url: browser.runtime.getURL('/newtab.html') }).catch(() => {});
@@ -49,7 +40,6 @@ export function SuccessScreen({
       {/* Confetti particles */}
       {confettiVisible &&
         confetti.map((p) => (
-          // eslint-disable-line react-hooks/refs
           <motion.div
             key={p.key}
             className="absolute w-1.5 h-1.5 rounded-sm"
